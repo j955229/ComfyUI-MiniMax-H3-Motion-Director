@@ -5,7 +5,7 @@
 # This derivative project is distributed under GPL-3.0.
 # See NOTICE and LICENSES/Apache-2.0-AIMixer.txt.
 
-"""HTTP routes for MiniMax H3 Motion Director (chunked video upload)."""
+"""HTTP routes for MiniMax H3 Motion Director."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ import shutil
 import folder_paths
 from aiohttp import web
 from server import PromptServer
+
+from .material_library_routes import register_material_library_routes
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director")
 
@@ -245,6 +247,7 @@ def register_routes() -> bool:
     _register_route(routes, "POST", "/minimax/motion-director/probe_video", minimax_probe_video)
     _register_route(routes, "GET", "/minimax/motion-director/probe_video", minimax_probe_video)
     _register_route(routes, "POST", "/minimax/motion-director/detect_shots", minimax_detect_shots)
+    register_material_library_routes(routes)
     _ROUTES_REGISTERED = True
     log.info("MiniMax H3 Motion Director HTTP routes registered")
     return True
