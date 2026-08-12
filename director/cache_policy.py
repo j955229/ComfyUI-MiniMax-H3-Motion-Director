@@ -13,21 +13,19 @@ def should_persist_segment_cache(
     *,
     source_bridge_active: bool,
 ) -> bool:
-    """Return whether this run will need complete decoded segments later.
+    """Return whether complete decoded segments should be persisted.
 
-    Motion Context has its own small tail caches.  Full RGB segments are only
-    useful for rebuilding an all-export selection run or for Source Bridge
-    anchors that may be requested by a later Queue.
+    Multi-segment generation must keep full RGB segment caches so a later
+    selection run can regenerate only selected segments while reusing the
+    previous generated results for unselected segments.
+
+    Motion Context has its own endpoint-tail caches and is independent from
+    these full decoded segment caches.
     """
-    selection_enabled = getattr(plan, "run_select_enabled", None)
-    if selection_enabled is None:
-        # Compatibility for tests/third-party callers that construct a legacy
-        # plan-like object without the explicit flag.
-        selection_enabled = getattr(plan, "run_indices", None) is not None
-    selection_all_export = bool(selection_enabled) and str(
-        getattr(plan, "export_mode", "all")
-    ) == "all"
-    return selection_all_export or bool(source_bridge_active)
+    segments = getattr(plan, "segments", None) or []
+    multi_segment = len(segments) > 1
+
+    return multi_segment or bool(source_bridge_active)
 
 
 def resolve_nominal_segment_frames(

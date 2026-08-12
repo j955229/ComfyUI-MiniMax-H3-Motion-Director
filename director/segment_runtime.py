@@ -215,18 +215,31 @@ def source_passthrough_chunk(plan: DirectorPlan, seg) -> torch.Tensor:
 
 
 def segment_passthrough_chunk(plan: DirectorPlan, seg) -> torch.Tensor | None:
-    """Best-effort fill for skipped segments (gen source clip, then timeline video)."""
+    """Fill an unselected segment only when a real source video is available.
+
+    Generated-video tasks must never use their internal placeholder/source
+    conditioning frames as final output. If their generated segment cache is
+    missing, return None so the executor reports the missing cache instead of
+    exporting gray placeholder frames or still source images.
+    """
+    task_key = str(getattr(seg, "task_key", "") or "").lower()
+
+    if task_key in {"t2v", "i2v", "r2v", "fl2v"}:
+        return None
+
     if seg.source_clip is not None and seg.source_clip.shape[0] > 0:
         target_len = max(1, seg.frame_count or int(seg.source_clip.shape[0]))
         clip = seg.source_clip.clone()
         if clip.shape[0] > target_len:
             clip = clip[:target_len]
         return clip.cpu().float()
-    if needs_source_video(seg.task_key):
+
+    if needs_source_video(task_key):
         try:
             return source_passthrough_chunk(plan, seg)
         except Exception:
             return None
+
     return None
 
 
