@@ -73,7 +73,11 @@ from .segment_runtime import (
     segment_passthrough_chunk,
     tensor_frame_to_jpeg_b64,
 )
-from .color_reanchor import color_reanchor_cache_settings, resolve_color_anchor
+from .color_reanchor import (
+    apply_seam_color_match,
+    color_reanchor_cache_settings,
+    resolve_color_anchor,
+)
 from .plan import (
     DirectorPlan,
     plan_summary,
@@ -968,6 +972,21 @@ def execute_director_plan_core(
             target_frames=target_len,
             fps=fps,
         )
+
+        if (
+            color_reanchor_requested
+            and apply_visual_context
+            and not source_bridge_active
+            and context_entry is not None
+            and isinstance(context_entry.frames, torch.Tensor)
+            and int(context_entry.frames.shape[0]) > 0
+            and isinstance(decoded, torch.Tensor)
+            and int(decoded.shape[0]) > 0
+        ):
+            decoded = apply_seam_color_match(
+                decoded,
+                context_entry.frames,
+            )
 
         chunk = decoded.cpu().float()
         handoff = {
