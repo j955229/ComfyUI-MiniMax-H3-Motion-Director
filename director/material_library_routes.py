@@ -66,7 +66,7 @@ async def material_library_list(request):
             category=request.query.get("category") or None,
             query=request.query.get("q") or None,
         )
-        return web.json_response({"items": items})
+        return web.json_response({"items": items, "categories": STORE.list_categories()})
     except MaterialLibraryError as exc:
         return _json_error(str(exc))
 
@@ -221,11 +221,32 @@ async def material_library_upload_chunk(request):
         return _json_error(str(exc), 500)
 
 
+async def material_library_category_create(request):
+    try:
+        body = await _read_json(request)
+        categories = STORE.create_category(kind=body.get("type"), name=body.get("name"))
+        return web.json_response({"categories": categories})
+    except MaterialLibraryError as exc:
+        return _json_error(str(exc), 400)
+
+
+async def material_library_category_rename(request):
+    try:
+        body = await _read_json(request)
+        categories = STORE.rename_category(kind=body.get("type"), old_name=body.get("old_name"), name=body.get("name"))
+        return web.json_response({"categories": categories})
+    except MaterialLibraryError as exc:
+        message = str(exc)
+        return _json_error(message, 404 if "not found" in message.lower() else 400)
+
+
 def register_material_library_routes(routes) -> None:
     base = "/minimax/motion-director/material-library"
     _route(routes, "GET", base, material_library_list)
     _route(routes, "POST", base, material_library_create)
     _route(routes, "PATCH", base + "/{item_id}", material_library_update)
+    _route(routes, "POST", base + "/categories", material_library_category_create)
+    _route(routes, "PATCH", base + "/categories", material_library_category_rename)
     _route(routes, "DELETE", base + "/{item_id}", material_library_delete)
     _route(routes, "GET", base + "/{item_id}/content", material_library_content)
     _route(routes, "POST", base + "/{item_id}/materialize", material_library_materialize)

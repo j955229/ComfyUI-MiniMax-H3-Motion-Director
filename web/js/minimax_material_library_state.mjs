@@ -106,3 +106,39 @@ export function allSelectedItemIds(state) {
     ];
     return new Set(queues.flat().map((entry) => String(entry?.itemId || "")).filter(Boolean));
 }
+
+
+export function clearQueueSelections(state, kind, predicate = null, role = null) {
+    const queue = queueFor(state, kind, role);
+    if (typeof predicate !== "function") {
+        queue.length = 0;
+        compact(queue);
+        return;
+    }
+    for (let index = queue.length - 1; index >= 0; index -= 1) {
+        if (predicate(queue[index])) queue.splice(index, 1);
+    }
+    compact(queue);
+}
+
+export function clearSelectionsForTypeAndCategory(state, kind, category = "") {
+    const matchCategory = String(category || "").trim();
+    const match = (entry) => !matchCategory || String(entry?.item?.category || "").trim() === matchCategory;
+    if (kind === "image" && state?.mode === "fl2v") {
+        clearQueueSelections(state, "image", match, "first");
+        clearQueueSelections(state, "image", match, "last");
+        return;
+    }
+    clearQueueSelections(state, kind, match, null);
+}
+
+export function clearAllSelections(state) {
+    clearQueueSelections(state, "image", null, null);
+    clearQueueSelections(state, "audio", null, null);
+    clearQueueSelections(state, "video", null, null);
+    clearQueueSelections(state, "prompt", null, null);
+    if (state?.mode === "fl2v") {
+        clearQueueSelections(state, "image", null, "first");
+        clearQueueSelections(state, "image", null, "last");
+    }
+}

@@ -38,7 +38,10 @@ export async function listMaterialLibrary({ type = "", category = "", query = ""
     if (query) params.set("q", query);
     const suffix = params.size ? `?${params.toString()}` : "";
     const data = await checked(await api.fetchApi(`${BASE}${suffix}`));
-    return Array.isArray(data?.items) ? data.items : [];
+    return {
+        items: Array.isArray(data?.items) ? data.items : [],
+        categories: data?.categories && typeof data.categories === "object" ? data.categories : {},
+    };
 }
 
 export async function createPromptMaterial({ title, category, content }) {
@@ -130,4 +133,22 @@ export function inputRelativePath(materialized) {
     const name = materialized?.name || materialized?.filename || "";
     const sub = String(materialized?.subfolder || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
     return sub ? `${sub}/${name}` : name;
+}
+
+export async function createMaterialCategory({ type, name }) {
+    const data = await checked(await api.fetchApi(`${BASE}/categories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, name }),
+    }));
+    return Array.isArray(data?.categories) ? data.categories : [];
+}
+
+export async function renameMaterialCategory({ type, oldName, name }) {
+    const data = await checked(await api.fetchApi(`${BASE}/categories`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, old_name: oldName, name }),
+    }));
+    return Array.isArray(data?.categories) ? data.categories : [];
 }

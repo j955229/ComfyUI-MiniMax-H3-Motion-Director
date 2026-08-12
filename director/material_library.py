@@ -16,7 +16,7 @@ from typing import Any
 
 import folder_paths
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _LIBRARY_DIRNAME = "minimax_h3_motion_director"
 _LIBRARY_SUBDIR = "material_library"
 _INPUT_SUBDIR = "minimax_material_library"
@@ -93,18 +93,18 @@ def _normalize_kind(value: Any) -> str:
     return kind
 
 
-def _normalize_category(kind: str, value: Any) -> str:
-    category = str(value or "").strip() or "其他"
-    if category not in DEFAULT_CATEGORIES[kind]:
-        raise MaterialLibraryError("Unsupported material category.")
-    return category
-
-
 def _normalize_title(value: Any, fallback: str = "未命名素材") -> str:
     title = str(value or "").replace("\x00", "").strip()
     if not title:
         title = fallback
     return title[:240]
+
+
+def _normalize_category_name(value: Any) -> str:
+    name = str(value or "").replace("\x00", "").strip()
+    if not name:
+        raise MaterialLibraryError("Category name is required.")
+    return name[:80]
 
 
 def _safe_extension(filename: str, kind: str) -> str:
@@ -114,8 +114,46 @@ def _safe_extension(filename: str, kind: str) -> str:
     return ext
 
 
+def _default_categories_document() -> dict[str, list[str]]:
+    return {kind: list(values) for kind, values in DEFAULT_CATEGORIES.items()}
+
+
 def _default_document() -> dict[str, Any]:
-    return {"schema_version": SCHEMA_VERSION, "items": []}
+    return {"schema_version": SCHEMA_VERSION, "categories": _default_categories_document(), "items": []}
+
+
+def _ensure_categories_document(data: dict[str, Any]) -> dict[str, list[str]]:
+    raw = data.get("categories")
+    categories: dict[str, list[str]] = {}
+    for kind, defaults in DEFAULT_CATEGORIES.items():
+        names = []
+        if isinstance(raw, dict):
+            maybe = raw.get(kind)
+            if isinstance(maybe, list):
+                for value in maybe:
+                    try:
+                        name = _normalize_category_name(value)
+                    except MaterialLibraryError:
+                        continue
+                    if name not in names:
+                        names.append(name)
+        if not names:
+            names = list(defaults)
+        categories[kind] = names
+    data["categories"] = categories
+    return categories
+
+
+def _categories_for(data: dict[str, Any], kind: str) -> list[str]:
+    categories = _ensure_categories_document(data)
+    return categories.get(kind, list(DEFAULT_CATEGORIES[kind]))
+
+
+def _normalize_category(data: dict[str, Any], kind: str, value: Any) -> str:
+    category = str(value or "").strip() or "其他"
+    if category not in _categories_for(data, kind):
+        raise MaterialLibraryError("Unsupported material category.")
+    return category
 
 
 class MaterialLibraryStore:
@@ -141,7 +179,9 @@ class MaterialLibraryStore:
         items = data.get("items")
         if not isinstance(items, list):
             raise MaterialLibraryError("Material library index has invalid items data.")
-        return {"schema_version": SCHEMA_VERSION, "items": items}
+        result = {"schema_version": SCHEMA_VERSION, "items": items}
+        result["categories"] = _ensure_categories_document(data)
+        return result
 
     def _save_unlocked(self, data: dict[str, Any]) -> None:
         self.ensure_dirs()
@@ -155,21 +195,54 @@ class MaterialLibraryStore:
     def _public_item(item: dict[str, Any]) -> dict[str, Any]:
         return dict(item)
 
-    def list_items(
-        self,
-        *,
-        kind: str | None = None,
-        category: str | None = None,
-        query: str | None = None,
-    ) -> list[dict[str, Any]]:
+    def list_categories(self, *, kind: str | None = None) -> dict[str, list[str]] | list[str]:
+        with self._lock:
+            data = self._load_unlocked()
+            categories = _ensure_categories_document(data)
+            if kind:
+                normalized_kind = _normalize_kind(kind)
+                return list(categories[normalized_kind])
+            return {name: list(values) for name, values in categories.items()}
+
+    def create_category(self, *, kind: Any, name: Any) -> list[str]:
+        normalized_kind = _normalize_kind(kind)
+        category_name = _normalize_category_name(name)
+        with self._lock:
+            data = self._load_unlocked()
+            categories = _ensure_categories_document(data)
+            current = categories[normalized_kind]
+            if category_name in current:
+                raise MaterialLibraryError("Category already exists.")
+            current.append(category_name)
+            self._save_unlocked(data)
+            return list(current)
+
+    def rename_category(self, *, kind: Any, old_name: Any, name: Any) -> list[str]:
+        normalized_kind = _normalize_kind(kind)
+        source = _normalize_category_name(old_name)
+        target = _normalize_category_name(name)
+        with self._lock:
+            data = self._load_unlocked()
+            categories = _ensure_categories_document(data)
+            current = categories[normalized_kind]
+            if source not in current:
+                raise MaterialLibraryError("Category not found.")
+            if source != target and target in current:
+                raise MaterialLibraryError("Category already exists.")
+            index = current.index(source)
+            current[index] = target
+            for item in data["items"]:
+                if isinstance(item, dict) and item.get("type") == normalized_kind and item.get("category") == source:
+                    item["category"] = target
+                    item["updated_at"] = _now_ms()
+            self._save_unlocked(data)
+            return list(current)
+
+    def list_items(self, *, kind: str | None = None, category: str | None = None, query: str | None = None) -> list[dict[str, Any]]:
         with self._lock:
             data = self._load_unlocked()
             normalized_kind = _normalize_kind(kind) if kind else None
-            normalized_category = (
-                _normalize_category(normalized_kind, category)
-                if category and normalized_kind
-                else str(category or "").strip()
-            )
+            normalized_category = _normalize_category(data, normalized_kind, category) if category and normalized_kind else str(category or "").strip()
             needle = str(query or "").strip().casefold()
             out: list[dict[str, Any]] = []
             for raw in data["items"]:
@@ -198,38 +271,28 @@ class MaterialLibraryStore:
 
     def create_prompt(self, *, title: Any, category: Any, content: Any) -> dict[str, Any]:
         kind = "prompt"
-        cat = _normalize_category(kind, category)
-        text = str(content or "")
-        now = _now_ms()
-        item = {
-            "id": f"mat_{uuid.uuid4().hex}",
-            "type": kind,
-            "category": cat,
-            "title": _normalize_title(title, "未命名 Prompt"),
-            "content": text,
-            "created_at": now,
-            "updated_at": now,
-        }
         with self._lock:
             data = self._load_unlocked()
+            cat = _normalize_category(data, kind, category)
+            text = str(content or "")
+            now = _now_ms()
+            item = {
+                "id": f"mat_{uuid.uuid4().hex}",
+                "type": kind,
+                "category": cat,
+                "title": _normalize_title(title, "未命名 Prompt"),
+                "content": text,
+                "created_at": now,
+                "updated_at": now,
+            }
             data["items"].append(item)
             self._save_unlocked(data)
         return self._public_item(item)
 
-    def create_media_from_temp(
-        self,
-        temp_path: str | Path,
-        *,
-        kind: Any,
-        category: Any,
-        title: Any,
-        filename: str,
-        mime_type: str | None = None,
-    ) -> dict[str, Any]:
+    def create_media_from_temp(self, temp_path: str | Path, *, kind: Any, category: Any, title: Any, filename: str, mime_type: str | None = None) -> dict[str, Any]:
         normalized_kind = _normalize_kind(kind)
         if normalized_kind == "prompt":
             raise MaterialLibraryError("Prompt items do not accept media files.")
-        cat = _normalize_category(normalized_kind, category)
         ext = _safe_extension(filename, normalized_kind)
         source = Path(temp_path)
         if not source.is_file():
@@ -239,20 +302,21 @@ class MaterialLibraryStore:
         destination = _resolve_under(library_files_root(), library_files_root() / f"{identity}{ext}")
         now = _now_ms()
         original_name = Path(str(filename or f"material{ext}")).name
-        item = {
-            "id": identity,
-            "type": normalized_kind,
-            "category": cat,
-            "title": _normalize_title(title, Path(original_name).stem or "未命名素材"),
-            "relative_file": destination.relative_to(library_root().resolve()).as_posix(),
-            "original_name": original_name,
-            "mime_type": str(mime_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream"),
-            "size": int(source.stat().st_size),
-            "created_at": now,
-            "updated_at": now,
-        }
         with self._lock:
             data = self._load_unlocked()
+            cat = _normalize_category(data, normalized_kind, category)
+            item = {
+                "id": identity,
+                "type": normalized_kind,
+                "category": cat,
+                "title": _normalize_title(title, Path(original_name).stem or "未命名素材"),
+                "relative_file": destination.relative_to(library_root().resolve()).as_posix(),
+                "original_name": original_name,
+                "mime_type": str(mime_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream"),
+                "size": int(source.stat().st_size),
+                "created_at": now,
+                "updated_at": now,
+            }
             try:
                 os.replace(source, destination)
             except OSError:
@@ -283,7 +347,7 @@ class MaterialLibraryStore:
             if "title" in patch:
                 found["title"] = _normalize_title(patch.get("title"), found.get("title") or "未命名素材")
             if "category" in patch:
-                found["category"] = _normalize_category(kind, patch.get("category"))
+                found["category"] = _normalize_category(data, kind, patch.get("category"))
             if "content" in patch:
                 if kind != "prompt":
                     raise MaterialLibraryError("Only Prompt items have editable content.")
@@ -296,10 +360,7 @@ class MaterialLibraryStore:
         identity = str(item_id or "").strip()
         with self._lock:
             data = self._load_unlocked()
-            index = next(
-                (i for i, item in enumerate(data["items"]) if isinstance(item, dict) and str(item.get("id")) == identity),
-                -1,
-            )
+            index = next((i for i, item in enumerate(data["items"]) if isinstance(item, dict) and str(item.get("id")) == identity), -1)
             if index < 0:
                 raise MaterialLibraryError("Material not found.")
             item = data["items"].pop(index)
