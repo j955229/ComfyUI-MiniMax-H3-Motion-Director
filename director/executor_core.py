@@ -87,7 +87,12 @@ from .plan import (
     reinforce_v2v_prompt,
 )
 from .progress import report_director_finish, report_director_progress, report_director_segment_preview
-from .segment_cache import load_segment_cache, save_segment_cache
+from .segment_cache import (
+    load_segment_audio_cache,
+    load_segment_cache,
+    save_segment_audio_cache,
+    save_segment_cache,
+)
 from .cache_policy import (
     resolve_nominal_segment_frames,
     should_persist_segment_cache,
@@ -987,7 +992,22 @@ def execute_director_plan_core(
             }
         write_segment_cache_if_required(
             persist_segment_cache,
-            lambda: save_segment_cache(node_id, seg, plan, chunk),
+            lambda: save_segment_cache(
+                node_id,
+                seg,
+                plan,
+                chunk,
+            ),
+        )
+
+        write_segment_cache_if_required(
+            persist_segment_cache,
+            lambda: save_segment_audio_cache(
+                node_id,
+                seg,
+                plan,
+                audio_dict if audio_mode == AUDIO_MODE_GENERATE else None,
+            ),
         )
         if motion_enabled:
             if not save_motion_context_cache(
@@ -1155,22 +1175,41 @@ def execute_director_plan_core(
             completed_contexts[int(seg.timeline_index)] = cached_context
         if cached is not None:
             cached = cached.float()
+
+            cached_audio = None
+            if audio_mode == AUDIO_MODE_GENERATE:
+                cached_audio = load_segment_audio_cache(
+                    node_id,
+                    seg,
+                    plan,
+                )
+
+                if not audio_has_samples(cached_audio):
+                    raise ValueError(
+                        f"Segment {seg.index + 1} has a valid video cache but no "
+                        "full generated audio cache. Run the full sequence once "
+                        "to rebuild complete video + audio segment caches before "
+                        "using partial regeneration."
+                    )
+
             if source_bridge_enabled(seg.task_key, requested_source_bridge):
                 nominal_generated_frames[int(seg.index)] = cached
+
             completed_outputs[seg.index] = cached
+
             if cached_context is not None:
                 completed_contexts[int(seg.timeline_index)] = cached_context
+
             reports.append(
-                f"Segment {seg.index + 1}/{len(all_segments)}: loaded from cache ({cached.shape[0]} frames)"
+                f"Segment {seg.index + 1}/{len(all_segments)}: "
+                f"loaded from full segment cache ({cached.shape[0]} frames)"
             )
+
             all_export_results[int(seg.index)] = (
                 cached,
-                cached_context.audio
-                if cached_context is not None and cached_context.audio is not None
-                else {},
+                cached_audio if cached_audio is not None else {},
             )
             continue
-
         # Not selected + no cache: keep full-timeline export by passthrough (do NOT sample).
         fill = segment_passthrough_chunk(plan, seg)
         if fill is None:

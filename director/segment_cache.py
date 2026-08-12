@@ -212,3 +212,119 @@ def load_segment_cache(
     except Exception as exc:
         log.warning("Failed to load segment %d cache: %s", idx + 1, exc)
         return None
+
+
+def save_segment_audio_cache(
+    node_id: str | None,
+    seg: SegmentPlan,
+    plan: DirectorPlan,
+    audio: dict[str, Any] | None,
+) -> None:
+    """Persist the complete generated audio for one decoded segment."""
+    if not node_id:
+        return
+
+    root = _cache_root(node_id)
+    if root is None:
+        return
+
+    idx = seg.index
+    audio_path = root / f"seg_{idx:04d}.audio.pt"
+
+    waveform = audio.get("waveform") if isinstance(audio, dict) else None
+    sample_rate = int(audio.get("sample_rate") or 0) if isinstance(audio, dict) else 0
+
+    if (
+        not isinstance(waveform, torch.Tensor)
+        or waveform.numel() <= 0
+        or sample_rate <= 0
+    ):
+        _safe_unlink(audio_path)
+        return
+
+    payload = {
+        "fingerprint": segment_cache_fingerprint(seg, plan),
+        "waveform": waveform.detach().cpu().contiguous(),
+        "sample_rate": sample_rate,
+    }
+
+    try:
+        _write_via_temp(
+            audio_path,
+            lambda path: torch.save(payload, path),
+        )
+        log.debug(
+            "Cached full audio for segment %d on node %s (%d samples)",
+            idx + 1,
+            node_id,
+            int(waveform.shape[-1]),
+        )
+    except Exception as exc:
+        log.warning(
+            "Segment %d audio cache write skipped (%s).",
+            idx + 1,
+            exc,
+        )
+        _safe_unlink(audio_path)
+
+
+def load_segment_audio_cache(
+    node_id: str | None,
+    seg: SegmentPlan,
+    plan: DirectorPlan,
+) -> dict[str, Any] | None:
+    """Load the complete generated audio belonging to a full segment cache."""
+    if not node_id:
+        return None
+
+    root = _cache_root(node_id)
+    if root is None:
+        return None
+
+    idx = seg.index
+    audio_path = root / f"seg_{idx:04d}.audio.pt"
+
+    if not audio_path.is_file():
+        return None
+
+    try:
+        payload = torch.load(
+            audio_path,
+            map_location="cpu",
+            weights_only=True,
+        )
+
+        if not isinstance(payload, dict):
+            return None
+
+        expected = segment_cache_fingerprint(seg, plan)
+        if payload.get("fingerprint") != expected:
+            log.info(
+                "Segment %d full audio cache stale; ignoring.",
+                idx + 1,
+            )
+            return None
+
+        waveform = payload.get("waveform")
+        sample_rate = int(payload.get("sample_rate") or 0)
+
+        if (
+            not isinstance(waveform, torch.Tensor)
+            or waveform.ndim != 3
+            or waveform.numel() <= 0
+            or sample_rate <= 0
+        ):
+            return None
+
+        return {
+            "waveform": waveform.float().contiguous(),
+            "sample_rate": sample_rate,
+        }
+
+    except Exception as exc:
+        log.warning(
+            "Failed to load segment %d full audio cache: %s",
+            idx + 1,
+            exc,
+        )
+        return None
