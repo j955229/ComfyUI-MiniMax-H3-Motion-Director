@@ -76,7 +76,7 @@ function ensureStyles() {
 .mmx-ml-card.selected{border-color:var(--ml-color);box-shadow:0 0 0 1px color-mix(in srgb,var(--ml-color) 45%,transparent)}
 .mmx-ml-card.sel-first{border-color:#4aa8ff;box-shadow:inset 0 0 0 1px #4aa8ff}.mmx-ml-card.sel-last{border-color:#f2a044;box-shadow:inset 0 0 0 1px #f2a044}.mmx-ml-card.sel-first.sel-last{border-color:#4aa8ff;box-shadow:inset 0 0 0 2px #f2a044,0 0 0 1px #4aa8ff}
 .mmx-ml-badges{position:absolute;z-index:5;left:6px;top:6px;display:flex;gap:3px;max-width:calc(100% - 12px);flex-wrap:wrap}.mmx-ml-order{width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--ml-color);color:#071015;font-size:10px;font-weight:800;box-shadow:0 1px 5px rgba(0,0,0,.65)}.mmx-ml-order.first{background:#4aa8ff}.mmx-ml-order.last{background:#f2a044}
-.mmx-ml-preview-media{height:86px;background:#0b0e10;display:flex;align-items:center;justify-content:center;overflow:hidden}.mmx-ml-preview-media img,.mmx-ml-preview-media video{width:100%;height:100%;object-fit:cover;pointer-events:none}.mmx-ml-media-icon{font-size:30px;opacity:.6}.mmx-ml-prompt-preview{height:86px;padding:12px 9px 8px;box-sizing:border-box;color:#b6c2c9;font-size:11px;line-height:1.35;white-space:pre-wrap;overflow:hidden;background:#121b16}
+.mmx-ml-preview-media{height:86px;background:#0b0e10;display:flex;align-items:center;justify-content:center;overflow:hidden}.mmx-ml-preview-media img,.mmx-ml-preview-media video{width:100%;height:100%;object-fit:contain;object-position:center;pointer-events:none}.mmx-ml-media-icon{font-size:30px;opacity:.6}.mmx-ml-prompt-preview{height:86px;padding:12px 9px 8px;box-sizing:border-box;color:#b6c2c9;font-size:11px;line-height:1.35;white-space:pre-wrap;overflow:hidden;background:#121b16}
 .mmx-ml-card-meta{padding:7px 8px 8px}.mmx-ml-card-title{font-size:12px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ecf0f2}.mmx-ml-card-sub{font-size:10px;color:#87939b;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmx-ml-card-actions{position:absolute;right:5px;top:5px;display:flex;gap:3px;z-index:6;opacity:0;transition:opacity .1s}.mmx-ml-card:hover .mmx-ml-card-actions{opacity:1}.mmx-ml-card-actions button{width:27px;height:24px;padding:0;border:1px solid #48535c;border-radius:5px;background:rgba(22,28,32,.92);color:#cbd3d8;cursor:pointer}
 .mmx-ml-footer{flex:0 0 auto;border-top:1px solid #303941;background:#171c20}.mmx-ml-summary{display:flex;align-items:center;gap:10px;padding:7px 12px;font-size:11px;color:#9aa5ad}.mmx-ml-summary strong{color:#d8e0e5}.mmx-ml-preview-toggle{margin-left:auto;border:0!important;background:transparent!important;color:#8fc6ef!important;padding:2px 4px!important}.mmx-ml-preview{max-height:154px;overflow:auto;border-top:1px solid #293037;padding:7px 12px;font:11px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace;color:#aeb9c0;background:#111619}.mmx-ml-preview[hidden]{display:none!important}.mmx-ml-preview-line.warn{color:#f5b55f}.mmx-ml-preview-line.block{color:#ff8585}.mmx-ml-footer-actions{display:flex;justify-content:flex-end;gap:8px;padding:8px 12px}.mmx-ml-apply{border-color:#3e9d67!important;background:#1c5435!important;color:#d8ffe8!important;font-weight:700}.mmx-ml-apply:disabled{opacity:.35;cursor:not-allowed}
 .mmx-ml-editor{position:absolute;inset:10%;z-index:10;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.7);border-radius:10px}.mmx-ml-editor[hidden]{display:none!important}.mmx-ml-editor-card{width:min(560px,90%);max-height:90%;overflow:auto;border:1px solid #46515a;border-radius:10px;background:#1b2126;padding:14px;box-shadow:0 15px 50px rgba(0,0,0,.7)}.mmx-ml-editor-card label{display:block;margin:9px 0 4px;color:#aeb8bf;font-size:11px}.mmx-ml-editor-card input,.mmx-ml-editor-card select,.mmx-ml-editor-card textarea{width:100%;box-sizing:border-box;border:1px solid #414b53;border-radius:6px;background:#101417;color:#eee;padding:8px}.mmx-ml-editor-card textarea{min-height:180px;resize:vertical}.mmx-ml-editor-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
@@ -120,6 +120,30 @@ function compactTargetLabel(target) {
 function selectedCountTotal(state) {
     const c = queueCounts(state);
     return c.image + c.audio + c.video + c.prompt;
+}
+
+/**
+ * Describe only the allocation intent that changes what Apply writes. UI-only
+ * state such as search/category/active tab is intentionally excluded, so
+ * browsing the library never makes an already-applied selection executable again.
+ */
+function materialApplySignature(state) {
+    const mediaQueue = (entries) => (entries || []).map((entry) => String(entry?.itemId || ""));
+    const promptQueue = (entries) => (entries || []).map((entry) => [
+        String(entry?.itemId || ""),
+        String(entry?.item?.content || ""),
+    ]);
+    return JSON.stringify({
+        mode: String(state?.mode || ""),
+        target: state?.target == null ? null : String(state.target),
+        promptApplyMode: String(state?.promptApplyMode || "append"),
+        images: mediaQueue(state?.images),
+        audio: mediaQueue(state?.audio),
+        videos: mediaQueue(state?.videos),
+        prompts: promptQueue(state?.prompts),
+        firstFrames: mediaQueue(state?.fl2vFirstFrames),
+        lastFrames: mediaQueue(state?.fl2vLastFrames),
+    });
 }
 
 function ensureSegments(editor, mode, count) {
@@ -252,6 +276,7 @@ export function mountMaterialLibrary(editor, node = null) {
     let loading = false;
     let applying = false;
     let previewOpen = false;
+    const appliedSignatures = new Set();
 
     const setStatus = (message = "", kind = "") => {
         statusEl.textContent = message;
@@ -265,6 +290,7 @@ export function mountMaterialLibrary(editor, node = null) {
         if (before !== state.mode) {
             state.activeType = firstAllowedType(state.mode);
             state.activeCategory = "";
+            appliedSignatures.clear();
             setStatus("");
         }
         if (!allowedTypes(state.mode).has(state.activeType)) state.activeType = firstAllowedType(state.mode);
@@ -494,9 +520,13 @@ export function mountMaterialLibrary(editor, node = null) {
                 if (warning.code === "prompt_not_allowed_common") addPreviewLine(mlT("promptCommonBlocked"), "warn");
             }
         }
+        const applySignature = materialApplySignature(state);
+        const alreadyApplied = appliedSignatures.has(applySignature);
+        plan.applySignature = applySignature;
+        plan.alreadyApplied = alreadyApplied;
         const apply = layer.querySelector('[data-ml="apply"]');
         apply.textContent = applying ? mlT("applying") : mlT("apply");
-        apply.disabled = applying || !!plan.blockedReason || !plan.assignments.length;
+        apply.disabled = applying || alreadyApplied || !!plan.blockedReason || !plan.assignments.length;
         return plan;
     };
 
@@ -594,8 +624,9 @@ export function mountMaterialLibrary(editor, node = null) {
     };
 
     const applyPlan = async () => {
+        if (applying) return;
         const plan = renderPreview();
-        if (plan.blockedReason || !plan.assignments.length) return;
+        if (plan.alreadyApplied || plan.blockedReason || !plan.assignments.length) return;
         applying = true; renderPreview(); setStatus("");
         const materialize = materializeCacheFactory();
         try {
@@ -660,6 +691,7 @@ export function mountMaterialLibrary(editor, node = null) {
                 applySequentialPrompts(editor.timeline.segments || [], state.prompts);
                 editor.updateSelectionUI?.(); editor.scheduleRender?.(); editor.commit?.(false, { syncTimeline: true });
             }
+            appliedSignatures.add(plan.applySignature);
             setStatus(mlT("applied"), "ok");
         } catch (err) {
             console.error("[MiniMax H3 Motion Director] Material Library apply failed", err);
@@ -676,7 +708,13 @@ export function mountMaterialLibrary(editor, node = null) {
     layer.addEventListener("mousedown", (event) => { if (event.target === layer) close(); });
     searchEl.addEventListener("input", () => { state.search = searchEl.value; clearTimeout(searchEl._mlTimer); searchEl._mlTimer = setTimeout(() => void reloadItems(), 160); });
     categoryEl.addEventListener("change", () => { state.activeCategory = categoryEl.value; void reloadItems(); });
-    editor.globalTask?.addEventListener?.("change", () => { ensureMaterialLibraryMode(state, currentMode(editor)); state.activeType = firstAllowedType(state.mode); state.activeCategory = ""; if (!layer.hidden) { renderAll(); void reloadItems(); } });
+    editor.globalTask?.addEventListener?.("change", () => {
+        ensureMaterialLibraryMode(state, currentMode(editor));
+        appliedSignatures.clear();
+        state.activeType = firstAllowedType(state.mode);
+        state.activeCategory = "";
+        if (!layer.hidden) { renderAll(); void reloadItems(); }
+    });
     const localeUnsub = onMaterialLocaleChange(() => renderLocale());
     const keyHandler = (event) => {
         if (layer.hidden || event.key !== "Escape") return;
