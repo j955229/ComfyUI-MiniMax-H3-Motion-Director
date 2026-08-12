@@ -17,11 +17,11 @@
 
 ---
 
-## 先认识一个词：片段
+## 片段
 
 Director 会把整支视频拆成一段一段来做。
 
-界面和代码里有时会写 `Segment`，这里直接把它叫做 **片段**。
+界面和代码里有时会写 `Segment`。
 
 例如：
 
@@ -210,9 +210,9 @@ RV2V 的 Source Video 仍然从 Director 本地上传。
 
 ---
 
-# R2V 的“公共素材”是什么
+# 公共素材
 
-技术名称是 `Common References`，这里直接叫 **公共素材**。
+界面和代码里有时会写 `Common References`。
 
 它的用途很简单：
 
@@ -255,12 +255,6 @@ RV2V 的 Source Video 仍然从 Director 本地上传。
 ...
 ```
 
-### Prompt 不放在公共素材里
-
-公共素材区只负责参考素材。
-
-每一段的 Prompt 仍然自己写自己的，不存在“所有片段共用一个公共 Prompt”的机制。
-
 ---
 
 # 素材库
@@ -278,8 +272,6 @@ Director 内置了一个长期保存用的素材库。
 - 常用 Prompt
 
 素材库和当前任务是分开的。素材放进库里以后，下次重新打开 ComfyUI 仍然可以继续使用。
-
-## 素材库有哪些类型
 
 | 大分类 | 默认小分类 |
 |---|---|
@@ -452,80 +444,11 @@ R2V / RV2V 如果一次选了多个 Prompt，会先按选择顺序组合，再�
 之后修改素材库原本的 Prompt，不会自动改掉已经放进当前任务的那一份。
 
 ---
-
-# 素材库实际保存在哪里
-
-长期保存的素材库位于：
-
-```text
-<ComfyUI>/user/minimax_h3_motion_director/material_library/
-```
-
-结构大致是：
-
-```text
-material_library/
-├─ library.json
-├─ files/
-└─ .uploads/
-```
-
-说明：
-
-- `library.json`：素材标题、分类等资料。
-- `files/`：真正保存的图片、音频、视频。
-- `.uploads/`：上传时使用的临时目录。
-
-应用素材以后，为了让 ComfyUI 工作流读取，还会复制一份到：
-
-```text
-<ComfyUI>/input/minimax_material_library/
-```
-
-如果你要备份整个素材库，主要备份：
-
-```text
-<ComfyUI>/user/minimax_h3_motion_director/material_library/
-```
+---
 
 ---
 
-# Prompt 里的 `@` 是什么
-
-在 Prompt 输入框输入 `@`，可以选择 **当前任务已经加入的参考素材**。
-
-注意：
-
-> `@` 不是用来搜索整个长期素材库的。
-
-正确流程是：
-
-```text
-先从素材库选择素材
-→ 应用到当前任务
-→ 它变成当前任务的参考素材
-→ 才能在 Prompt 中用 @ 引用
-```
-
-Director 内部会记住“你引用的是哪一个素材”，而不是死记 `<Picture 2>` 这种编号。
-
-所以即使前面删除了一张图，后面素材的编号发生变化，Prompt 也不会莫名其妙改绑到另一张图。
-
-真正执行时，Director 才会重新整理成 MiniMax H3 需要的官方标签：
-
-```text
-<Picture 1>
-<Picture 2>
-<Video 1>
-<Audio 1>
-...
-```
-
----
-
-# 怎么让第 2 段接着第 1 段
-
-Director 提供几种不同的衔接方式。
+# Motion Context
 
 ## 续接上一段（Motion Context）
 
@@ -580,7 +503,7 @@ V2V / RV2V 还会涉及：
 
 ---
 
-# Source Bridge 是什么
+# Source Bridge 
 
 Source Bridge 只用于：
 
@@ -607,7 +530,7 @@ Source Bridge 和 Motion Context 不会同时叠加视觉上下文。
 
 ---
 
-# Color Re-anchor 是什么
+# Color Re-anchor 
 
 长链连续生成时，有时颜色会一段一段慢慢漂掉，例如：
 
@@ -623,54 +546,6 @@ Color Re-anchor 用来减轻这种累积偏色。
 它只会处理“准备交给下一段的画面上下文”，不会回头修改已经生成好的视频。
 
 Source Bridge 路径不会使用 Color Re-anchor。
-
----
-
-# 只重跑某几段
-
-开启 `选择运行` 后，可以只勾选想重新生成的片段。
-
-例如：
-
-```text
-S1 没问题
-S2 人脸坏了
-S3 没问题
-S4 动作不对
-```
-
-你可以只重跑：
-
-```text
-S2 + S4
-```
-
-适合：
-
-- 修改某一段 Prompt
-- 换某一段参考图
-- 修长视频里的少数坏段
-- 不想整条视频重新跑一次
-
-如果后面的片段需要前面的 Motion Context，而这一次没有重新生成前段，Director 会尝试读取之前保存的上下文缓存。
-
-如果必要缓存不存在，会直接报错，不会偷偷改成另一种生成方式。
-
----
-
-# 缓存是干什么的
-
-Director 会保存一些用于“局部重跑”和“跨 Queue 续接”的缓存。
-
-主要包括：
-
-- 完整片段缓存
-- Motion Context 的画面 / 声音备用缓存
-- Motion Context 的 H3 latent 尾部
-
-这些缓存不是你最终导出的视频文件。
-
-当 Prompt、素材、源视频或真正影响某段生成结果的设置发生变化，对应缓存会失效并重新生成。
 
 ---
 
@@ -711,110 +586,6 @@ Director 就会改用外接采样。
 “怎么导出”和“怎么生成”是两件事。
 
 选择分段导出，不代表原本连续生成的多段视频会自动变成彼此独立的生成任务。
-
----
-
-# 下面是比较技术的说明
-
-如果你只是想正常使用，看到这里基本已经够了。
-
-下面主要给排错、调工作流或研究 H3 行为的人看。
-
-## 32 像素尺寸规则
-
-所有 MiniMax H3 路径统一使用 32 像素空间网格：
-
-```text
-width % 32 == 0
-height % 32 == 0
-```
-
-适用于：
-
-- T2V
-- I2V
-- FL2V
-- R2V
-- V2V
-- RV2V
-- Motion Context
-- Reference Video
-- Source Bridge
-
-Director 会统一处理相关画布，避免同一工作流换模式以后突然使用不同的尺寸规则。
-
-## H3 Reference Video 的 `17k + 5`
-
-H3 Reference Video 支持的合法帧数类似：
-
-```text
-5, 22, 39, 56, 73, 90, 107, 124, 141, ...
-```
-
-Director 会先为 H3 conditioning 准备合法长度，最后仍然按用户真正需要的片段长度裁切输出。
-
-也就是说，为模型准备的参考帧数和最终导出的可见帧数不一定完全一样。
-
-## Motion Context 内部数据
-
-正常连续运行优先使用 latent-first handoff。
-
-简单说就是：
-
-```text
-上一段生成出的 H3 AV latent 尾部
-→ 直接交给下一段
-```
-
-而不是每一段都必须：
-
-```text
-解码成 RGB
-→ 保存
-→ 再重新 VAE encode
-```
-
-为了支持以后只重跑后面的片段，Director 仍会保存有限的 RGB / waveform fallback 和 AV latent tail。
-
-## R2V 官方标签
-
-R2V 的公共素材和当前片段素材会在执行前重新压成连续编号。
-
-例如：
-
-```text
-公共素材：A、B、C
-当前片段自己的素材：D
-```
-
-最后可能变成：
-
-```text
-A = <Picture 1>
-B = <Picture 2>
-C = <Picture 3>
-D = <Picture 4>
-```
-
-素材身份使用稳定 asset ID，所以可见编号变化时，Prompt 引用仍然能跟着正确素材。
-
-## V2V / RV2V 的 `<Video 1>`
-
-每一个片段只把自己对应的 Source Video 范围作为当前 `<Video 1>`。
-
-Director 不会把整支第一段视频重复当成后面所有片段的 `<Video 1>`。
-
-## External Groups / Reroute
-
-`i2v_groups` / `r2v_groups` 可以连接外部 Group / Groups Combine。
-
-也支持经过：
-
-- 标准 ComfyUI Reroute
-- rgthree Reroute
-- 明确的虚拟直通节点
-
-External R2V Group 提供的是各片段自己的素材；R2V 公共素材仍然由 Director 管理。
 
 ---
 
