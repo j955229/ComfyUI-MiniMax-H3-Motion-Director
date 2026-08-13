@@ -64,6 +64,20 @@ def source_bridge_enabled(task_key: str, frames: int) -> bool:
     return str(task_key).lower() in SOURCE_BRIDGE_TASKS and int(frames) == 5
 
 
+def source_bridge_boundary_enabled(left_segment, right_segment, frames: int) -> bool:
+    """Return whether this exact boundary opted into the Source Bridge strategy."""
+    if not (
+        source_bridge_enabled(getattr(left_segment, "task_key", ""), frames)
+        and source_bridge_enabled(getattr(right_segment, "task_key", ""), frames)
+    ):
+        return False
+    link = getattr(right_segment, "context_link", None)
+    # Missing is the legacy workflow fallback: Source Bridge remains global.
+    if link is None:
+        return True
+    return bool(getattr(link, "visual_enabled", False))
+
+
 def should_apply_visual_motion_context(
     motion_context_enabled: bool,
     task_key: str,

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-CONTEXT_LINK_SCHEMA = "previous_context_link_v1"
+CONTEXT_LINK_SCHEMA = "previous_context_link_v2_master_gated"
 
 
 def _as_bool(value: Any, fallback: bool = False) -> bool:
@@ -129,18 +129,19 @@ def resolve_context_link(
 
     requested_visual = bool(link.visual_enabled)
     requested_audio = bool(link.audio_enabled)
-    visual = requested_visual
-    audio = requested_audio
-    visual_reason = (
-        "per-boundary link" if requested_visual else "Context Link visual disabled"
+    visual = bool(requested_visual and motion_context_enabled)
+    audio = bool(requested_audio and audio_context_enabled)
+    visual_reason = "per-boundary link" if visual else (
+        "Motion Context master disabled" if requested_visual else "Context Link visual disabled"
     )
-    audio_reason = (
-        "per-boundary link" if requested_audio else "Context Link audio disabled"
+    audio_reason = "per-boundary link" if audio else (
+        "generated audio continuation master disabled"
+        if requested_audio else "Context Link audio disabled"
     )
-    if source_bridge_active and visual:
+    if source_bridge_active and requested_visual:
         visual = False
         visual_reason = "Source Bridge owns visual continuity"
-    if explicit_i2v_image and visual:
+    if explicit_i2v_image and requested_visual:
         visual = False
         visual_reason = "explicit I2V image resets visual context"
     if audio and not audio_generate:

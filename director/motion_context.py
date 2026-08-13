@@ -252,7 +252,7 @@ def _encode_video_context(
     height: int,
     span: int,
     color_reanchor_enabled: bool = False,
-    color_anchor: torch.Tensor | None = None,
+    color_anchor: torch.Tensor | dict[str, Any] | None = None,
     task_key: str = "unknown",
 ) -> tuple[list[dict[str, Any]], int, str]:
     if int(frames.shape[0]) < span:
@@ -263,12 +263,20 @@ def _encode_video_context(
     tail = _resize_frames(frames[-span:], width, height)
     color_status = "OFF"
     if color_reanchor_enabled:
-        if color_anchor is None or not isinstance(color_anchor, torch.Tensor) or int(color_anchor.numel()) == 0:
+        if color_anchor is None:
             color_status = "skipped (no anchor)"
         else:
-            anchor = _resize_frames(color_anchor[:1], width, height)
-            tail = apply_color_reanchor(tail, anchor)
-            color_status = "ON"
+            anchor = color_anchor
+            if isinstance(color_anchor, torch.Tensor):
+                if int(color_anchor.numel()) == 0:
+                    anchor = None
+                else:
+                    anchor = _resize_frames(color_anchor[:1], width, height)
+            if anchor is None:
+                color_status = "skipped (no anchor)"
+            else:
+                tail = apply_color_reanchor(tail, anchor)
+                color_status = "ON"
     preflight_h3_visual_conditioning(
         tail,
         task_key=task_key,
@@ -468,7 +476,7 @@ def apply_exported_motion_context(
     visual_enabled: bool = True,
     fps: float,
     color_reanchor_enabled: bool = False,
-    color_anchor: torch.Tensor | None = None,
+    color_anchor: torch.Tensor | dict[str, Any] | None = None,
     task_key: str = "unknown",
     pin_renorm_enabled: bool = False,
     pin_renorm_baseline_std: float | None = None,
@@ -587,7 +595,29 @@ def apply_exported_motion_context(
         )
         selected_context_end = int(context_end_frame or int(context_frames.shape[0]))
         if pin_renorm_enabled:
-            pin_status = "SKIPPED (pixel visual context)"
+            selected_video = torch.cat(
+                [item["latent"] for item in motion_keyframes], dim=2
+            )
+            adjusted_latent, pin_baseline, pin_input_std, pin_scale = renorm_context_video_latent(
+                {"samples": (selected_video,)},
+                pin_renorm_baseline_std,
+            )
+            after_video = _latent_video_stream(adjusted_latent).float()
+            before_video = selected_video.float()
+            delta = (after_video - before_video).abs()
+            pin_after_std = float(after_video.std(unbiased=False).item())
+            pin_mean_abs_delta = float(delta.mean().item())
+            pin_max_abs_delta = float(delta.max().item())
+            pin_baseline_source = (
+                "created"
+                if pin_renorm_baseline_std is None
+                else (pin_renorm_baseline_source or "inherited")
+            )
+            pin_status = "APPLIED"
+            for step, item in enumerate(motion_keyframes):
+                item["latent"] = after_video[:, :, step : step + 1].to(
+                    dtype=selected_video.dtype
+                )
     else:
         motion_keyframes = []
         block_count = 0

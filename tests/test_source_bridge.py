@@ -12,9 +12,11 @@ from _minimax_h3_motion_director_testpkg.director.source_bridge import (
     bridge_window_for_boundary,
     reference_bundles_match,
     should_apply_visual_motion_context,
+    source_bridge_boundary_enabled,
     source_bridge_enabled,
     validate_source_bridge_frames,
 )
+from _minimax_h3_motion_director_testpkg.director.context_links import ContextLink
 
 
 def _segment(index: int, start: int, end: int, task: str = "v2v", **kwargs):
@@ -24,6 +26,8 @@ def _segment(index: int, start: int, end: int, task: str = "v2v", **kwargs):
         "end_frame": end,
         "frame_count": end - start,
         "task_key": task,
+        "timeline_index": index,
+        "context_link": None,
         "refs": [],
         "ref_audios": [],
         "ref_videos": [],
@@ -127,3 +131,20 @@ def test_visual_motion_context_is_skipped_only_for_active_source_bridge():
     assert should_apply_visual_motion_context(True, "r2v", 1, 5, False)
     assert should_apply_visual_motion_context(True, "v2v", 1, 0, False)
     assert not should_apply_visual_motion_context(False, "v2v", 1, 5, False)
+
+
+def test_source_bridge_respects_each_consumer_visual_link():
+    left = _segment(0, 0, 10)
+    connected = _segment(
+        1, 10, 20, context_link=ContextLink(True, True, False)
+    )
+    disconnected = _segment(
+        1, 10, 20, context_link=ContextLink(False, False, False)
+    )
+    audio_only = _segment(
+        1, 10, 20, context_link=ContextLink(True, False, True)
+    )
+    assert source_bridge_boundary_enabled(left, connected, 5)
+    assert not source_bridge_boundary_enabled(left, disconnected, 5)
+    assert not source_bridge_boundary_enabled(left, audio_only, 5)
+    assert source_bridge_boundary_enabled(left, _segment(1, 10, 20), 5)

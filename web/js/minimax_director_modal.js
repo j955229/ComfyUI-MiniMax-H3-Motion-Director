@@ -5,6 +5,42 @@ export const DIRECTOR_LAUNCHER_HEIGHT = 40;
 const STYLE_ID = "mmx-director-modal-styles";
 let activeDirectorModal = null;
 
+const EDITABLE_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
+const EDITING_COMMAND_KEYS = new Set(["a", "c", "v", "x", "y", "z"]);
+
+export function isDirectorEditableTarget(target, overlay) {
+    let current = target?.nodeType === 3 ? target.parentElement : target;
+    if (!current || (overlay && !overlay.contains?.(current))) return false;
+    while (current && current !== overlay) {
+        if (EDITABLE_TAGS.has(String(current.tagName || "").toUpperCase())) return true;
+        if (current.isContentEditable) return true;
+        const attr = current.getAttribute?.("contenteditable");
+        if (attr != null && String(attr).toLowerCase() !== "false") return true;
+        if (current.classList?.contains?.("bd-prompt-editor")) return true;
+        current = current.parentElement;
+    }
+    return false;
+}
+
+export function shouldIsolateDirectorEditingEvent(event, overlay, isOpen = true) {
+    if (!isOpen || !event || event.isComposing) return false;
+    if (!isDirectorEditableTarget(event.target, overlay)) return false;
+    if (event.type === "paste" || event.type === "beforeinput") return true;
+    if (event.type !== "keydown") return false;
+    if (event.key === "Backspace" || event.key === "Delete") return true;
+    if (!(event.ctrlKey || event.metaKey)) return false;
+    return EDITING_COMMAND_KEYS.has(String(event.key || "").toLowerCase());
+}
+
+export function isolateDirectorEditingEvent(event, overlay, isOpen = true) {
+    if (!shouldIsolateDirectorEditingEvent(event, overlay, isOpen)) return false;
+    // Preserve the browser/editor default. The event is stopped at the modal
+    // bubble boundary only after the focused editor has handled it.
+    event.stopImmediatePropagation?.();
+    event.stopPropagation?.();
+    return true;
+}
+
 function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
@@ -171,6 +207,9 @@ export function createDirectorModal({
             languageButton.removeEventListener("click", handleLanguageClick);
             closeButton.removeEventListener("click", handleCloseClick);
             overlay.removeEventListener("click", handleBackdropClick);
+            overlay.removeEventListener("keydown", handleEditingEvent);
+            overlay.removeEventListener("paste", handleEditingEvent);
+            overlay.removeEventListener("beforeinput", handleEditingEvent);
             overlay.remove();
             launcher.remove();
             launcherHost.classList.remove("mmx-director-launcher-host");
@@ -196,6 +235,9 @@ export function createDirectorModal({
     const handleBackdropClick = (event) => {
         if (event.target === overlay) api.close();
     };
+    const handleEditingEvent = (event) => {
+        isolateDirectorEditingEvent(event, overlay, isOpen);
+    };
     api.keyHandler = (event) => {
         if (!isOpen || event.key !== "Escape") return;
         // The editor's own confirmation/file dialogs own the first Escape.
@@ -209,6 +251,9 @@ export function createDirectorModal({
     languageButton.addEventListener("click", handleLanguageClick);
     closeButton.addEventListener("click", handleCloseClick);
     overlay.addEventListener("click", handleBackdropClick);
+    overlay.addEventListener("keydown", handleEditingEvent);
+    overlay.addEventListener("paste", handleEditingEvent);
+    overlay.addEventListener("beforeinput", handleEditingEvent);
     window.addEventListener("keydown", api.keyHandler, true);
     window.addEventListener("resize", scheduleResize);
     updateLocale();

@@ -49,10 +49,13 @@ from .context_cache import (
 )
 from .context_links import resolve_context_link
 from .execution_report import (
+    context_shortfall_warning,
     DirectorExecutionReport,
     format_audio_context,
+    format_effective_references,
     format_pin_handoff,
     format_previous_context,
+    normalize_seed_mode,
     segment_list,
     short_fingerprint,
 )
@@ -86,7 +89,8 @@ from .segment_runtime import (
 from .color_reanchor import (
     apply_seam_color_match,
     color_reanchor_cache_settings,
-    resolve_color_anchor,
+    establish_color_chain_baseline,
+    validate_color_anchor_statistics,
 )
 from .plan import (
     DirectorPlan,
@@ -118,6 +122,7 @@ from .source_bridge import (
     assemble_source_bridges,
     bridge_anchors,
     reference_bundles_match,
+    source_bridge_boundary_enabled,
     source_bridge_enabled,
     validate_source_bridge_frames,
 )
@@ -303,23 +308,8 @@ def _ref_video_audios_to_dict(items) -> dict | None:
     return out or None
 
 
-def _color_anchor_label(seg, anchor: torch.Tensor | None) -> str:
-    if not isinstance(anchor, torch.Tensor):
-        return "none"
-    task = str(getattr(seg, "task_key", "")).lower()
-    if task == "i2v":
-        return "I2V source image"
-    if task == "r2v":
-        return "Picture 1"
-    if task == "rv2v" and any(
-        int(getattr(ref, "index", -1)) == 0 for ref in (getattr(seg, "refs", None) or [])
-    ):
-        return "RV2V Picture 1"
-    if task == "rv2v":
-        return "RV2V source frame"
-    if task == "v2v":
-        return "V2V source frame"
-    return "original visual reference"
+def _color_anchor_label(anchor: dict[str, Any] | None) -> str:
+    return str((anchor or {}).get("source") or "none")
 
 
 def execute_director_plan_core(
@@ -364,23 +354,26 @@ def execute_director_plan_core(
     plan.color_reanchor_enabled = bool(color_reanchor_enabled)
     color_reanchor_requested = bool(color_reanchor_enabled)
     audio_context_requested = bool(audio_context_enabled)
-    audio_context_active = bool(
-        motion_enabled and audio_context_requested and audio_mode == AUDIO_MODE_GENERATE
+    audio_context_master_active = bool(
+        audio_context_requested and audio_mode == AUDIO_MODE_GENERATE
     )
-    bridge_feature_active = bool(
-        requested_source_bridge == 5
-        and any(seg.task_key in {"v2v", "rv2v"} for seg in plan.segments)
+    audio_context_active = bool(motion_enabled and audio_context_master_active)
+    bridge_feature_active = any(
+        source_bridge_boundary_enabled(left, right, requested_source_bridge)
+        for left, right in zip(plan.segments, plan.segments[1:])
     )
-    explicit_context_active = any(
-        bool(getattr(seg, "context_link", None) and seg.context_link.has_dependency)
+    has_explicit_context_links = any(
+        int(getattr(seg, "timeline_index", seg.index)) > 0
+        and getattr(seg, "context_link", None) is not None
         for seg in plan.segments
     )
-    explicit_visual_active = any(
-        bool(getattr(seg, "context_link", None) and seg.context_link.visual_enabled)
+    explicit_audio_active = any(
+        bool(getattr(seg, "context_link", None) and seg.context_link.audio_enabled)
         for seg in plan.segments
     )
-    context_pipeline_active = bool(motion_enabled or explicit_context_active)
-    visual_context_pipeline_active = bool(motion_enabled or explicit_visual_active)
+    context_pipeline_active = bool(
+        motion_enabled or (audio_context_master_active and explicit_audio_active)
+    )
     plan_spatial_stride = max(
         resolve_h3_spatial_stride(
             seg.task_key,
@@ -406,15 +399,15 @@ def execute_director_plan_core(
             )
 
     cache_settings: dict[str, Any] = {
-        "pipeline": "exported_motion_context_tail_v3",
+        "pipeline": "exported_motion_context_tail_v4_master_boundary_policy",
         "seed": int(seed),
         "cfg": float(cfg),
         "sampling_mode": sampling_mode,
         "motion_context_enabled": motion_enabled,
-        "audio_context_enabled": audio_context_active,
+        "audio_context_enabled": audio_context_master_active,
         "audio_mode": audio_mode,
         "context_length": requested_context,
-        "context_link_pipeline": "previous_context_link_v1",
+        "context_link_pipeline": "previous_context_link_v2_master_gated",
         "pin_renorm_enabled": bool(pin_renorm_enabled),
         "pin_renorm_pipeline": PIN_RENORM_PIPELINE,
         "model_class": type(getattr(model, "model", None)).__name__,
@@ -461,9 +454,14 @@ def execute_director_plan_core(
     source_bridge_pairs = [
         (left, right)
         for left, right in zip(all_segments, all_segments[1:])
-        if source_bridge_enabled(left.task_key, requested_source_bridge)
-        and source_bridge_enabled(right.task_key, requested_source_bridge)
+        if source_bridge_boundary_enabled(left, right, requested_source_bridge)
     ]
+    source_bridge_consumer_slots = {
+        int(right.timeline_index) for _left, right in source_bridge_pairs
+    }
+    source_bridge_segment_indices = {
+        int(seg.index) for pair in source_bridge_pairs for seg in pair
+    }
     persist_segment_cache = should_persist_segment_cache(
         plan,
         source_bridge_active=bool(source_bridge_pairs),
@@ -491,7 +489,7 @@ def execute_director_plan_core(
     reports.append(f"Legacy global Motion Context default: {'ON' if motion_enabled else 'OFF'}")
     reports.append(
         "Previous Context links: per-boundary Visual/Audio policy "
-        f"({'explicit' if explicit_context_active else 'legacy fallback'})"
+        f"({'explicit' if has_explicit_context_links else 'legacy fallback'})"
     )
     reports.append(f"Motion Context handoff: {LATENT_HANDOFF_PIPELINE} (latent-first)")
     reports.append(f"Context frames: {requested_context}")
@@ -607,9 +605,7 @@ def execute_director_plan_core(
 
         target_len = max(1, int(seg.frame_count or plan.total_frames or 124))
         timeline_slot = int(seg.timeline_index)
-        source_bridge_active = source_bridge_enabled(
-            seg.task_key, requested_source_bridge
-        )
+        source_bridge_active = timeline_slot in source_bridge_consumer_slots
         context_link = resolve_context_link(
             seg,
             motion_context_enabled=motion_enabled,
@@ -844,13 +840,21 @@ def execute_director_plan_core(
                     f"Segment {timeline_slot + 1}: requested {requested_context} "
                     f"context frames, using H3-valid exported tail {context_span}."
                 )
+            shortfall = context_shortfall_warning(
+                timeline_slot, requested_context, context_span
+            )
+            if shortfall:
+                warning_messages.append(shortfall)
             if color_reanchor_requested and apply_visual_context:
-                color_anchor = resolve_color_anchor(
-                    plan,
-                    seg,
-                    source_frames=body_raw,
-                    source_bridge_active=source_bridge_active,
+                color_anchor = validate_color_anchor_statistics(
+                    (context_entry.handoff or {}).get("color_anchor_stats")
                 )
+                if color_anchor is None:
+                    raise ValueError(
+                        f"Segment {timeline_slot + 1}: Color Re-anchor requires a valid "
+                        "visual-chain baseline cache. Run the chain root or full sequence "
+                        "once to rebuild the v6 context cache."
+                    )
         generation_request = target_len + context_span
         num_frames = minimax_align_frame_count(generation_request)
         if visible_clip_frames is not None:
@@ -946,6 +950,14 @@ def execute_director_plan_core(
                 name: fit_canvas(frames, ctx_w, ctx_h)
                 for name, frames in ref_videos.items()
             }
+
+        reference_diagnostics[timeline_slot] = format_effective_references(
+            timeline_slot,
+            ref_images=ref_images,
+            ref_videos=ref_videos,
+            ref_audios=ref_audios,
+            ref_video_audios=ref_video_audios,
+        )
 
         if seg.task_key in {"r2v", "v2v", "rv2v"} and (
             ref_images or ref_videos or ref_audios or ref_video_audios
@@ -1111,6 +1123,20 @@ def execute_director_plan_core(
             "export_frames": int(target_len),
             "sample_frames": int(num_frames),
         }
+        inherited_color_anchor = validate_color_anchor_statistics(
+            (context_entry.handoff or {}).get("color_anchor_stats")
+            if context_entry is not None else None
+        )
+        if color_reanchor_requested:
+            handoff["color_anchor_stats"] = (
+                inherited_color_anchor
+                if apply_visual_context and inherited_color_anchor is not None
+                else establish_color_chain_baseline(
+                    seg,
+                    generated_frames=chunk,
+                    source_frames=body_raw,
+                )
+            )
         if (
             apply_visual_context
             and motion_info is not None
@@ -1228,12 +1254,6 @@ def execute_director_plan_core(
             f"({target_len} frames, seed={seed})"
         )
         generated_indices.add(int(seg.index))
-        reference_diagnostics[timeline_slot] = (
-            f"S{timeline_slot + 1}: Picture x{len(seg.refs or [])} / "
-            f"Video x{len(getattr(seg, 'ref_videos', None) or [])} / "
-            f"Audio x{len(seg.ref_audios or [])}"
-        )
-
         diag = boundary_diagnostics[timeline_slot]
         if source_bridge_active:
             diag["visual_source"] = "Source Bridge"
@@ -1241,7 +1261,7 @@ def execute_director_plan_core(
             diag["visual_source"] = {
                 "latent": "AV latent",
                 "pixels (fallback)": "RGB fallback",
-                "pixels (Color Re-anchor)": "RGB fallback (Color Re-anchor)",
+                "pixels (Color Re-anchor)": "RGB re-encode (Color Re-anchor)",
                 "off": "none",
             }.get(motion_info.visual_source, motion_info.visual_source)
             diag["audio_source"] = {
@@ -1272,8 +1292,6 @@ def execute_director_plan_core(
                     reason = "Source Bridge owns visual continuation"
                 elif not apply_visual_context:
                     reason = context_link.visual_reason or "no visual previous context"
-                elif motion_info is not None and "pixels" in motion_info.visual_source:
-                    reason = "visual context used RGB fallback"
                 else:
                     reason = "no valid predecessor video latent"
                 pin_diagnostics[timeline_slot] = format_pin_handoff(
@@ -1286,22 +1304,34 @@ def execute_director_plan_core(
                 )
 
         if color_reanchor_requested and motion_info is not None:
-            color_diagnostics[timeline_slot] = (
-                f"S{timeline_slot + 1}: Color Re-anchor: "
-                f"{'ON' if motion_info.color_reanchor_status != 'OFF' else 'OFF'}\n"
-                f"Anchor: {_color_anchor_label(seg, color_anchor)}\n"
+            color_actual = motion_info.color_reanchor_status == "ON"
+            color_lines = [
+                f"S{timeline_slot + 1}: Color Re-anchor",
+                "requested: ON",
+                f"actual: {'ON' if color_actual else 'OFF'}",
+                f"Anchor: {_color_anchor_label(color_anchor)}",
+            ]
+            if not color_actual:
+                color_lines.append(f"reason: {motion_info.color_reanchor_status}")
+            color_lines.append(
                 f"Seam Color Match: {'applied' if seam_color_applied else 'not applied'}"
             )
+            color_diagnostics[timeline_slot] = "\n".join(color_lines)
         else:
             reason = ""
             if color_reanchor_requested and source_bridge_active:
                 reason = " (Source Bridge)"
             elif color_reanchor_requested and not apply_visual_context:
                 reason = " (no Visual Previous Context)"
-            color_diagnostics[timeline_slot] = (
-                f"S{timeline_slot + 1}: Color Re-anchor: OFF{reason}\n"
-                "Seam Color Match: not applied"
-            )
+            color_lines = [
+                f"S{timeline_slot + 1}: Color Re-anchor",
+                f"requested: {'ON' if color_reanchor_requested else 'OFF'}",
+                "actual: OFF",
+            ]
+            if reason:
+                color_lines.append(f"reason: {reason.strip(' ()')}")
+            color_lines.append("Seam Color Match: not applied")
+            color_diagnostics[timeline_slot] = "\n".join(color_lines)
         if source_bridge_active:
             reports.append(
                 f"Segment {ui_idx + 1}: visual Motion Context skipped; "
@@ -1334,10 +1364,6 @@ def execute_director_plan_core(
                     f"baseline std = {motion_info.pin_renorm_baseline_std}; "
                     f"input std = {motion_info.pin_renorm_input_std}; "
                     f"scale = {motion_info.pin_renorm_scale:.6f}"
-                )
-                warning_messages.append(
-                    f"S{timeline_slot + 1}: requested {requested_context} context frames "
-                    f"but only {context_span} were usable"
                 )
             reports.append(
                 f"Segment {ui_idx + 1}: Color Re-anchor: "
@@ -1380,7 +1406,7 @@ def execute_director_plan_core(
                 plan,
                 settings=cache_settings,
             )
-        if source_bridge_enabled(seg.task_key, requested_source_bridge):
+        if int(seg.index) in source_bridge_segment_indices:
             cached_context = load_motion_context_cache(
                 node_id,
                 seg,
@@ -1429,7 +1455,7 @@ def execute_director_plan_core(
                         "using partial regeneration."
                     )
 
-            if source_bridge_enabled(seg.task_key, requested_source_bridge):
+            if int(seg.index) in source_bridge_segment_indices:
                 nominal_generated_frames[int(seg.index)] = cached
 
             completed_outputs[seg.index] = cached
@@ -1727,7 +1753,7 @@ def execute_director_plan_core(
     for seg in all_segments:
         if (
             int(seg.index) in run_indices
-            and source_bridge_enabled(seg.task_key, requested_source_bridge)
+            and int(seg.index) in source_bridge_segment_indices
             and int(seg.index) in selected_results
         ):
             _report_resolved_preview(seg, selected_results[int(seg.index)][0])
@@ -1777,7 +1803,7 @@ def execute_director_plan_core(
         f"Reused from cache: {segment_list(cache_hit_indices)}",
         f"Skipped by run selection: {segment_list(skipped_indices)}",
         f"Run selection: {len(run_indices)}/{len(all_segments)}",
-        "Seed mode: fixed",
+        f"Seed mode: {normalize_seed_mode((plan.raw or {}).get('seedMode', (plan.raw or {}).get('seed_mode')))}",
         "Seeds: " + ", ".join(
             f"S{index + 1}={int(seed)}" for index in sorted(generated_indices)
         ) if generated_indices else "Seeds: none",
@@ -1810,9 +1836,7 @@ def execute_director_plan_core(
         diag = boundary_diagnostics.get(slot)
         if diag is None:
             seg = all_segments[slot]
-            source_bridge_active = source_bridge_enabled(
-                seg.task_key, requested_source_bridge
-            )
+            source_bridge_active = slot in source_bridge_consumer_slots
             resolved = resolve_context_link(
                 seg,
                 motion_context_enabled=motion_enabled,
@@ -1900,9 +1924,7 @@ def execute_director_plan_core(
         if slot not in reference_diagnostics and int(seg.index) in cache_hit_indices:
             execution_report.add(
                 "References",
-                f"S{slot + 1}: Picture x{len(seg.refs or [])} / "
-                f"Video x{len(getattr(seg, 'ref_videos', None) or [])} / "
-                f"Audio x{len(seg.ref_audios or [])} (cache reuse)",
+                f"S{slot + 1}: cache reuse; no H3 reference conditioning executed this run",
             )
 
     for message in dict.fromkeys(warning_messages):

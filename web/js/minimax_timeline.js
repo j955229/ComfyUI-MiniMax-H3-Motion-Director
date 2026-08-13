@@ -109,17 +109,19 @@ import {
     ensureRunSelectionSerialized,
 } from "./minimax_run_selection.mjs";
 import {
+    DIRECTOR_STATE_COLORS,
     VIDEO_CONTINUITY_STRATEGIES,
     applyVideoStrategyToWidgets,
+    handleDisabledWidgetCallback,
     migrateColorReanchorWidgetValues,
     normalizeSourceBridgeValue,
     resolveContinuityUiState,
     resolveH3SpatialStride,
-    restoreDisabledWidgetValue,
     setNodeInputTooltip,
     setWidgetTooltip,
     setWidgetVisibility,
     syncDisabledWidgetState,
+    toggleBooleanWidgetValue,
 } from "./minimax_continuity_ui.mjs";
 import {
     applyI18nDom,
@@ -134,11 +136,9 @@ import {
     applySamplingWidgetVisibility,
     migrateLegacySamplingControlNode,
     migrateLegacySamplingControlWorkflow,
+    seedControlModeFromWidgets,
 } from "./minimax_sampling_ui.js";
-import {
-    createDirectorModal,
-    DIRECTOR_LAUNCHER_HEIGHT,
-} from "./minimax_director_modal.js";
+import { createDirectorModal, DIRECTOR_LAUNCHER_HEIGHT } from "./minimax_director_modal.js";
 import {
     contextLinkMode,
     ensureTimelineContextLinks,
@@ -392,6 +392,29 @@ function applyDirectorWidgetLabels(node) {
         }
         const tipKey = DIRECTOR_WIDGET_TOOLTIP_KEYS[name];
         if (tipKey) setWidgetTooltip(w, t(tipKey), node);
+        const inputType = Array.isArray(w.inputData)
+            ? w.inputData[0]
+            : Array.isArray(w.input_data)
+                ? w.input_data[0]
+                : null;
+        if (String(w.type || "").toLowerCase() === "toggle" || inputType === "BOOLEAN") {
+            w.options = w.options || {};
+            if (!w._mmxDirectorBooleanRendererSnapshot) {
+                w._mmxDirectorBooleanRendererSnapshot = {
+                    draw: w.draw,
+                    hasOn: Object.prototype.hasOwnProperty.call(w.options, "on"),
+                    on: w.options.on,
+                    hasOff: Object.prototype.hasOwnProperty.call(w.options, "off"),
+                    off: w.options.off,
+                };
+            }
+            const snapshot = w._mmxDirectorBooleanRendererSnapshot;
+            if (snapshot.hasOn) w.options.on = snapshot.on;
+            else delete w.options.on;
+            if (snapshot.hasOff) w.options.off = snapshot.off;
+            else delete w.options.off;
+            w.draw = drawDirectorBooleanWidget;
+        }
         const gKey = DIRECTOR_GROUP_LABEL_KEYS[name] || w._mmxGroupI18nKey;
         if (gKey) {
             const label = t(gKey);
@@ -425,8 +448,8 @@ function drawContinuityToggle(ctx, width, y, label, checked, enabled) {
     const alpha = enabled ? 1 : 0.38;
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = "#252525";
-    ctx.strokeStyle = "#555";
+    ctx.fillStyle = DIRECTOR_STATE_COLORS.neutralBackground;
+    ctx.strokeStyle = DIRECTOR_STATE_COLORS.neutralBorder;
     ctx.lineWidth = 1;
     ctx.beginPath();
     if (ctx.roundRect) ctx.roundRect(margin, y + 1, width - margin * 2, rowH - 2, 5);
@@ -435,7 +458,7 @@ function drawContinuityToggle(ctx, width, y, label, checked, enabled) {
     ctx.stroke();
     const boxX = width - margin - 34;
     const boxY = y + 5;
-    ctx.fillStyle = checked ? "#4f9f72" : "#3a3a3a";
+    ctx.fillStyle = checked ? DIRECTOR_STATE_COLORS.activeBackground : "#3a3a3a";
     ctx.beginPath();
     if (ctx.roundRect) ctx.roundRect(boxX, boxY, 28, 14, 7);
     else ctx.rect(boxX, boxY, 28, 14);
@@ -499,8 +522,10 @@ function installContinuityCallbackGuard(node, widget) {
     widget._mmxContinuityCallbackGuarded = true;
     const original = widget.callback;
     widget.callback = function (...args) {
-        if (this._mmxContinuityDisabled) {
-            restoreDisabledWidgetValue(this);
+        const disposition = handleDisabledWidgetCallback(this, {
+            configuring: !!node._mmxContinuityConfiguring,
+        });
+        if (disposition === "block") {
             node.setDirtyCanvas?.(true, true);
             return undefined;
         }
@@ -712,17 +737,83 @@ function scheduleContinuityNodeResize(node, editor) {
 }
 
 function togglePinRenormFromContinuityFacade(node, event, pos) {
+    if (!node?._mmxContinuityUiState?.pinRenormControlEnabled) return false;
     const pin = node.widgets?.find((w) => w.name === "pin_renorm_enabled");
     if (!pin) return false;
-    const oldValue = !!pin.value;
-    const newValue = !oldValue;
-    pin.value = newValue;
-    pin.callback?.(newValue, app.canvas, node, pos, event);
-    node.onWidgetChanged?.("pin_renorm_enabled", newValue, oldValue, pin);
+    const changed = toggleBooleanWidgetValue(
+        node,
+        pin,
+        true,
+        [app.canvas, node, pos, event],
+    );
+    if (!changed) return false;
     (app.graph ?? app.canvas?.graph)?.change?.();
-    node.setDirtyCanvas?.(true, true);
     refreshDirectorContinuityUi(node);
     return true;
+}
+
+function drawDirectorBooleanWidget(ctx, _node, width, y, height = 20) {
+    const margin = 10;
+    const rowHeight = Math.max(18, Number(height) || 20);
+    const checked = this.value === true
+        || (typeof this.value === "string"
+            && !["", "0", "false", "off", "no"].includes(this.value.trim().toLowerCase()));
+    const x = margin;
+    const rowWidth = Math.max(20, width - margin * 2);
+    const trackWidth = 28;
+    const trackHeight = 14;
+    const trackX = width - margin - trackWidth - 5;
+    const trackY = y + (rowHeight - trackHeight) / 2;
+
+    ctx.save();
+    ctx.fillStyle = DIRECTOR_STATE_COLORS.neutralBackground;
+    ctx.strokeStyle = checked
+        ? DIRECTOR_STATE_COLORS.accent
+        : DIRECTOR_STATE_COLORS.neutralBorder;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(x, y + 1, rowWidth, rowHeight - 2, 5);
+    else ctx.rect(x, y + 1, rowWidth, rowHeight - 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = checked
+        ? DIRECTOR_STATE_COLORS.activeBackground
+        : "#3a3a3a";
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(trackX, trackY, trackWidth, trackHeight, 7);
+    else ctx.rect(trackX, trackY, trackWidth, trackHeight);
+    ctx.fill();
+
+    ctx.fillStyle = checked ? DIRECTOR_STATE_COLORS.accent : "#ddd";
+    ctx.beginPath();
+    ctx.arc(checked ? trackX + 20 : trackX + 8, trackY + 7, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#d8dce8";
+    ctx.font = "11px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(this.label || this.name || "", margin + 12, y + rowHeight / 2);
+    ctx.restore();
+}
+
+function ensurePinRenormProxy(node, pin) {
+    const existing = node.widgets?.find((w) => w.name === "mmx_pin_renorm_proxy");
+    if (existing) return existing;
+    const proxy = {
+        name: "mmx_pin_renorm_proxy",
+        type: "custom",
+        value: null,
+        serialize: false,
+        options: { serialize: false },
+        computeSize: (width) => [width, 24],
+        _mmxPinBackendWidget: pin,
+    };
+    const contextIndex = (node.widgets || []).findIndex((w) => w.name === "context_length");
+    const insertAt = contextIndex >= 0 ? contextIndex + 1 : (node.widgets?.length || 0);
+    node.widgets.splice(insertAt, 0, proxy);
+    return proxy;
 }
 
 function installDirectorContinuityUi(node) {
@@ -735,6 +826,7 @@ function installDirectorContinuityUi(node) {
     const pin = node.widgets?.find((w) => w.name === "pin_renorm_enabled");
     const experimental = node.widgets?.find((w) => w.name === "bd_grp_experimental");
     if (!source || !audio || !motion || !context || !color || !pin) return;
+    const pinProxy = ensurePinRenormProxy(node, pin);
     node._mmxContinuityUiInstalled = true;
 
     source.value = normalizeSourceBridgeValue(source.value);
@@ -744,6 +836,7 @@ function installDirectorContinuityUi(node) {
     }
     setWidgetVisibility(source, false);
     setWidgetVisibility(pin, false);
+    setWidgetVisibility(pinProxy, true);
     setWidgetVisibility(experimental, false);
     installContinuityCallbackGuard(node, motion);
     installContinuityCallbackGuard(node, context);
@@ -764,6 +857,7 @@ function refreshDirectorContinuityUi(node, editor = node?._minimaxEditor) {
     const color = node.widgets?.find((w) => w.name === "color_reanchor_enabled");
     const pin = node.widgets?.find((w) => w.name === "pin_renorm_enabled");
     const experimental = node.widgets?.find((w) => w.name === "bd_grp_experimental");
+    const pinProxy = node.widgets?.find((w) => w.name === "mmx_pin_renorm_proxy");
     const taskKey = editor?.getTaskKey?.() || resolveTaskKey(
         node.widgets?.find((w) => w.name === "task_type")?.value,
     );
@@ -793,9 +887,10 @@ function refreshDirectorContinuityUi(node, editor = node?._minimaxEditor) {
     restoreContinuityRenderer(source);
     restoreContinuityRenderer(audio);
     restoreContinuityRenderer(color);
-    const showPinFacade = segmentCount >= 2;
-    setWidgetVisibility(source, showPinFacade);
+    const showPinProxy = segmentCount >= 2;
+    setWidgetVisibility(source, false);
     setWidgetVisibility(pin, false);
+    setWidgetVisibility(pinProxy, showPinProxy);
     setWidgetVisibility(experimental, false);
     setWidgetVisibility(
         motion,
@@ -815,7 +910,8 @@ function refreshDirectorContinuityUi(node, editor = node?._minimaxEditor) {
     setContinuityWidgetEnabled(context, state.contextFramesControlEnabled);
     setContinuityWidgetEnabled(audio, state.audioContextControlEnabled);
     setContinuityWidgetEnabled(color, state.colorReanchorControlEnabled);
-    source._mmxContinuityDisabled = true;
+    setContinuityWidgetEnabled(pin, state.pinRenormControlEnabled);
+    setContinuityWidgetEnabled(pinProxy, state.pinRenormControlEnabled);
 
     audio.options = audio.options || {};
     motion.options = motion.options || {};
@@ -858,33 +954,39 @@ function refreshDirectorContinuityUi(node, editor = node?._minimaxEditor) {
 
     context.label = t("widget.contextLength");
     setWidgetTooltip(context, t("widget.tooltip.contextLength"), node);
-    source.type = "custom";
-    source.label = t("widget.pinRenormEnabled");
-    setWidgetTooltip(source, t("widget.tooltip.pinRenormEnabled"), node);
-    source.draw = function (ctx, drawNode, width, y) {
+    pinProxy.type = "custom";
+    pinProxy.label = t("widget.pinRenormEnabled");
+    setWidgetTooltip(
+        pinProxy,
+        state.pinRenormControlEnabled
+            ? t("widget.tooltip.pinRenormEnabled")
+            : t("widget.tooltip.pinRenormUnavailable"),
+        node,
+    );
+    pinProxy.draw = function (ctx, drawNode, width, y) {
         this._mmxPinRenormFacadeBounds = drawContinuityToggle(
             ctx,
             width,
             y,
             t("widget.pinRenormEnabled"),
             !!pin.value,
-            true,
+            !!drawNode._mmxContinuityUiState?.pinRenormControlEnabled,
         );
     };
-    source.mouse = function (event, pos, mouseNode) {
+    pinProxy.mouse = function (event, pos, mouseNode) {
         if (event.type !== "pointerdown" && event.type !== "mousedown") return false;
         if (!pointInBounds(pos, this._mmxPinRenormFacadeBounds)) return false;
         event.preventDefault?.();
         return togglePinRenormFromContinuityFacade(mouseNode, event, pos);
     };
-    source.onClick = function ({ e, node: clickNode, canvas }) {
+    pinProxy.onClick = function ({ e, node: clickNode, canvas }) {
         togglePinRenormFromContinuityFacade(
             clickNode,
             e,
             canvas?.graph_mouse || [0, 0],
         );
     };
-    installContinuityPointerClick(source, (event, pos, clickNode) => {
+    installContinuityPointerClick(pinProxy, (event, pos, clickNode) => {
         togglePinRenormFromContinuityFacade(clickNode, event, pos);
     });
     color.label = t("widget.colorReanchorEnabled");
@@ -1042,7 +1144,7 @@ function makeGroupHeaderWidget(inputName, inputData) {
 const STYLES = `
 .mmx-host{width:100%;box-sizing:border-box;display:block}
 /* min-height follows content estimate; avoid flex-grow voids when node is oversized. */
-.bd-wrap{font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;color:#e0e0e0;font-size:11px;display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box;position:relative;min-height:var(--comfy-widget-min-height,0px);height:auto}
+.bd-wrap{--mmx-accent:#4fff8f;--mmx-active-bg:#163723;--mmx-neutral-bg:#252525;--mmx-neutral-border:#555;--mmx-disabled:#777;--mmx-danger:#ef6b6b;--mmx-warning:#f0b85a;font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;color:#e0e0e0;font-size:11px;display:flex;flex-direction:column;gap:6px;width:100%;box-sizing:border-box;position:relative;min-height:var(--comfy-widget-min-height,0px);height:auto}
 .bd-main{flex:0 1 auto;min-height:0;display:flex;flex-direction:column;gap:6px;width:100%}
 .bd-modal-overlay{position:absolute;inset:0;z-index:200;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:10px;box-sizing:border-box;border-radius:6px}
 .bd-modal{background:#1e1e1e;border:1px solid #333;border-radius:6px;padding:12px;width:100%;max-width:460px;max-height:calc(100% - 8px);display:flex;flex-direction:column;gap:10px;box-shadow:0 10px 28px rgba(0,0,0,.5)}
@@ -1053,11 +1155,13 @@ const STYLES = `
 .bd-modal-list.hidden{display:none}
 .bd-modal-item{padding:7px 8px;border-radius:4px;cursor:pointer;color:#ccc;font-size:11px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:1px solid transparent}
 .bd-modal-item:hover{background:#252525;color:#eee}
-.bd-modal-item.selected{background:#2a2a2a;border-color:#4fff8f;color:#fff}
+.bd-modal-item.selected{background:#163723;border-color:#4fff8f;color:#4fff8f}
 .bd-modal-actions{display:flex;gap:8px;justify-content:flex-end;flex-shrink:0}
 .bd-toolbar-wrap{display:flex;flex-direction:column;gap:4px;width:100%}
-.bd-toolbar{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;width:100%}
-.bd-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex:1;min-width:0}
+.bd-toolbar{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:nowrap;gap:6px;width:100%}
+.bd-toolbar-left{display:flex;align-items:flex-start;gap:6px;flex:1 1 auto;min-width:0}
+.bd-task-anchor{display:flex;align-items:center;flex:0 0 auto;order:0}
+.bd-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex:1 1 auto;min-width:0;order:1}
 .bd-smart-split-msg{width:100%;box-sizing:border-box;font-size:11px;line-height:1.4;color:#f66;padding:0 2px;min-height:0}
 .bd-smart-split-msg.hidden{display:none!important}
 .bd-smart-split-msg.ok{color:#8c8}
@@ -1128,7 +1232,7 @@ const STYLES = `
 .bd-btn-primary{background:#1a3a2a;border-color:#4fff8f;color:#4fff8f}
 .bd-mode{display:flex;border:1px solid #333;border-radius:4px;overflow:hidden}
 .bd-mode button{border:none;background:#222;color:#aaa;padding:6px 12px;font-size:11px;cursor:pointer}
-.bd-mode button.active{background:#333;color:#fff}
+.bd-mode button.active{background:var(--mmx-active-bg);color:var(--mmx-accent)}
 .bd-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .bd-bounds,.bd-timecode{color:#aaa;font-size:11px}
 .bd-timecode{color:#fff;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -1195,7 +1299,7 @@ const STYLES = `
 .bd-rv2v-layout .bd-ref.bd-r2v-pic-hidden{display:none!important}
 .bd-rv2v-layout .bd-refs-images-wrap,.bd-rv2v-layout .bd-ref-audios-wrap{margin-top:0}
 .bd-select{background:#181818;border:1px solid #333;border-radius:4px;color:#eee;padding:4px 6px;font-size:11px;max-width:240px;box-sizing:border-box}
-.bd-actions>.bd-select{padding:6px 10px;font-size:11px;line-height:1.35;height:29px;min-height:29px;max-width:min(480px,55vw)}
+.bd-task-anchor>.bd-select{padding:6px 10px;font-size:11px;line-height:1.35;height:29px;min-height:29px;max-width:min(480px,55vw)}
 .bd-ref img{width:100%;height:100%;object-fit:cover}
 .bd-ref .x{position:absolute;top:1px;right:3px;color:#f88;font-size:12px;line-height:1;display:none}
 .bd-ref:hover .x{display:block}
@@ -2338,6 +2442,7 @@ class MiniMaxH3MotionDirectorEditor {
 
     buildTimelinePayload() {
         this.ensureContextLinks();
+        this.timeline.seedMode = seedControlModeFromWidgets(this.node?.widgets || []);
         if (this.isFl2vMode()) {
             const fl = buildFl2vPayloadFields(this);
             const outMode = this.timeline.output?.mode || "long_edge";
@@ -2540,7 +2645,11 @@ class MiniMaxH3MotionDirectorEditor {
         toolbarWrap.className = "bd-toolbar-wrap";
         toolbarWrap.innerHTML = `
             <div class="bd-toolbar">
-                <div class="bd-actions">
+                <div class="bd-toolbar-left">
+                  <div class="bd-task-anchor">
+                    <select class="bd-select" data-r="global-task" title="task_type"></select>
+                  </div>
+                  <div class="bd-actions">
                     <button type="button" class="bd-btn bd-btn-primary hidden" data-a="r2v-add-group" data-i18n="toolbar.addRefGroup" data-i18n-title="tooltip.addRefGroup">添加素材组</button>
                     <button type="button" class="bd-btn bd-btn-primary" data-a="video" data-i18n="toolbar.uploadVideo">上传视频</button>
                     <button type="button" class="bd-btn bd-btn-primary hidden" data-a="fl2v-add-shot" data-i18n="toolbar.addShot" data-i18n-title="tooltip.addShot">添加一组</button>
@@ -2559,8 +2668,8 @@ class MiniMaxH3MotionDirectorEditor {
                         <button type="button" data-a="mode-global" class="active" data-i18n="toolbar.modeGlobal">全局模式</button>
                         <button type="button" data-a="mode-segment" data-i18n="toolbar.modeSegment">分段模式</button>
                     </div>
-                    <select class="bd-select" data-r="global-task" title="task_type"></select>
                     <span class="bd-video-tag" data-r="video-name" data-i18n="toolbar.noVideo">未上传视频</span>
+                  </div>
                 </div>
                 <div class="bd-right">
                     <div class="bd-bounds" data-r="bounds">起点: 0.00 | 终点: -</div>
@@ -8169,10 +8278,10 @@ class MiniMaxH3MotionDirectorEditor {
             if (!g) continue;
             const mode = this.getSegmentContextMode(i);
             const colors = {
-                both: ["#163723", "#4fff8f"],
-                visual: ["#102b37", "#7ad6ff"],
-                audio: ["#2d1738", "#ddb1ff"],
-                off: ["#321818", "#ef9696"],
+                both: [DIRECTOR_STATE_COLORS.activeBackground, DIRECTOR_STATE_COLORS.accent],
+                visual: [DIRECTOR_STATE_COLORS.activeBackground, DIRECTOR_STATE_COLORS.accent],
+                audio: [DIRECTOR_STATE_COLORS.activeBackground, DIRECTOR_STATE_COLORS.accent],
+                off: [DIRECTOR_STATE_COLORS.neutralBackground, DIRECTOR_STATE_COLORS.neutralBorder],
             };
             const [fill, stroke] = colors[mode] || colors.off;
             this.ctx.save();
@@ -10157,7 +10266,18 @@ app.registerExtension({
             migrateLegacySamplingControlNode(arguments[0]);
             migrateColorReanchorWidgetValues(arguments[0], this.widgets || []);
             normalizeDirectorOutputs(this);
-            const out = onConfigure?.apply(this, arguments);
+            this._mmxContinuityConfiguring = true;
+            let out;
+            try {
+                out = onConfigure?.apply(this, arguments);
+            } finally {
+                this._mmxContinuityConfiguring = false;
+                for (const widget of this.widgets || []) {
+                    if (widget?._mmxContinuityDisabled) {
+                        widget._mmxContinuityStoredValue = widget.value;
+                    }
+                }
+            }
             setTimeout(() => {
                 finalizeDirectorWidgetOrder(this);
                 applyDirectorWidgetLabels(this);

@@ -1,0 +1,449 @@
+{
+  "status": "LIVE UI VALIDATED",
+  "comfyOrigin": "http://127.0.0.1:8190",
+  "widgetAudit": [
+    {
+      "index": 0,
+      "name": "task_type",
+      "type": "combo",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": "t2v — 文生视频(Text to Video)",
+      "drawName": ""
+    },
+    {
+      "index": 1,
+      "name": "global_prompt",
+      "type": "customtext",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": "",
+      "drawName": "draw"
+    },
+    {
+      "index": 2,
+      "name": "bd_grp_sample",
+      "type": "BDGROUP",
+      "hidden": false,
+      "optionHidden": false,
+      "size": [
+        620,
+        26
+      ],
+      "value": "采样设置",
+      "drawName": "draw"
+    },
+    {
+      "index": 3,
+      "name": "cfg",
+      "type": "number",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": 1,
+      "drawName": ""
+    },
+    {
+      "index": 4,
+      "name": "seed",
+      "type": "number",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": 0,
+      "drawName": ""
+    },
+    {
+      "index": 5,
+      "name": "control_after_generate",
+      "type": "combo",
+      "hidden": false,
+      "optionHidden": false,
+      "optionSerialize": false,
+      "size": null,
+      "value": "randomize",
+      "drawName": ""
+    },
+    {
+      "index": 6,
+      "name": "frame_rate",
+      "type": "number",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": 24,
+      "drawName": ""
+    },
+    {
+      "index": 7,
+      "name": "width",
+      "type": "number",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": 864,
+      "drawName": ""
+    },
+    {
+      "index": 8,
+      "name": "height",
+      "type": "number",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": 480,
+      "drawName": ""
+    },
+    {
+      "index": 9,
+      "name": "ref_max_size",
+      "type": "number",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": 864,
+      "drawName": ""
+    },
+    {
+      "index": 10,
+      "name": "total_frames",
+      "type": "number",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": 248,
+      "drawName": ""
+    },
+    {
+      "index": 11,
+      "name": "timeline_data",
+      "type": "customtext",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": "{\"version\":5,\"editMode\":\"segment\",\"totalFrames\":124,\"frameRate\":24,\"video\":{\"fileName\":\"\",\"videoFile\":\"\",\"subfolder\":\"\",\"type\":\"input\",\"frames\":[],\"frameMap\":[]},\"videoClips\":[],\"global\":{\"taskType\":\"t2v — 文生视频(Text to Video)\",\"prompt\":\"\",\"refs\":[],\"refAudios\":[],\"refVideos\":[],\"referenceVideo\":{},\"continuousReference\":false},\"output\":{\"mode\":\"fixed\",\"aspectRatio\":\"16:9 (宽屏)\",\"megapixels\":0.4,\"multiple\":32,\"longEdge\":864,\"width\":864,\"height\":480,\"maxExportFrames\":0,\"exportMode\":\"all\",\"audioMode\":\"generate\",\"continuityEnabled\":false,\"continuityOverlapFrames\":9},\"runSelectEnabled\":false,\"runSelection\":[],\"liveTaePreview\":true,\"segments\":[{\"id\":\"mss2ja6uu45y7\",\"start\":0,\"length\":124,\"frameCount\":124,\"durationSec\":5,\"prompt\":\"\",\"negativePrompt\":\"\",\"taskType\":\"\",\"refs\":[],\"refAudios\":[],\"refVideos\":[],\"genImage\":{\"imageFile\":\"\",\"fileName\":\"\"},\"contextLink\":{\"schema\":\"previous_context_link_v1\",\"enabled\":false,\"visual\":false,\"audio\":false}}],\"width\":864,\"height\":480,\"refMaxSize\":864,\"timelineMode\":\"prompt_batch\",\"seedMode\":\"randomize\"}",
+      "drawName": "draw"
+    },
+    {
+      "index": 12,
+      "name": "bd_grp_motion",
+      "type": "BDGROUP",
+      "hidden": false,
+      "optionHidden": false,
+      "size": [
+        620,
+        26
+      ],
+      "value": "跨段续接",
+      "drawName": "draw"
+    },
+    {
+      "index": 13,
+      "name": "motion_context_enabled",
+      "type": "toggle",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": true,
+      "drawName": "drawDirectorBooleanWidget"
+    },
+    {
+      "index": 14,
+      "name": "context_length",
+      "type": "number",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": 22,
+      "drawName": ""
+    },
+    {
+      "index": 15,
+      "name": "mmx_pin_renorm_proxy",
+      "type": "custom",
+      "hidden": false,
+      "optionHidden": false,
+      "serialize": false,
+      "optionSerialize": false,
+      "size": [
+        620,
+        24
+      ],
+      "value": null,
+      "drawName": ""
+    },
+    {
+      "index": 16,
+      "name": "source_overlap_frames",
+      "type": "number",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": 5,
+      "drawName": ""
+    },
+    {
+      "index": 17,
+      "name": "audio_context_enabled",
+      "type": "toggle",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": true,
+      "drawName": "drawDirectorBooleanWidget"
+    },
+    {
+      "index": 18,
+      "name": "color_reanchor_enabled",
+      "type": "toggle",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": true,
+      "drawName": "drawDirectorBooleanWidget"
+    },
+    {
+      "index": 19,
+      "name": "bd_grp_advanced",
+      "type": "BDGROUP",
+      "hidden": false,
+      "optionHidden": false,
+      "size": [
+        620,
+        26
+      ],
+      "value": "高级采样 · 采样：内部",
+      "drawName": "draw"
+    },
+    {
+      "index": 20,
+      "name": "steps",
+      "type": "number",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": 25,
+      "drawName": ""
+    },
+    {
+      "index": 21,
+      "name": "sampler_name",
+      "type": "combo",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": "res_multistep",
+      "drawName": ""
+    },
+    {
+      "index": 22,
+      "name": "scheduler",
+      "type": "combo",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": "simple",
+      "drawName": ""
+    },
+    {
+      "index": 23,
+      "name": "shift_video",
+      "type": "number",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": 12,
+      "drawName": ""
+    },
+    {
+      "index": 24,
+      "name": "shift_audio",
+      "type": "number",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": 3,
+      "drawName": ""
+    },
+    {
+      "index": 25,
+      "name": "bd_grp_experimental",
+      "type": "BDGROUP",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": "实验选项",
+      "drawName": "draw"
+    },
+    {
+      "index": 26,
+      "name": "pin_renorm_enabled",
+      "type": "toggle",
+      "hidden": true,
+      "optionHidden": true,
+      "size": [
+        0,
+        0
+      ],
+      "value": true,
+      "drawName": "drawDirectorBooleanWidget"
+    },
+    {
+      "index": 27,
+      "name": "bd_grp_perf",
+      "type": "BDGROUP",
+      "hidden": false,
+      "optionHidden": false,
+      "size": [
+        620,
+        26
+      ],
+      "value": "性能",
+      "drawName": "draw"
+    },
+    {
+      "index": 28,
+      "name": "clear_vram_between_segments",
+      "type": "toggle",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": true,
+      "drawName": "drawDirectorBooleanWidget"
+    },
+    {
+      "index": 29,
+      "name": "export_source_images",
+      "type": "toggle",
+      "hidden": false,
+      "optionHidden": false,
+      "size": null,
+      "value": false,
+      "drawName": "drawDirectorBooleanWidget"
+    },
+    {
+      "index": 30,
+      "name": "minimax_motion_director_ui",
+      "type": "director",
+      "hidden": false,
+      "optionHidden": false,
+      "size": [
+        620,
+        40
+      ],
+      "value": "",
+      "drawName": "draw"
+    }
+  ],
+  "selectorRects": {
+    "t2v": {
+      "x": 72.359375,
+      "y": 108.25,
+      "width": 157,
+      "height": 29
+    },
+    "i2v": {
+      "x": 72.359375,
+      "y": 108.25,
+      "width": 157,
+      "height": 29
+    },
+    "fl2v": {
+      "x": 72.359375,
+      "y": 108.25,
+      "width": 157,
+      "height": 29
+    },
+    "r2v": {
+      "x": 72.359375,
+      "y": 108.25,
+      "width": 157,
+      "height": 29
+    },
+    "v2v": {
+      "x": 72.359375,
+      "y": 108.25,
+      "width": 157,
+      "height": 29
+    },
+    "rv2v": {
+      "x": 72.359375,
+      "y": 108.25,
+      "width": 157,
+      "height": 29
+    }
+  },
+  "selectorMaxDelta": {
+    "x": 0,
+    "y": 0
+  },
+  "runSelection": {
+    "afterFirst": {
+      "enabled": true,
+      "active": true
+    },
+    "afterSecond": {
+      "enabled": false,
+      "active": false
+    }
+  },
+  "mentionState": {
+    "open": true,
+    "value": "@"
+  },
+  "modalPaste": {
+    "value": "PASTE_OK",
+    "nodeCount": 1
+  },
+  "beforeModalPasteNodes": 1,
+  "afterClosedPasteNodes": 2,
+  "consoleErrorCount": 0,
+  "nodeScreenshots": [
+    "D:\\tool\\git\\ComfyUI-MiniMax-H3-Motion-Director\\artifacts\\director_node_t2v.png",
+    "D:\\tool\\git\\ComfyUI-MiniMax-H3-Motion-Director\\artifacts\\director_node_i2v.png",
+    "D:\\tool\\git\\ComfyUI-MiniMax-H3-Motion-Director\\artifacts\\director_node_fl2v.png",
+    "D:\\tool\\git\\ComfyUI-MiniMax-H3-Motion-Director\\artifacts\\director_node_r2v.png",
+    "D:\\tool\\git\\ComfyUI-MiniMax-H3-Motion-Director\\artifacts\\director_node_v2v.png",
+    "D:\\tool\\git\\ComfyUI-MiniMax-H3-Motion-Director\\artifacts\\director_node_rv2v.png"
+  ],
+  "modalScreenshots": [
+    "D:\\tool\\git\\ComfyUI-MiniMax-H3-Motion-Director\\artifacts\\director_modal_t2v.png",
+    "D:\\tool\\git\\ComfyUI-MiniMax-H3-Motion-Director\\artifacts\\director_modal_r2v.png",
+    "D:\\tool\\git\\ComfyUI-MiniMax-H3-Motion-Director\\artifacts\\director_modal_rv2v.png"
+  ]
+}

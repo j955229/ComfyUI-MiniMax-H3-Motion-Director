@@ -6,6 +6,21 @@ const INTERNAL_SAMPLING_WIDGETS = Object.freeze([
     "shift_audio",
 ]);
 
+const SEED_CONTROL_MODES = new Set(["fixed", "increment", "decrement", "randomize"]);
+
+export function normalizeSeedControlMode(value) {
+    const mode = String(value || "").trim().toLowerCase();
+    return SEED_CONTROL_MODES.has(mode) ? mode : "unknown";
+}
+
+export function seedControlModeFromWidgets(widgets = []) {
+    const seed = widgets.find((widget) => widget?.name === "seed");
+    const control = seed?.linkedWidgets?.find((widget) => (
+        /control[_\s]?after[_\s]?generate/i.test(String(widget?.name || widget?.label || ""))
+    ));
+    return normalizeSeedControlMode(control?.value);
+}
+
 function hasLink(input) {
     return input?.link !== null && input?.link !== undefined;
 }

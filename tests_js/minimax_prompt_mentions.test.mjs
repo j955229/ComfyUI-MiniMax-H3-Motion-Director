@@ -7,6 +7,7 @@ import {
     createTimelineShortcutHandler,
     createListenerRegistry,
     filterMentionPickerItems,
+    isImmediateMentionTriggerEvent,
     isEditableTarget,
     isPromptEditingKey,
     mentionQueryFromText,
@@ -22,6 +23,24 @@ import {
 test("typing @ opens a query at the current prompt caret", () => {
     assert.deepEqual(mentionQueryFromText("scene @Pic", 10), { start: 6, query: "Pic" });
     assert.equal(mentionQueryFromText("scene without mention"), null);
+});
+
+test("beforeinput recognizes one focused @ keystroke immediately and ignores IME composition", () => {
+    assert.equal(isImmediateMentionTriggerEvent({
+        inputType: "insertText",
+        data: "@",
+        isComposing: false,
+    }), true);
+    assert.equal(isImmediateMentionTriggerEvent({
+        inputType: "insertText",
+        data: "@",
+        isComposing: true,
+    }), false);
+    assert.equal(isImmediateMentionTriggerEvent({
+        inputType: "insertText",
+        data: "x",
+        isComposing: false,
+    }), false);
 });
 
 test("disabled Common picker item is enabled, remapped and keeps its semantic identity", async () => {

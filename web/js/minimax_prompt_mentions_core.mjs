@@ -5,6 +5,17 @@ export function moveMentionActiveIndex(current, delta, length) {
     return (Number(current || 0) + Number(delta || 0) + length) % length;
 }
 
+export function isImmediateMentionTriggerEvent(event, {
+    destroyed = false,
+    composing = false,
+} = {}) {
+    return !destroyed
+        && !composing
+        && !event?.isComposing
+        && event?.inputType === "insertText"
+        && event?.data === "@";
+}
+
 export async function activateMentionItem(item, {
     enableItem,
     getItems,

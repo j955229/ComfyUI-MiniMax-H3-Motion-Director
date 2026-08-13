@@ -49,7 +49,7 @@ class _VideoVae:
     def encode(self, frames):
         self.calls += 1
         steps = {1: 1, 5: 2, 22: 7, 39: 12}[int(frames.shape[0])]
-        return torch.zeros((1, 1, steps, 2, 2))
+        return torch.arange(steps * 4, dtype=torch.float32).reshape(1, 1, steps, 2, 2)
 
 
 def _apply(
@@ -230,7 +230,7 @@ def test_inherited_pin_baseline_is_distinct_from_cache_source(monkeypatch):
     assert info.pin_renorm_scale != 1.0
 
 
-def test_pin_reports_pixel_visual_context_as_skipped(monkeypatch):
+def test_pin_applies_after_pixel_fallback_encode(monkeypatch):
     _vae, _color_calls, _merged, info = _apply(
         monkeypatch,
         context_latent=None,
@@ -239,5 +239,28 @@ def test_pin_reports_pixel_visual_context_as_skipped(monkeypatch):
         pin=True,
     )
     assert info.visual_source == "pixels (fallback)"
-    assert info.pin_renorm_status == "SKIPPED (pixel visual context)"
-    assert info.pin_renorm_baseline_std is None
+    assert info.pin_renorm_status == "APPLIED"
+    assert info.pin_renorm_baseline_std is not None
+
+
+def test_color_reanchor_and_pin_renorm_compose_in_order(monkeypatch):
+    _vae, color_calls, merged, info = _apply(
+        monkeypatch,
+        context_latent=_video_latent(42),
+        color=True,
+        audio=False,
+        visual=True,
+        pin=True,
+        baseline=0.75,
+        baseline_source="cache",
+    )
+    assert len(color_calls) == 1
+    assert info.visual_source == "pixels (Color Re-anchor)"
+    assert info.color_reanchor_status == "ON"
+    assert info.pin_renorm_status == "APPLIED"
+    assert info.pin_renorm_baseline_source == "cache"
+    assert info.pin_renorm_after_std == pytest.approx(0.75, abs=1e-5)
+    conditioned = torch.cat(
+        [item["latent"] for item in merged[0][1]["minimax_keyframes"]], dim=2
+    )
+    assert float(conditioned.std(unbiased=False)) == pytest.approx(0.75, abs=1e-5)

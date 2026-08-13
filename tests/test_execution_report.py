@@ -1,10 +1,40 @@
 from _minimax_h3_motion_director_testpkg.director.execution_report import (
+    context_shortfall_warning,
     DirectorExecutionReport,
     format_audio_context,
+    format_effective_references,
     format_pin_handoff,
     format_previous_context,
+    normalize_seed_mode,
     segment_list,
 )
+
+
+def test_context_warning_only_exists_for_a_real_shortfall():
+    assert context_shortfall_warning(1, 22, 22) is None
+    assert context_shortfall_warning(1, 22, 39) is None
+    assert context_shortfall_warning(1, 22, 5) == (
+        "S2: requested 22 context frames but only 5 were usable"
+    )
+
+
+def test_seed_mode_reports_only_real_comfyui_modes():
+    assert normalize_seed_mode("fixed") == "fixed"
+    assert normalize_seed_mode("increment") == "increment"
+    assert normalize_seed_mode("decrement") == "decrement"
+    assert normalize_seed_mode("randomize") == "randomize"
+    assert normalize_seed_mode(None) == "unknown"
+    assert normalize_seed_mode("unexpected") == "unknown"
+
+
+def test_effective_reference_counts_use_final_conditioning_mappings():
+    assert format_effective_references(
+        1,
+        ref_images={"ref_image_0": object(), "ref_image_1": object()},
+        ref_videos={"ref_video_0": object()},
+        ref_audios={"ref_audio_0": object()},
+        ref_video_audios={"ref_video_audio_0": object()},
+    ) == "S2: Picture x2 / Video x1 / Audio x2"
 
 
 def test_report_has_stable_sections_and_omits_empty_warnings():
@@ -92,8 +122,12 @@ def test_visual_off_audio_on_report_keeps_paths_independent():
     }
     previous = format_previous_context(0, 1, diag)
     audio = format_audio_context(0, 1, diag)
-    assert "Visual: OFF (Context Link visual disabled)" in previous
-    assert "Audio: ON" in previous
+    assert "Visual requested: OFF" in previous
+    assert "Visual actual: OFF" in previous
+    assert "Visual reason: Context Link visual disabled" in previous
+    assert "Audio requested: ON" in previous
+    assert "Audio actual: ON" in previous
+    assert "Audio reason: per-boundary link" in previous
     assert "requested: ON" in audio and "actual: ON" in audio
     assert "source: audio latent" in audio
 
@@ -113,7 +147,29 @@ def test_visual_on_audio_off_and_non_generate_audio_reason_are_explicit():
     }
     previous = format_previous_context(1, 2, diag)
     audio = format_audio_context(1, 2, diag)
-    assert "Visual: ON" in previous and "Visual source: AV latent" in previous
-    assert "Audio: OFF (output audio mode is not generate)" in previous
+    assert "Visual requested: ON" in previous
+    assert "Visual actual: ON" in previous
+    assert "Visual source: AV latent" in previous
+    assert "Audio requested: ON" in previous
+    assert "Audio actual: OFF" in previous
+    assert "Audio reason: output audio mode is not generate" in previous
     assert "requested: ON" in audio and "actual: OFF" in audio
     assert "reason: output audio mode is not generate" in audio
+
+
+def test_source_bridge_is_reported_as_actual_visual_continuity():
+    text = format_previous_context(0, 1, {
+        "requested_visual": True,
+        "requested_audio": False,
+        "visual": False,
+        "audio": False,
+        "visual_reason": "Source Bridge owns visual continuity",
+        "audio_reason": "Context Link audio disabled",
+        "visual_source": "Source Bridge",
+        "audio_source": "none",
+        "requested_frames": 22,
+        "actual_frames": 0,
+    })
+    assert "Visual requested: ON" in text
+    assert "Visual actual: ON" in text
+    assert "Visual source: Source Bridge" in text

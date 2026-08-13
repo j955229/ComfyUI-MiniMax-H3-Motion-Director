@@ -43,7 +43,7 @@ def _plan(frames=5):
 def test_cache_fingerprint_uses_bridge_v3_and_compatibility_setting_name():
     fingerprint = segment_cache.segment_cache_fingerprint(_segment(), _plan(5))
 
-    assert H3_SOURCE_BRIDGE_PIPELINE == "v2v_rv2v_source_bridge_v3"
+    assert H3_SOURCE_BRIDGE_PIPELINE == "v2v_rv2v_source_bridge_v4_boundary_links"
     assert fingerprint["source_bridge_pipeline"] == H3_SOURCE_BRIDGE_PIPELINE
     assert fingerprint["source_overlap_frames"] == 5
     assert "source_overlap_pipeline" not in fingerprint

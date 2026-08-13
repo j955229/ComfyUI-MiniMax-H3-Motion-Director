@@ -8,7 +8,8 @@ import torch
 
 
 COLOR_REANCHOR_STRENGTH = 0.5
-COLOR_REANCHOR_PIPELINE = "color_reanchor_v2"
+COLOR_REANCHOR_PIPELINE = "color_reanchor_chain_baseline_v3"
+COLOR_ANCHOR_POLICY = "visual_chain_root_v1"
 
 SEAM_COLOR_MATCH_STRENGTH = 0.65
 SEAM_COLOR_MATCH_FRAMES = 24
@@ -17,19 +18,17 @@ SEAM_COLOR_REFERENCE_FRAMES = 4
 
 def apply_color_reanchor(
     frames: torch.Tensor,
-    anchor: torch.Tensor | None,
+    anchor: torch.Tensor | dict[str, Any] | None,
     *,
     strength: float = COLOR_REANCHOR_STRENGTH,
     eps: float = 1e-6,
 ) -> torch.Tensor:
     """Blend per-frame RGB statistics toward one stable visual anchor."""
-    if anchor is None or not isinstance(anchor, torch.Tensor) or int(anchor.numel()) == 0:
+    if anchor is None:
         return frames
     if not isinstance(frames, torch.Tensor) or frames.ndim != 4 or int(frames.shape[0]) == 0:
         return frames
-    if anchor.ndim == 3:
-        anchor = anchor.unsqueeze(0)
-    if anchor.ndim != 4 or int(frames.shape[-1]) < 3 or int(anchor.shape[-1]) < 3:
+    if int(frames.shape[-1]) < 3:
         raise ValueError("Color Re-anchor expects IMAGE tensors shaped [F,H,W,C] with RGB channels.")
 
     amount = min(1.0, max(0.0, float(strength)))
@@ -38,11 +37,25 @@ def apply_color_reanchor(
 
     source_dtype = frames.dtype
     rgb = frames[..., :3].float()
-    anchor_rgb = anchor[..., :3].to(device=frames.device, dtype=torch.float32)
     frame_mean = rgb.mean(dim=(1, 2), keepdim=True)
     frame_std = rgb.std(dim=(1, 2), keepdim=True, unbiased=False)
-    anchor_mean = anchor_rgb.mean(dim=(0, 1, 2), keepdim=True)
-    anchor_std = anchor_rgb.std(dim=(0, 1, 2), keepdim=True, unbiased=False)
+    if isinstance(anchor, dict):
+        anchor_mean = torch.as_tensor(anchor.get("mean"), device=frames.device, dtype=torch.float32)
+        anchor_std = torch.as_tensor(anchor.get("std"), device=frames.device, dtype=torch.float32)
+        if anchor_mean.numel() != 3 or anchor_std.numel() != 3:
+            raise ValueError("Color Re-anchor baseline statistics must contain three RGB values.")
+        anchor_mean = anchor_mean.reshape(1, 1, 1, 3)
+        anchor_std = anchor_std.reshape(1, 1, 1, 3)
+    elif isinstance(anchor, torch.Tensor) and int(anchor.numel()) > 0:
+        if anchor.ndim == 3:
+            anchor = anchor.unsqueeze(0)
+        if anchor.ndim != 4 or int(anchor.shape[-1]) < 3:
+            raise ValueError("Color Re-anchor expects IMAGE tensors shaped [F,H,W,C] with RGB channels.")
+        anchor_rgb = anchor[..., :3].to(device=frames.device, dtype=torch.float32)
+        anchor_mean = anchor_rgb.mean(dim=(0, 1, 2), keepdim=True)
+        anchor_std = anchor_rgb.std(dim=(0, 1, 2), keepdim=True, unbiased=False)
+    else:
+        return frames
     matched = ((rgb - frame_mean) / (frame_std + float(eps))) * anchor_std + anchor_mean
     blended = (rgb * (1.0 - amount) + matched * amount).clamp(0.0, 1.0)
 
@@ -181,6 +194,39 @@ def apply_seam_color_match(
 
     return out
 
+def color_anchor_statistics(frames: torch.Tensor, *, source: str) -> dict[str, Any]:
+    if not isinstance(frames, torch.Tensor) or frames.ndim != 4 or int(frames.shape[0]) <= 0:
+        raise ValueError("Color Re-anchor cannot establish a baseline from empty frames.")
+    rgb = frames[..., :3].detach().float().cpu()
+    return {
+        "policy": COLOR_ANCHOR_POLICY,
+        "source": str(source),
+        "mean": [float(value) for value in rgb.mean(dim=(0, 1, 2)).tolist()],
+        "std": [float(value) for value in rgb.std(dim=(0, 1, 2), unbiased=False).tolist()],
+    }
+
+
+def validate_color_anchor_statistics(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or value.get("policy") != COLOR_ANCHOR_POLICY:
+        return None
+    try:
+        mean = [float(item) for item in value["mean"]]
+        std = [float(item) for item in value["std"]]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if len(mean) != 3 or len(std) != 3:
+        return None
+    values = torch.tensor(mean + std, dtype=torch.float32)
+    if not bool(torch.isfinite(values).all()) or bool((torch.tensor(std) < 0).any()):
+        return None
+    return {
+        "policy": COLOR_ANCHOR_POLICY,
+        "source": str(value.get("source") or "visual chain root"),
+        "mean": mean,
+        "std": std,
+    }
+
+
 def _picture_one(segment) -> torch.Tensor | None:
     for ref in getattr(segment, "refs", None) or []:
         tensor = getattr(ref, "tensor", None)
@@ -221,14 +267,6 @@ def resolve_color_anchor(
                 anchor = source[:1]
         return anchor
 
-    if task_key == "r2v":
-        return _picture_one(segment)
-
-    if task_key == "rv2v":
-        picture = _picture_one(segment)
-        if picture is not None:
-            return picture
-
     if task_key in {"v2v", "rv2v"}:
         if isinstance(source_frames, torch.Tensor) and source_frames.ndim == 4:
             if int(source_frames.shape[0]) > 0:
@@ -236,21 +274,50 @@ def resolve_color_anchor(
     return None
 
 
+def establish_color_chain_baseline(
+    segment,
+    *,
+    generated_frames: torch.Tensor,
+    source_frames: torch.Tensor | None = None,
+) -> dict[str, Any]:
+    """Create one persistent baseline at the root of a visual chain."""
+    task_key = str(getattr(segment, "task_key", "")).lower()
+    if task_key == "i2v":
+        source = getattr(segment, "source_clip", None)
+        if isinstance(source, torch.Tensor) and source.ndim == 4 and int(source.shape[0]) > 0:
+            return color_anchor_statistics(source[:1], source="I2V chain-root source image")
+    if task_key == "fl2v":
+        first = _picture_one(segment)
+        if first is not None:
+            return color_anchor_statistics(first[:1], source="FL2V chain-root First Frame")
+    if task_key in {"v2v", "rv2v"}:
+        if isinstance(source_frames, torch.Tensor) and source_frames.ndim == 4 and int(source_frames.shape[0]) > 0:
+            return color_anchor_statistics(source_frames[:1], source=f"{task_key.upper()} chain-root source video")
+    # T2V/R2V and source-less fallbacks intentionally use the generated chain
+    # root. Picture refs remain identity references and never become a grade.
+    return color_anchor_statistics(generated_frames, source=f"{task_key.upper()} chain-root generated result")
+
+
 def color_reanchor_cache_settings(enabled: bool) -> dict[str, Any]:
     return {
         "color_reanchor_enabled": bool(enabled),
         "color_reanchor_pipeline": COLOR_REANCHOR_PIPELINE,
+        "color_anchor_policy": COLOR_ANCHOR_POLICY,
     }
 
 
 __all__ = [
     "COLOR_REANCHOR_PIPELINE",
+    "COLOR_ANCHOR_POLICY",
     "COLOR_REANCHOR_STRENGTH",
     "SEAM_COLOR_MATCH_STRENGTH",
     "SEAM_COLOR_MATCH_FRAMES",
     "SEAM_COLOR_REFERENCE_FRAMES",
     "apply_color_reanchor",
     "apply_seam_color_match",
+    "color_anchor_statistics",
     "color_reanchor_cache_settings",
+    "establish_color_chain_baseline",
     "resolve_color_anchor",
+    "validate_color_anchor_statistics",
 ]

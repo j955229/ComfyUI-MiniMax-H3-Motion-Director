@@ -48,10 +48,10 @@ def _plan(*segments):
         color_reanchor_enabled=False,
         raw={"video": {}},
         cache_settings={
-            "motion_context_enabled": False,
-            "audio_context_enabled": False,
+            "motion_context_enabled": True,
+            "audio_context_enabled": True,
             "audio_mode": "generate",
-            "context_link_pipeline": "previous_context_link_v1",
+            "context_link_pipeline": "previous_context_link_v2_master_gated",
         },
     )
 

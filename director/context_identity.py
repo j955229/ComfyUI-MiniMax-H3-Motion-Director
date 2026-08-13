@@ -10,10 +10,10 @@ import torch
 
 from ..lib.tensor_fingerprint import tensor_fingerprint
 from .context_links import context_link_identity, resolve_context_link
-from .source_bridge import source_bridge_enabled
+from .source_bridge import source_bridge_boundary_enabled
 
 
-PRODUCER_IDENTITY_SCHEMA = "previous_context_segment_dependencies_v2"
+PRODUCER_IDENTITY_SCHEMA = "previous_context_segment_dependencies_v3_master_boundary"
 _CONSUMER_ONLY_SETTINGS = {
     "context_length",
     "latent_handoff_pipeline",
@@ -164,14 +164,26 @@ def _uses_incoming_context(seg, plan, settings: dict[str, Any]) -> bool:
         )
         or 0
     )
+    slot = int(getattr(seg, "timeline_index", seg.index))
+    previous = next(
+        (
+            candidate for candidate in getattr(plan, "segments", None) or []
+            if int(getattr(candidate, "timeline_index", candidate.index)) == slot - 1
+        ),
+        None,
+    )
+    bridge_active = bool(
+        previous is not None
+        and source_bridge_boundary_enabled(previous, seg, source_bridge_frames)
+    )
     link = resolve_context_link(
         seg,
         motion_context_enabled=bool((settings or {}).get("motion_context_enabled", False)),
         audio_context_enabled=bool((settings or {}).get("audio_context_enabled", False)),
         audio_generate=str((settings or {}).get("audio_mode", "generate")) == "generate",
-        source_bridge_active=source_bridge_enabled(str(seg.task_key), source_bridge_frames),
+        source_bridge_active=bridge_active,
     )
-    return link.has_dependency
+    return bool(link.has_dependency or bridge_active)
 
 
 def context_producer_fingerprint(seg, plan, settings: dict[str, Any]) -> dict[str, Any]:

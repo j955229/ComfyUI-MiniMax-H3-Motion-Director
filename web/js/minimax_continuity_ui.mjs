@@ -9,6 +9,16 @@ export const VIDEO_CONTINUITY_STRATEGIES = Object.freeze({
     OFF: "off",
 });
 
+export const DIRECTOR_STATE_COLORS = Object.freeze({
+    accent: "#4fff8f",
+    activeBackground: "#163723",
+    neutralBackground: "#252525",
+    neutralBorder: "#555555",
+    disabled: "#777777",
+    danger: "#ef6b6b",
+    warning: "#f0b85a",
+});
+
 const BRIDGE_TASKS = new Set(["v2v", "rv2v"]);
 const MOTION_CONTEXT_TASKS = new Set(["t2v", "i2v", "r2v", "fl2v"]);
 const VISUAL_MOTION_CONTEXT_TASKS = new Set(["t2v", "i2v", "r2v", "fl2v", "v2v", "rv2v"]);
@@ -120,6 +130,19 @@ export function restoreDisabledWidgetValue(widget) {
     widget.value = widget._mmxContinuityStoredValue;
 }
 
+export function handleDisabledWidgetCallback(widget, {
+    configuring = false,
+} = {}) {
+    if (!widget?._mmxContinuityDisabled) return "allow";
+    if (configuring) {
+        // onConfigure is loading the workflow's authoritative serialized value.
+        widget._mmxContinuityStoredValue = widget.value;
+        return "allow";
+    }
+    restoreDisabledWidgetValue(widget);
+    return "block";
+}
+
 export function notifyWidgetValueChange(node, widget, nextValue, callbackArgs = []) {
     if (!widget || Object.is(widget.value, nextValue)) return false;
     const oldValue = widget.value;
@@ -129,6 +152,11 @@ export function notifyWidgetValueChange(node, widget, nextValue, callbackArgs = 
     node?.graph?.incrementVersion?.();
     node?.setDirtyCanvas?.(true, true);
     return true;
+}
+
+export function toggleBooleanWidgetValue(node, widget, enabled, callbackArgs = []) {
+    if (!enabled || !widget) return false;
+    return notifyWidgetValueChange(node, widget, !boolValue(widget.value), callbackArgs);
 }
 
 export function applyVideoStrategyToWidgets({
@@ -204,13 +232,11 @@ export function resolveContinuityUiState({
     const videoMotionUi = mode === "video_strategy"
         && videoStrategy === VIDEO_CONTINUITY_STRATEGIES.MOTION_CONTEXT;
     const motionActive = (generatedMotionUi && motionOn) || videoMotionUi;
-    const colorTask = task === "i2v" || task === "r2v";
-    const showColorReanchor = (generatedMotionUi && colorTask) || videoMotionUi;
+    const supportedVisualTask = VISUAL_MOTION_CONTEXT_TASKS.has(task);
+    const showColorReanchor = multiSegment && supportedVisualTask;
     const showContextFrames = generatedMotionUi || videoMotionUi;
-    const showAudioContinuation = generatedMotionUi || videoMotionUi;
-    const generatedAudioContinuationActive = generatedMotionUi && motionActive;
-    const videoEditAudioContinuationActive = videoMotionUi
-        && motionActive
+    const showAudioContinuation = multiSegment && supportedVisualTask;
+    const audioContinuationActive = showAudioContinuation
         && String(audioMode || "generate").toLowerCase() === "generate";
 
     return {
@@ -225,14 +251,13 @@ export function resolveContinuityUiState({
         showContextFrames,
         showAudioContinuation,
         showVisualContinuitySelector: mode === "video_strategy",
-        showBridgeLength: mode === "video_strategy"
-            && videoStrategy === VIDEO_CONTINUITY_STRATEGIES.SOURCE_BRIDGE,
+        showBridgeLength: false,
         showColorReanchor,
         motionContextControlEnabled: generatedMotionUi,
         contextFramesControlEnabled: motionActive,
-        audioContextControlEnabled: generatedAudioContinuationActive
-            || videoEditAudioContinuationActive,
+        audioContextControlEnabled: audioContinuationActive,
         colorReanchorControlEnabled: showColorReanchor && motionActive,
         colorReanchorEnabled: boolValue(colorReanchorEnabled),
+        pinRenormControlEnabled: multiSegment && supportedVisualTask && motionActive,
     };
 }

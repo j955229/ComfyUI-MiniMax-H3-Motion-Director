@@ -45,13 +45,16 @@ test("pin_renorm widgets are appended after the legacy serialized widget sequenc
 
 test("Latent Scale Lock is visually proxied into continuity without moving serialization", () => {
     const context = nodeSource.indexOf('"context_length"');
-    const sourceFacade = nodeSource.indexOf('"source_overlap_frames"', context);
-    const audio = nodeSource.indexOf('"audio_context_enabled"', sourceFacade);
-    assert.ok(context >= 0 && sourceFacade > context && audio > sourceFacade);
-    assert.match(timeline, /const showPinFacade = segmentCount >= 2/);
+    const source = nodeSource.indexOf('"source_overlap_frames"', context);
+    const audio = nodeSource.indexOf('"audio_context_enabled"', source);
+    assert.ok(context >= 0 && source > context && audio > source);
+    assert.match(timeline, /name: "mmx_pin_renorm_proxy"/);
+    assert.match(timeline, /serialize: false/);
+    assert.match(timeline, /options: \{ serialize: false \}/);
     assert.match(timeline, /setWidgetVisibility\(experimental, false\)/);
-    assert.match(timeline, /source\.label = t\("widget\.pinRenormEnabled"\)/);
-    assert.match(timeline, /onWidgetChanged\?\.\("pin_renorm_enabled", newValue, oldValue, pin\)/);
+    assert.doesNotMatch(timeline, /source\.label = t\("widget\.pinRenormEnabled"\)/);
+    assert.match(timeline, /toggleBooleanWidgetValue\([\s\S]*?pin/);
+    assert.match(timeline, /setWidgetVisibility\(source, false\)/);
     assert.match(timeline, /setWidgetVisibility\(pin, false\)/);
 });
 

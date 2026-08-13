@@ -56,6 +56,8 @@ def _settings(**updates):
         "sampler": "euler",
         "scheduler": "simple",
         "motion_context_enabled": True,
+        "audio_context_enabled": True,
+        "audio_mode": "generate",
         "source_overlap_frames": 0,
         **updates,
     }

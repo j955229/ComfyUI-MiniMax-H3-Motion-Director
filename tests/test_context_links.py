@@ -29,13 +29,36 @@ def test_explicit_boundary_supports_independent_visual_and_audio(visual, audio):
     seg = _segment(1, ContextLink(visual or audio, visual, audio))
     resolved = resolve_context_link(
         seg,
-        motion_context_enabled=False,
-        audio_context_enabled=False,
+        motion_context_enabled=True,
+        audio_context_enabled=True,
         audio_generate=True,
         source_bridge_active=False,
     )
     assert (resolved.visual, resolved.audio) == (visual, audio)
     assert resolved.explicit is True
+
+
+def test_explicit_links_are_gated_by_independent_node_masters():
+    seg = _segment(1, ContextLink(True, True, True))
+    visual_off = resolve_context_link(
+        seg,
+        motion_context_enabled=False,
+        audio_context_enabled=True,
+        audio_generate=True,
+        source_bridge_active=False,
+    )
+    assert (visual_off.visual, visual_off.audio) == (False, True)
+    assert visual_off.visual_reason == "Motion Context master disabled"
+
+    audio_off = resolve_context_link(
+        seg,
+        motion_context_enabled=True,
+        audio_context_enabled=False,
+        audio_generate=True,
+        source_bridge_active=False,
+    )
+    assert (audio_off.visual, audio_off.audio) == (True, False)
+    assert audio_off.audio_reason == "generated audio continuation master disabled"
 
 
 def test_segment_one_can_never_inherit_previous_context():
@@ -90,7 +113,7 @@ def test_source_bridge_only_suppresses_visual_channel():
     resolved = resolve_context_link(
         seg,
         motion_context_enabled=False,
-        audio_context_enabled=False,
+        audio_context_enabled=True,
         audio_generate=True,
         source_bridge_active=True,
     )
@@ -101,8 +124,8 @@ def test_explicit_i2v_image_resets_visual_but_not_explicit_audio():
     seg = _segment(1, ContextLink(True, True, True), task="i2v", source_clip=object())
     resolved = resolve_context_link(
         seg,
-        motion_context_enabled=False,
-        audio_context_enabled=False,
+        motion_context_enabled=True,
+        audio_context_enabled=True,
         audio_generate=True,
         source_bridge_active=False,
     )

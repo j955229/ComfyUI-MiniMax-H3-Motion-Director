@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+    DIRECTOR_STATE_COLORS,
     SOURCE_BRIDGE_FIXED_FRAMES,
     VIDEO_CONTINUITY_STRATEGIES,
     applyVideoStrategyToWidgets,
+    handleDisabledWidgetCallback,
     migrateColorReanchorWidgetValues,
     normalizeSourceBridgeValue,
     notifyWidgetValueChange,
@@ -15,6 +17,7 @@ import {
     setWidgetTooltip,
     setWidgetVisibility,
     syncDisabledWidgetState,
+    toggleBooleanWidgetValue,
     videoStrategyBackendPatch,
 } from "../web/js/minimax_continuity_ui.mjs";
 
@@ -63,7 +66,7 @@ for (const taskKey of ["t2v", "i2v", "r2v", "fl2v"]) {
         assert.equal(actual.showVisualContinuitySelector, false);
         assert.equal(actual.showBridgeLength, false);
         assert.equal(actual.videoStrategy, null);
-        assert.equal(actual.showColorReanchor, ["i2v", "r2v"].includes(taskKey));
+        assert.equal(actual.showColorReanchor, true);
     });
 }
 
@@ -74,11 +77,14 @@ for (const taskKey of ["v2v", "rv2v"]) {
         assert.equal(actual.videoStrategy, VIDEO_CONTINUITY_STRATEGIES.SOURCE_BRIDGE);
         assert.equal(actual.sourceBridgeValue, 5);
         assert.equal(actual.showVisualContinuitySelector, true);
-        assert.equal(actual.showBridgeLength, true);
+        assert.equal(actual.showBridgeLength, false);
         assert.equal(actual.showMotionContext, false);
         assert.equal(actual.showContextFrames, false);
-        assert.equal(actual.showAudioContinuation, false);
-        assert.equal(actual.showColorReanchor, false);
+        assert.equal(actual.showAudioContinuation, true);
+        assert.equal(actual.audioContextControlEnabled, true);
+        assert.equal(actual.showColorReanchor, true);
+        assert.equal(actual.colorReanchorControlEnabled, false);
+        assert.equal(actual.pinRenormControlEnabled, false);
     });
 
     test(`${taskKey.toUpperCase()} source 0 plus Motion Context true selects Motion Context`, () => {
@@ -90,6 +96,7 @@ for (const taskKey of ["v2v", "rv2v"]) {
         assert.equal(actual.showContextFrames, true);
         assert.equal(actual.showAudioContinuation, true);
         assert.equal(actual.showColorReanchor, true);
+        assert.equal(actual.pinRenormControlEnabled, true);
     });
 
     test(`${taskKey.toUpperCase()} source 0 plus Motion Context false selects Off`, () => {
@@ -99,8 +106,11 @@ for (const taskKey of ["v2v", "rv2v"]) {
         assert.equal(actual.showBridgeLength, false);
         assert.equal(actual.showMotionContext, false);
         assert.equal(actual.showContextFrames, false);
-        assert.equal(actual.showAudioContinuation, false);
-        assert.equal(actual.showColorReanchor, false);
+        assert.equal(actual.showAudioContinuation, true);
+        assert.equal(actual.audioContextControlEnabled, true);
+        assert.equal(actual.showColorReanchor, true);
+        assert.equal(actual.colorReanchorControlEnabled, false);
+        assert.equal(actual.pinRenormControlEnabled, false);
     });
 }
 
@@ -151,27 +161,25 @@ test("Motion Context OFF keeps dependent controls visible but disabled for gener
     assert.equal(actual.showContextFrames, true);
     assert.equal(actual.showAudioContinuation, true);
     assert.equal(actual.contextFramesControlEnabled, false);
-    assert.equal(actual.audioContextControlEnabled, false);
+    assert.equal(actual.audioContextControlEnabled, true);
 });
 
 for (const taskKey of ["t2v", "i2v", "r2v", "fl2v"]) {
-    test(`${taskKey.toUpperCase()} generated-audio continuation ignores hidden audio mode`, () => {
-        for (const audioMode of ["generate", "source", "mute"]) {
-            const actual = state({ taskKey, motionContextEnabled: true, audioMode });
-            assert.equal(actual.showAudioContinuation, true);
-            assert.equal(actual.audioContextControlEnabled, true);
-        }
+    test(`${taskKey.toUpperCase()} generated-audio continuation requires generate mode`, () => {
+        assert.equal(state({ taskKey, audioMode: "generate" }).audioContextControlEnabled, true);
+        assert.equal(state({ taskKey, audioMode: "source" }).audioContextControlEnabled, false);
+        assert.equal(state({ taskKey, audioMode: "mute" }).audioContextControlEnabled, false);
     });
 }
 
-test("I2V Motion Context OFF disables generated-audio continuation", () => {
+test("I2V generated-audio continuation remains independent from Motion Context", () => {
     const actual = state({
         taskKey: "i2v",
         motionContextEnabled: false,
-        audioMode: "mute",
+        audioMode: "generate",
     });
     assert.equal(actual.showAudioContinuation, true);
-    assert.equal(actual.audioContextControlEnabled, false);
+    assert.equal(actual.audioContextControlEnabled, true);
 });
 
 for (const taskKey of ["v2v", "rv2v"]) {
@@ -207,17 +215,14 @@ test("unrelated tasks expose no continuity controls", () => {
     assert.equal(actual.showColorReanchor, false);
 });
 
-test("Color Re-anchor is visible only for supported active Motion Context paths", () => {
-    for (const taskKey of ["i2v", "r2v"]) {
+test("Color Re-anchor is visible for every multi-segment visual task and disabled off-path", () => {
+    for (const taskKey of ["t2v", "i2v", "fl2v", "r2v"]) {
         const enabled = state({ taskKey, motionContextEnabled: true });
         assert.equal(enabled.showColorReanchor, true);
         assert.equal(enabled.colorReanchorControlEnabled, true);
         const disabled = state({ taskKey, motionContextEnabled: false });
         assert.equal(disabled.showColorReanchor, true);
         assert.equal(disabled.colorReanchorControlEnabled, false);
-    }
-    for (const taskKey of ["t2v", "fl2v"]) {
-        assert.equal(state({ taskKey }).showColorReanchor, false);
     }
     for (const taskKey of ["v2v", "rv2v"]) {
         assert.equal(state({
@@ -229,14 +234,32 @@ test("Color Re-anchor is visible only for supported active Motion Context paths"
             taskKey,
             sourceBridgeValue: 5,
             motionContextEnabled: true,
-        }).showColorReanchor, false);
+        }).colorReanchorControlEnabled, false);
         assert.equal(state({
             taskKey,
             sourceBridgeValue: 0,
             motionContextEnabled: false,
-        }).showColorReanchor, false);
+        }).colorReanchorControlEnabled, false);
     }
     assert.equal(state({ taskKey: "i2v", segmentCount: 1 }).showColorReanchor, false);
+});
+
+test("pin_renorm is enabled only when visual Motion Context can actually run", () => {
+    for (const taskKey of ["t2v", "i2v", "fl2v", "r2v"]) {
+        assert.equal(state({ taskKey, motionContextEnabled: true }).pinRenormControlEnabled, true);
+        assert.equal(state({ taskKey, motionContextEnabled: false }).pinRenormControlEnabled, false);
+    }
+    for (const taskKey of ["v2v", "rv2v"]) {
+        assert.equal(state({ taskKey, sourceBridgeValue: 0, motionContextEnabled: true }).pinRenormControlEnabled, true);
+        assert.equal(state({ taskKey, sourceBridgeValue: 5 }).pinRenormControlEnabled, false);
+        assert.equal(state({ taskKey, sourceBridgeValue: 0, motionContextEnabled: false }).pinRenormControlEnabled, false);
+    }
+});
+
+test("Director state colors use one active green and neutral off token", () => {
+    assert.equal(DIRECTOR_STATE_COLORS.accent, "#4fff8f");
+    assert.equal(DIRECTOR_STATE_COLORS.activeBackground, "#163723");
+    assert.equal(DIRECTOR_STATE_COLORS.neutralBackground, "#252525");
 });
 
 test("legacy workflow values insert Color Re-anchor false without shifting later widgets", () => {
@@ -402,4 +425,32 @@ test("strategy selection changes the real backend widgets and preserves unrelate
     ]);
     assert.equal(node.contextFrames, 1);
     assert.equal(node.audioContextEnabled, true);
+});
+
+test("disabled callback accepts serialized workflow values only during onConfigure", () => {
+    const widget = {
+        value: false,
+        _mmxContinuityDisabled: true,
+        _mmxContinuityStoredValue: true,
+    };
+    assert.equal(handleDisabledWidgetCallback(widget), "block");
+    assert.equal(widget.value, true);
+
+    widget.value = false;
+    assert.equal(handleDisabledWidgetCallback(widget, { configuring: true }), "allow");
+    assert.equal(widget.value, false);
+    assert.equal(widget._mmxContinuityStoredValue, false);
+});
+
+test("pin proxy toggles only the real pin backend widget", () => {
+    const calls = [];
+    const pin = { name: "pin_renorm_enabled", value: false };
+    const node = {
+        onWidgetChanged(name, value, oldValue) { calls.push([name, value, oldValue]); },
+    };
+    assert.equal(toggleBooleanWidgetValue(node, pin, true), true);
+    assert.equal(pin.value, true);
+    assert.deepEqual(calls, [["pin_renorm_enabled", true, false]]);
+    assert.equal(toggleBooleanWidgetValue(node, pin, false), false);
+    assert.equal(pin.value, true);
 });

@@ -343,9 +343,9 @@ S1 → S2 → S3 × S4 → S5
 
 - 点击主图标：在“Visual + Audio 都继承”与“全部断开”之间切换。
 - 点击卡片连接器旁的 `⋯`，或在视频时间线连接图标上按右键：分别设置 Visual 与 Audio。
-- 绿色表示 Visual + Audio；蓝色表示只有 Visual；紫色表示只有 Audio；红色 `×` 表示完全断开。
+- 所有启用状态统一使用绿色；`V`、`A`、`↔` 文字区分 Visual、Audio 或两者。灰色 `×` 表示完全断开。
 
-旧 workflow 没有这些边界字段。第一次加载时，Director 会依据旧的全局 `Motion Context`、`Audio Context`、音频模式与 Source Bridge 设置推导相同行为，不会让旧项目突然全部断链，也不会突然开启以前没有的声音续接。旧的全局开关仍作为旧 workflow 与新分段的默认值；真正执行时，以已经保存的每段边界状态为准。
+旧 workflow 没有这些边界字段。第一次加载时，Director 会依据旧的全局 `Motion Context`、`Audio Context`、音频模式与 Source Bridge 设置推导相同行为，不会让旧项目突然全部断链，也不会突然开启以前没有的声音续接。新 workflow 中，节点级 Motion/Audio 开关是 master；每段 Context Link 决定该边界是否使用已经开启的能力。关闭 master 不会删除已保存的每边界选择，重新打开后会恢复。
 
 ## Visual Previous Context
 
@@ -355,7 +355,7 @@ Visual Context 会把上一段最终有效输出的 video latent tail 交给下�
 1 / 5 / 22 / 39
 ```
 
-Director 优先使用保存的 video latent；只有无法使用 latent 或开启 Color Re-anchor 时才走 RGB fallback。这个路径只负责最近一段的动作状态，不会把生成结果自动加入人物参考素材，也不会建立 recent generated memory bank。
+Director 优先使用保存的 video latent；只有无法使用 latent 时才走 RGB fallback。开启 Color Re-anchor 时会明确使用 `RGB re-anchor → VAE encode` 路径。这个路径只负责最近一段的动作状态，不会把生成结果自动加入人物参考素材，也不会建立 recent generated memory bank。
 
 如果 I2V 当前段明确上传了新图片，这张图片仍是当前段的首帧基准，Visual Previous Context 会在该边界 reset。Audio 可以独立保持开启，所以可以做到“换场景，但 BGM / ambience 继续”。
 
@@ -392,9 +392,9 @@ S1 → S2 → S3 × S4 → S5
 
 ## pin_renorm（Experimental）
 
-UI 中显示为“潜变量尺度锁定”，位于“跨段续接”的上下文帧数与音频续接之间，默认关闭。底层 backend widget 仍保留在序列化列表末尾；前端只使用原有 Source Bridge 隐藏行做代理显示，因此旧 workflow 的 widget index 不会发生错位。
+UI 中显示为“潜变量尺度锁定”，位于“跨段续接”的上下文帧数与音频续接之间，默认关闭。底层 `pin_renorm_enabled` widget 仍保留在原序列化列表末尾；前端使用独立、`serialize=false` 的专用代理控件。`source_overlap_frames` 只代表 Source Bridge，不再冒充潜变量尺度锁定，因此旧 workflow 的 widget index 不会发生错位。
 
-执行后，Director Report 会显示每次 handoff 的 baseline 来源、校正前后标准差、scale、`mean_abs_delta` 与 `max_abs_delta`。若实际走的是 RGB fallback、Source Bridge 或没有 Visual Previous Context，也会明确显示 `SKIPPED` 原因。
+执行后，Director Report 会显示每次 handoff 的 baseline 来源、校正前后标准差、scale、`mean_abs_delta` 与 `max_abs_delta`。RGB fallback 与 Color Re-anchor 的 VAE 重编码 latent 也能继续执行尺度锁定；只有 Source Bridge、视觉续接关闭或没有可用 Visual Previous Context 时才会显示 `SKIPPED`。
 
 开启后，第一份 Visual handoff 会记录该连续链的 video latent 标准差作为 baseline。后续每次把 video latent tail 注入下一段前，只把它的尺度重新校准到这个 baseline 附近：保留 latent 的平均值、内容、姿势与运动方向，只抑制长链中的统计尺度漂移。
 
@@ -455,7 +455,9 @@ Color Re-anchor 用来降低多段链式生成中的累积性色彩漂移。
 
 Source Bridge 路径不会使用 Color Re-anchor。
 
-Color Re-anchor 的长期颜色基准来自用户原始 Picture 或当前 source；Seam Color Match 只用上一段尾部处理相邻接缝。两者不会把 S1 的生成色彩递归当成 S2、S3、S4 的长期标准。
+Color Re-anchor 的长期基准与 visual chain 绑定：T2V/R2V 使用链根第一段生成结果；I2V 使用链根 source image；FL2V 优先使用链根 First Frame；V2V/RV2V 使用链根 source video。R2V/RV2V 的 Picture 1 只负责人设，不再被当成整段场景的颜色基准。Visual Context Link 断开后旧基准立即结束，新链会建立并持久化自己的 RGB mean/std。Seam Color Match 只在同一条启用的 Visual link 上处理相邻接缝。
+
+Color Re-anchor 与潜变量尺度锁定可以同时开启，执行顺序是：`exported RGB tail → Color Re-anchor → VAE encode → pin_renorm → H3`。
 
 ---
 

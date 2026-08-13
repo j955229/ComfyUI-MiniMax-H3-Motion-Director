@@ -95,6 +95,7 @@ def test_persisted_latent_tail_can_serve_every_supported_context_length(
     [
         (1, "minimax_h3_motion_director_av_latent_handoff_v1"),
         (2, "minimax_h3_motion_director_av_latent_tail_v2"),
+        (5, "minimax_h3_motion_director_av_latent_tail_v5"),
     ],
 )
 def test_old_or_stale_latent_cache_is_not_mistaken_for_current_handoff(
@@ -129,3 +130,25 @@ def test_pin_renorm_baseline_survives_disk_cache_round_trip(monkeypatch, tmp_pat
     )
     assert loaded is not None
     assert loaded.handoff["pin_renorm_baseline_std"] == 1.125
+
+
+def test_color_chain_baseline_survives_disk_cache_round_trip(monkeypatch, tmp_path):
+    from _minimax_h3_motion_director_testpkg.director.color_reanchor import (
+        color_anchor_statistics,
+    )
+
+    seg, plan, latent, handoff = _objects()
+    monkeypatch.setattr(latent_context_cache, "_cache_root", lambda _node: tmp_path)
+    monkeypatch.setattr(latent_context_cache, "context_fingerprint", lambda *_a, **_k: {"fp": 1})
+    baseline = color_anchor_statistics(
+        torch.full((2, 2, 2, 3), 0.25), source="T2V chain-root generated result"
+    )
+    handoff["color_anchor_stats"] = baseline
+    assert latent_context_cache.save_latent_context_cache(
+        "node", seg, plan, latent=latent, handoff=handoff, settings={}
+    )
+    loaded = latent_context_cache.load_latent_context_cache(
+        "node", seg, plan, settings={}
+    )
+    assert loaded is not None
+    assert loaded.handoff["color_anchor_stats"] == baseline

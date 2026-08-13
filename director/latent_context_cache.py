@@ -16,9 +16,9 @@ from .segment_cache import _write_via_temp
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.latent_context_cache")
 
-LATENT_CACHE_VERSION = 5
-LATENT_CACHE_FORMAT = "minimax_h3_motion_director_av_latent_tail_v5"
-LATENT_HANDOFF_PIPELINE = "motion_context_latent_tail_v5_pin_renorm_selected_context"
+LATENT_CACHE_VERSION = 6
+LATENT_CACHE_FORMAT = "minimax_h3_motion_director_av_latent_tail_v6"
+LATENT_HANDOFF_PIPELINE = "motion_context_latent_tail_v6_color_chain_pin_composed"
 MAX_PERSISTED_CONTEXT_FRAMES = 39
 
 
@@ -143,6 +143,11 @@ def prepare_latent_context_tail(
     baseline = handoff.get("pin_renorm_baseline_std")
     if baseline is not None:
         tail_handoff["pin_renorm_baseline_std"] = float(baseline)
+    from .color_reanchor import validate_color_anchor_statistics
+
+    color_anchor = validate_color_anchor_statistics(handoff.get("color_anchor_stats"))
+    if color_anchor is not None:
+        tail_handoff["color_anchor_stats"] = color_anchor
     return tail_latent, tail_handoff
 
 
@@ -249,6 +254,13 @@ def load_latent_context_cache(
             if not torch.isfinite(torch.tensor(baseline)) or baseline <= 0:
                 return None
             clean_handoff["pin_renorm_baseline_std"] = baseline
+        from .color_reanchor import validate_color_anchor_statistics
+
+        if handoff.get("color_anchor_stats") is not None:
+            color_anchor = validate_color_anchor_statistics(handoff["color_anchor_stats"])
+            if color_anchor is None:
+                return None
+            clean_handoff["color_anchor_stats"] = color_anchor
         stored = clean_handoff["stored_tail_frames"]
         if stored not in {1, 5, 22, 39}:
             return None

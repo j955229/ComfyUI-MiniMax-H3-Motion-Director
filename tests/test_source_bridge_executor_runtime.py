@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from _minimax_h3_motion_director_testpkg.director.context_links import ContextLink
+
 
 def _segment(index: int, start: int, end: int, task_key: str):
     return SimpleNamespace(
@@ -40,8 +42,9 @@ class _VAE:
 
 @pytest.mark.parametrize("task_key", ["v2v", "rv2v"])
 @pytest.mark.parametrize("selection_run", [False, True])
+@pytest.mark.parametrize("boundary_connected", [True, False])
 def test_executor_runs_nominal_segments_then_native_bridge(
-    monkeypatch, task_key, selection_run
+    monkeypatch, task_key, selection_run, boundary_connected
 ):
     """Runs with real ComfyUI imports when available; GPU/model work is mocked."""
     try:
@@ -55,6 +58,11 @@ def test_executor_runs_nominal_segments_then_native_bridge(
         _segment(0, 0, 121, task_key),
         _segment(1, 121, 243, task_key),
     ]
+    segments[1].context_link = ContextLink(
+        boundary_connected,
+        boundary_connected,
+        False,
+    )
     if task_key == "rv2v":
         for segment in segments:
             segment.refs = [
@@ -174,12 +182,33 @@ def test_executor_runs_nominal_segments_then_native_bridge(
         clear_vram_between_segments=False,
     )
     if selection_run:
+        if not boundary_connected:
+            combined, outputs, _audios, report = executor.execute_director_plan_core(
+                **execute_kwargs
+            )
+            assert [call["length"] for call in calls] == [124]
+            assert int(combined.shape[0]) == 122
+            assert [int(tensor.shape[0]) for tensor in outputs] == [122]
+            assert "source frames = 119..123" not in report
+            return
         with pytest.raises(
             ValueError,
             match="Source Bridge requires both adjacent generated segments",
         ):
             executor.execute_director_plan_core(**execute_kwargs)
         assert [call["length"] for call in calls] == [124]
+        return
+
+    if not boundary_connected:
+        combined, outputs, audios, report = executor.execute_director_plan_core(
+            **execute_kwargs
+        )
+        assert [call["length"] for call in calls] == [124, 124]
+        assert [int(tensor.shape[0]) for tensor in outputs] == [121, 122]
+        assert int(combined.shape[0]) == 243
+        assert len(audios) == 2
+        assert "source frames = 119..123" not in report
+        assert "Source Bridge" not in report.split("[Previous Context]", 1)[-1].split("[Latent Scale Lock]", 1)[0]
         return
 
     combined, outputs, audios, report = executor.execute_director_plan_core(

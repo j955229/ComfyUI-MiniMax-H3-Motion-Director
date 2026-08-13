@@ -26,6 +26,7 @@ import {
     computeMentionMenuPosition,
     createListenerRegistry,
     filterMentionPickerItems,
+    isImmediateMentionTriggerEvent,
     isPromptEditingKey,
     moveMentionActiveIndex,
     promptValueNeedsRender,
@@ -50,7 +51,7 @@ const MENTION_STYLES = `
 .bd-mention-menu{position:fixed;z-index:160;min-width:0;overflow:auto;background:#252525;border:1px solid #444;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);padding:4px 0}
 .bd-mention-menu.hidden{display:none!important}.bd-mention-title{padding:6px 10px 4px;font-size:10px;color:#888;user-select:none}
 .bd-mention-kind-title{padding:6px 10px 3px;border-top:1px solid #343434;font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#777;user-select:none}
-.bd-mention-item{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:11px;color:#ddd}.bd-mention-item:hover,.bd-mention-item.active{background:#333;color:#fff}
+.bd-mention-item{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:11px;color:#ddd}.bd-mention-item:hover{background:#333;color:#fff}.bd-mention-item.active{background:#163723;color:#4fff8f}
 .bd-mention-item[data-state="disabled"] .bd-mention-label{color:#ffb66e}
 .bd-mention-item img{width:36px;height:36px;object-fit:cover;border-radius:4px;flex-shrink:0;background:#111;border:1px solid #333}.bd-mention-item .bd-mention-label{font-weight:650;color:#4fff8f}.bd-mention-item .bd-mention-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#aaa}
 .bd-mention-empty{padding:10px 12px;font-size:11px;color:#888;text-align:center;line-height:1.4}
@@ -473,15 +474,7 @@ export function wirePromptImageMentions(editor, textarea, getMedia, options = {}
     };
 
     const onRichBeforeInput = (event) => {
-        if (
-            destroyed
-            || composing
-            || event.isComposing
-            || event.inputType !== "insertText"
-            || event.data !== "@"
-        ) {
-            return;
-        }
+        if (!isImmediateMentionTriggerEvent(event, { destroyed, composing })) return;
 
         const selection = window.getSelection?.();
         if (!selection?.rangeCount) return;

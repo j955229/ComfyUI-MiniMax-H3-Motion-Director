@@ -58,6 +58,24 @@ test("Run Selection mutation synchronously serializes timeline_data before retur
     assert.equal(runSelectionStateMatchesSerialized(editor), true);
 });
 
+test("Run Selection can be turned off by clicking the same toggle a second time", () => {
+    const editor = makeEditor();
+    const toggle = () => commitRunSelectionMutation(editor, () => {
+        editor.timeline.runSelectEnabled = !editor.timeline.runSelectEnabled;
+        if (editor.timeline.runSelectEnabled && !editor.timeline.runSelection.length) {
+            editor.timeline.runSelection = [0, 1, 2];
+        }
+    });
+
+    toggle();
+    assert.equal(editor.timeline.runSelectEnabled, true);
+    assert.equal(JSON.parse(editor.timelineWidget.value).runSelectEnabled, true);
+
+    toggle();
+    assert.equal(editor.timeline.runSelectEnabled, false);
+    assert.equal(JSON.parse(editor.timelineWidget.value).runSelectEnabled, false);
+});
+
 test("cancel Segment 1 and queue at 0ms still serializes only Segment 2/3", () => {
     assert.equal(typeof ensureRunSelectionSerialized, "function");
     const editor = makeEditor({ enabled: true, selection: [0, 1, 2] });

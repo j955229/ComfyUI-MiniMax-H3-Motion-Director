@@ -36,6 +36,40 @@ def fmt_float(value: Any) -> str:
     return f"{float(value):.6f}"
 
 
+def context_shortfall_warning(segment_slot: int, requested: int, actual: int) -> str | None:
+    if int(actual) >= int(requested):
+        return None
+    return (
+        f"S{int(segment_slot) + 1}: requested {int(requested)} context frames "
+        f"but only {int(actual)} were usable"
+    )
+
+
+SEED_MODES = frozenset({"fixed", "increment", "decrement", "randomize"})
+
+
+def normalize_seed_mode(value: Any) -> str:
+    """Return ComfyUI's actual seed-control mode without inventing a default."""
+    mode = str(value or "").strip().lower()
+    return mode if mode in SEED_MODES else "unknown"
+
+
+def format_effective_references(
+    segment_slot: int,
+    *,
+    ref_images: dict[str, Any] | None,
+    ref_videos: dict[str, Any] | None,
+    ref_audios: dict[str, Any] | None,
+    ref_video_audios: dict[str, Any] | None,
+) -> str:
+    """Count only reference mappings actually passed to H3 conditioning."""
+    return (
+        f"S{int(segment_slot) + 1}: Picture x{len(ref_images or {})} / "
+        f"Video x{len(ref_videos or {})} / "
+        f"Audio x{len(ref_audios or {}) + len(ref_video_audios or {})}"
+    )
+
+
 @dataclass
 class DirectorExecutionReport:
     sections: dict[str, list[str]] = field(
@@ -94,16 +128,20 @@ def format_pin_handoff(
 
 
 def format_previous_context(from_segment: int, to_segment: int, diag: dict[str, Any]) -> str:
-    visual = "ON" if diag["visual"] else f"OFF ({diag['visual_reason']})"
-    audio = "ON" if diag["audio"] else f"OFF ({diag['audio_reason']})"
+    visual_source = str(diag.get("visual_source", "none"))
+    visual_actual = bool(diag.get("visual") or visual_source == "Source Bridge")
     lines = [
         f"S{from_segment + 1} -> S{to_segment + 1}:",
-        f"Visual: {visual}",
-        f"Visual source: {diag.get('visual_source', 'none')}",
+        f"Visual requested: {'ON' if diag.get('requested_visual') else 'OFF'}",
+        f"Visual actual: {'ON' if visual_actual else 'OFF'}",
+        f"Visual source: {visual_source}",
+        f"Visual reason: {diag.get('visual_reason', 'none')}",
         f"Requested frames: {diag.get('requested_frames', 0)}",
         f"Actual frames: {diag.get('actual_frames', 0)}",
-        f"Audio: {audio}",
+        f"Audio requested: {'ON' if diag.get('requested_audio') else 'OFF'}",
+        f"Audio actual: {'ON' if diag.get('audio') else 'OFF'}",
         f"Audio source: {diag.get('audio_source', 'none')}",
+        f"Audio reason: {diag.get('audio_reason', 'none')}",
     ]
     if diag.get("bridge_details"):
         lines.append(str(diag["bridge_details"]))
@@ -125,9 +163,12 @@ def format_audio_context(from_segment: int, to_segment: int, diag: dict[str, Any
 __all__ = [
     "DirectorExecutionReport",
     "fmt_float",
+    "context_shortfall_warning",
     "format_audio_context",
+    "format_effective_references",
     "format_pin_handoff",
     "format_previous_context",
+    "normalize_seed_mode",
     "segment_list",
     "short_fingerprint",
 ]

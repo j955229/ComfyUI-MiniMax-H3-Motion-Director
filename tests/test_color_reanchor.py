@@ -109,15 +109,15 @@ def test_i2v_anchor_uses_initial_image_until_explicit_reset_then_updates():
     assert torch.equal(color.resolve_color_anchor(plan, segments[3]), image_b)
 
 
-def test_r2v_uses_effective_picture_one_without_reimplementing_inheritance():
+def test_r2v_picture_one_is_identity_only_and_never_a_color_anchor():
     picture = torch.full((1, 2, 2, 3), 0.35)
     inherited_segment = _segment(1, "r2v", picture=picture)
     plan = SimpleNamespace(segments=[inherited_segment])
 
-    assert torch.equal(color.resolve_color_anchor(plan, inherited_segment), picture)
+    assert color.resolve_color_anchor(plan, inherited_segment) is None
 
 
-def test_v2v_uses_current_source_start_and_rv2v_prefers_picture_then_falls_back():
+def test_v2v_and_rv2v_use_source_video_even_when_rv2v_has_picture_one():
     source = torch.stack(
         [torch.full((2, 2, 3), 0.15), torch.full((2, 2, 3), 0.75)]
     )
@@ -129,7 +129,7 @@ def test_v2v_uses_current_source_start_and_rv2v_prefers_picture_then_falls_back(
 
     assert torch.equal(color.resolve_color_anchor(plan, v2v, source_frames=source), source[:1])
     assert torch.equal(
-        color.resolve_color_anchor(plan, rv2v_picture, source_frames=source), picture
+        color.resolve_color_anchor(plan, rv2v_picture, source_frames=source), source[:1]
     )
     assert torch.equal(
         color.resolve_color_anchor(plan, rv2v_source, source_frames=source), source[:1]
@@ -146,6 +146,37 @@ def test_source_bridge_and_unsupported_tasks_never_resolve_color_anchor():
         plan, v2v, source_frames=source, source_bridge_active=True
     ) is None
     assert color.resolve_color_anchor(plan, t2v, source_frames=source) is None
+
+
+def test_generated_chain_baselines_are_versioned_and_persistable_statistics():
+    generated = torch.rand((5, 3, 4, 3), generator=torch.Generator().manual_seed(7))
+    r2v = _segment(0, "r2v", picture=torch.full((1, 2, 2, 3), 0.99))
+    baseline = color.establish_color_chain_baseline(
+        r2v, generated_frames=generated, source_frames=None
+    )
+    assert baseline["policy"] == color.COLOR_ANCHOR_POLICY
+    assert baseline["source"] == "R2V chain-root generated result"
+    assert color.validate_color_anchor_statistics(baseline) == baseline
+    assert baseline["mean"] != [0.99, 0.99, 0.99]
+
+
+def test_rv2v_chain_baseline_uses_source_video_not_picture_reference():
+    source = torch.full((4, 2, 2, 3), 0.2)
+    picture = torch.full((1, 2, 2, 3), 0.9)
+    segment = _segment(0, "rv2v", picture=picture)
+    baseline = color.establish_color_chain_baseline(
+        segment, generated_frames=torch.full_like(source, 0.6), source_frames=source
+    )
+    assert baseline["source"] == "RV2V chain-root source video"
+    assert baseline["mean"] == pytest.approx([0.2, 0.2, 0.2])
+
+
+def test_color_reanchor_accepts_persisted_chain_statistics():
+    anchor = _anchor()
+    stats = color.color_anchor_statistics(anchor, source="test root")
+    context = (anchor * 0.5 + 0.2).clamp(0, 1)
+    corrected = color.apply_color_reanchor(context, stats)
+    assert _statistics_distance(corrected, anchor) < _statistics_distance(context, anchor)
 
 
 def test_color_reanchor_cache_settings_distinguish_off_and_on():
