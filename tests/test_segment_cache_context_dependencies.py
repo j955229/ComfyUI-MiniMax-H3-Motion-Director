@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from _minimax_h3_motion_director_testpkg.director.context_links import ContextLink
 from _minimax_h3_motion_director_testpkg.director.segment_cache import (
     segment_cache_fingerprint,
+    segment_cache_status,
 )
 
 
@@ -87,3 +88,22 @@ def test_visual_and_audio_off_has_no_parent_dependency():
     before = segment_cache_fingerprint(s2, plan)
     s1.prompt = "unrelated old chain"
     assert segment_cache_fingerprint(s2, plan) == before
+
+
+def test_cache_status_distinguishes_missing_hit_and_stale(monkeypatch, tmp_path):
+    import json
+
+    from _minimax_h3_motion_director_testpkg.director import segment_cache
+
+    s1 = _segment(0, "one", ContextLink(False, False, False))
+    plan = _plan(s1)
+    monkeypatch.setattr(segment_cache, "_cache_root", lambda _node: tmp_path)
+    assert segment_cache_status("node", s1, plan) == "missing"
+
+    (tmp_path / "seg_0000.pt").write_bytes(b"placeholder")
+    (tmp_path / "seg_0000.meta.json").write_text(
+        json.dumps(segment_cache_fingerprint(s1, plan)), encoding="utf-8"
+    )
+    assert segment_cache_status("node", s1, plan) == "hit"
+    s1.prompt = "changed"
+    assert segment_cache_status("node", s1, plan) == "stale"

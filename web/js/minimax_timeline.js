@@ -711,6 +711,20 @@ function scheduleContinuityNodeResize(node, editor) {
     });
 }
 
+function togglePinRenormFromContinuityFacade(node, event, pos) {
+    const pin = node.widgets?.find((w) => w.name === "pin_renorm_enabled");
+    if (!pin) return false;
+    const oldValue = !!pin.value;
+    const newValue = !oldValue;
+    pin.value = newValue;
+    pin.callback?.(newValue, app.canvas, node, pos, event);
+    node.onWidgetChanged?.("pin_renorm_enabled", newValue, oldValue, pin);
+    (app.graph ?? app.canvas?.graph)?.change?.();
+    node.setDirtyCanvas?.(true, true);
+    refreshDirectorContinuityUi(node);
+    return true;
+}
+
 function installDirectorContinuityUi(node) {
     if (!node || node._mmxContinuityUiInstalled) return;
     const source = node.widgets?.find((w) => w.name === "source_overlap_frames");
@@ -718,19 +732,24 @@ function installDirectorContinuityUi(node) {
     const motion = node.widgets?.find((w) => w.name === "motion_context_enabled");
     const context = node.widgets?.find((w) => w.name === "context_length");
     const color = node.widgets?.find((w) => w.name === "color_reanchor_enabled");
-    if (!source || !audio || !motion || !context || !color) return;
+    const pin = node.widgets?.find((w) => w.name === "pin_renorm_enabled");
+    const experimental = node.widgets?.find((w) => w.name === "bd_grp_experimental");
+    if (!source || !audio || !motion || !context || !color || !pin) return;
     node._mmxContinuityUiInstalled = true;
 
     source.value = normalizeSourceBridgeValue(source.value);
-    for (const widget of [source, audio, motion, context, color]) {
+    for (const widget of [source, audio, motion, context, color, pin]) {
         setWidgetVisibility(widget, true);
         captureContinuityRenderer(widget);
     }
     setWidgetVisibility(source, false);
+    setWidgetVisibility(pin, false);
+    setWidgetVisibility(experimental, false);
     installContinuityCallbackGuard(node, motion);
     installContinuityCallbackGuard(node, context);
     installContinuityCallbackGuard(node, audio);
     installContinuityCallbackGuard(node, color);
+    installContinuityCallbackGuard(node, pin);
     node.setDirtyCanvas?.(true, true);
 }
 
@@ -743,6 +762,8 @@ function refreshDirectorContinuityUi(node, editor = node?._minimaxEditor) {
     const motion = node.widgets?.find((w) => w.name === "motion_context_enabled");
     const context = node.widgets?.find((w) => w.name === "context_length");
     const color = node.widgets?.find((w) => w.name === "color_reanchor_enabled");
+    const pin = node.widgets?.find((w) => w.name === "pin_renorm_enabled");
+    const experimental = node.widgets?.find((w) => w.name === "bd_grp_experimental");
     const taskKey = editor?.getTaskKey?.() || resolveTaskKey(
         node.widgets?.find((w) => w.name === "task_type")?.value,
     );
@@ -769,9 +790,13 @@ function refreshDirectorContinuityUi(node, editor = node?._minimaxEditor) {
     }
 
     restoreContinuityRenderer(motion);
+    restoreContinuityRenderer(source);
     restoreContinuityRenderer(audio);
     restoreContinuityRenderer(color);
-    setWidgetVisibility(source, false);
+    const showPinFacade = segmentCount >= 2;
+    setWidgetVisibility(source, showPinFacade);
+    setWidgetVisibility(pin, false);
+    setWidgetVisibility(experimental, false);
     setWidgetVisibility(
         motion,
         state.showMotionContext || state.showVisualContinuitySelector,
@@ -833,7 +858,35 @@ function refreshDirectorContinuityUi(node, editor = node?._minimaxEditor) {
 
     context.label = t("widget.contextLength");
     setWidgetTooltip(context, t("widget.tooltip.contextLength"), node);
-    setWidgetTooltip(source, t("widget.tooltip.sourceBridgeEnabled"), node);
+    source.type = "custom";
+    source.label = t("widget.pinRenormEnabled");
+    setWidgetTooltip(source, t("widget.tooltip.pinRenormEnabled"), node);
+    source.draw = function (ctx, drawNode, width, y) {
+        this._mmxPinRenormFacadeBounds = drawContinuityToggle(
+            ctx,
+            width,
+            y,
+            t("widget.pinRenormEnabled"),
+            !!pin.value,
+            true,
+        );
+    };
+    source.mouse = function (event, pos, mouseNode) {
+        if (event.type !== "pointerdown" && event.type !== "mousedown") return false;
+        if (!pointInBounds(pos, this._mmxPinRenormFacadeBounds)) return false;
+        event.preventDefault?.();
+        return togglePinRenormFromContinuityFacade(mouseNode, event, pos);
+    };
+    source.onClick = function ({ e, node: clickNode, canvas }) {
+        togglePinRenormFromContinuityFacade(
+            clickNode,
+            e,
+            canvas?.graph_mouse || [0, 0],
+        );
+    };
+    installContinuityPointerClick(source, (event, pos, clickNode) => {
+        togglePinRenormFromContinuityFacade(clickNode, event, pos);
+    });
     color.label = t("widget.colorReanchorEnabled");
     setWidgetTooltip(color, t("widget.tooltip.colorReanchorEnabled"), node);
 

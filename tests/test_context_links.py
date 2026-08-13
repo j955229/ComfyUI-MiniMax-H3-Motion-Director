@@ -63,6 +63,7 @@ def test_missing_link_preserves_legacy_global_behaviour():
         source_bridge_active=False,
     )
     assert (resolved.visual, resolved.audio, resolved.explicit) == (True, True, False)
+    assert (resolved.requested_visual, resolved.requested_audio) == (True, True)
 
 
 def test_saved_string_false_values_do_not_turn_links_on():

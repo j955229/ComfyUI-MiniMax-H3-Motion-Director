@@ -48,7 +48,16 @@ from .context_cache import (
     tensor_fingerprint,
 )
 from .context_links import resolve_context_link
+from .execution_report import (
+    DirectorExecutionReport,
+    format_audio_context,
+    format_pin_handoff,
+    format_previous_context,
+    segment_list,
+    short_fingerprint,
+)
 from .motion_context import (
+    PIN_RENORM_PIPELINE,
     apply_exported_motion_context,
     select_context_span,
 )
@@ -97,6 +106,7 @@ from .segment_cache import (
     load_segment_cache,
     save_segment_audio_cache,
     save_segment_cache,
+    segment_cache_status,
 )
 from .cache_policy import (
     resolve_nominal_segment_frames,
@@ -293,6 +303,25 @@ def _ref_video_audios_to_dict(items) -> dict | None:
     return out or None
 
 
+def _color_anchor_label(seg, anchor: torch.Tensor | None) -> str:
+    if not isinstance(anchor, torch.Tensor):
+        return "none"
+    task = str(getattr(seg, "task_key", "")).lower()
+    if task == "i2v":
+        return "I2V source image"
+    if task == "r2v":
+        return "Picture 1"
+    if task == "rv2v" and any(
+        int(getattr(ref, "index", -1)) == 0 for ref in (getattr(seg, "refs", None) or [])
+    ):
+        return "RV2V Picture 1"
+    if task == "rv2v":
+        return "RV2V source frame"
+    if task == "v2v":
+        return "V2V source frame"
+    return "original visual reference"
+
+
 def execute_director_plan_core(
     plan: DirectorPlan,
     *,
@@ -387,6 +416,7 @@ def execute_director_plan_core(
         "context_length": requested_context,
         "context_link_pipeline": "previous_context_link_v1",
         "pin_renorm_enabled": bool(pin_renorm_enabled),
+        "pin_renorm_pipeline": PIN_RENORM_PIPELINE,
         "model_class": type(getattr(model, "model", None)).__name__,
         "model_options": _stable_cache_value(getattr(model, "model_options", {}) or {}),
     }
@@ -542,6 +572,16 @@ def execute_director_plan_core(
 
     completed_outputs: dict[int, torch.Tensor] = {}
     completed_contexts: dict[int, CachedMotionContext] = {}
+    execution_report = DirectorExecutionReport()
+    generated_indices: set[int] = set()
+    cache_hit_indices: set[int] = set()
+    cache_statuses: dict[int, str] = {}
+    context_cache_hits: set[int] = set()
+    boundary_diagnostics: dict[int, dict[str, Any]] = {}
+    pin_diagnostics: dict[int, str] = {}
+    color_diagnostics: dict[int, str] = {}
+    reference_diagnostics: dict[int, str] = {}
+    warning_messages: list[str] = []
 
     def _run_one_segment(
         seg, *, progress_index: int
@@ -579,6 +619,33 @@ def execute_director_plan_core(
         )
         apply_visual_context = bool(context_link.visual)
         apply_audio_context = bool(context_link.audio)
+        boundary_diagnostics[timeline_slot] = {
+            "requested_visual": bool(context_link.requested_visual),
+            "requested_audio": bool(context_link.requested_audio),
+            "visual": apply_visual_context,
+            "audio": apply_audio_context,
+            "visual_reason": context_link.visual_reason,
+            "audio_reason": context_link.audio_reason,
+            "visual_source": "none",
+            "audio_source": "none",
+            "requested_frames": requested_context,
+            "actual_frames": 0,
+            "legacy": not context_link.explicit,
+        }
+        if not context_link.explicit:
+            warning_messages.append(
+                f"S{timeline_slot + 1}: legacy workflow fallback is being used"
+            )
+        if context_link.requested_audio and not apply_audio_context:
+            warning_messages.append(
+                f"S{timeline_slot + 1}: Audio inherit requested but "
+                f"{context_link.audio_reason}"
+            )
+        if context_link.requested_visual and not apply_visual_context:
+            warning_messages.append(
+                f"S{timeline_slot + 1}: Visual inherit disabled because "
+                f"{context_link.visual_reason}"
+            )
         reports.append(
             f"Segment {timeline_slot + 1}: Previous Context — "
             f"Visual {'ON' if apply_visual_context else 'OFF'} "
@@ -701,6 +768,7 @@ def execute_director_plan_core(
             )
 
         context_entry: CachedMotionContext | None = None
+        context_loaded_from_cache = False
         context_span = 0
         color_anchor = None
         if apply_visual_context or apply_audio_context:
@@ -758,6 +826,8 @@ def execute_director_plan_core(
                     latent=latent_context.latent if latent_context is not None else None,
                     handoff=latent_context.handoff if latent_context is not None else None,
                 )
+                context_loaded_from_cache = True
+                context_cache_hits.add(previous_index)
             available_context_frames = int(
                 (context_entry.handoff or {}).get("export_frames")
                 or (
@@ -927,6 +997,9 @@ def execute_director_plan_core(
                     if context_entry is not None
                     else None
                 ),
+                pin_renorm_baseline_source=(
+                    "cache" if context_loaded_from_cache else "inherited"
+                ),
             )
 
         report_director_progress(
@@ -1012,6 +1085,7 @@ def execute_director_plan_core(
             fps=fps,
         )
 
+        seam_color_applied = False
         if (
             color_reanchor_requested
             and apply_visual_context
@@ -1026,6 +1100,7 @@ def execute_director_plan_core(
                 decoded,
                 context_entry.frames,
             )
+            seam_color_applied = True
 
         chunk = decoded.cpu().float()
         handoff = {
@@ -1088,6 +1163,9 @@ def execute_director_plan_core(
                     f"Segment {ui_idx + 1}: Motion Context cache write failed; "
                     "selection-run continuation from this segment will be unavailable."
                 )
+                warning_messages.append(
+                    f"S{ui_idx + 1}: Motion Context cache write failed"
+                )
             if not save_latent_context_cache(
                 node_id,
                 seg,
@@ -1099,6 +1177,10 @@ def execute_director_plan_core(
                 reports.append(
                     f"Segment {ui_idx + 1}: AV latent handoff cache write failed; "
                     "selection-run will use exported RGB/audio fallback if available."
+                )
+                warning_messages.append(
+                    f"S{ui_idx + 1}: AV latent handoff cache write failed; "
+                    "future selection runs may use RGB/audio fallback"
                 )
         completed_outputs[seg.index] = chunk
         completed_contexts[timeline_slot] = CachedMotionContext(
@@ -1145,6 +1227,81 @@ def execute_director_plan_core(
             f"Segment {ui_idx + 1}/{timeline_seg_total}: {task_hint} "
             f"({target_len} frames, seed={seed})"
         )
+        generated_indices.add(int(seg.index))
+        reference_diagnostics[timeline_slot] = (
+            f"S{timeline_slot + 1}: Picture x{len(seg.refs or [])} / "
+            f"Video x{len(getattr(seg, 'ref_videos', None) or [])} / "
+            f"Audio x{len(seg.ref_audios or [])}"
+        )
+
+        diag = boundary_diagnostics[timeline_slot]
+        if source_bridge_active:
+            diag["visual_source"] = "Source Bridge"
+        elif motion_info is not None:
+            diag["visual_source"] = {
+                "latent": "AV latent",
+                "pixels (fallback)": "RGB fallback",
+                "pixels (Color Re-anchor)": "RGB fallback (Color Re-anchor)",
+                "off": "none",
+            }.get(motion_info.visual_source, motion_info.visual_source)
+            diag["audio_source"] = {
+                "latent": "audio latent",
+                "waveform (fallback)": "waveform re-encode",
+                "off": "none",
+            }.get(motion_info.audio_source, motion_info.audio_source)
+            diag["actual_frames"] = int(motion_info.context_frames)
+
+        if pin_renorm_enabled and timeline_slot > 0:
+            if motion_info is not None and motion_info.pin_renorm_status == "APPLIED":
+                pin_diagnostics[timeline_slot] = format_pin_handoff(
+                    from_segment=timeline_slot - 1,
+                    to_segment=timeline_slot,
+                    requested_frames=requested_context,
+                    actual_frames=motion_info.context_frames,
+                    status="APPLIED",
+                    baseline_source=motion_info.pin_renorm_baseline_source,
+                    baseline_std=motion_info.pin_renorm_baseline_std,
+                    before_std=motion_info.pin_renorm_input_std,
+                    scale=motion_info.pin_renorm_scale,
+                    after_std=motion_info.pin_renorm_after_std,
+                    mean_abs_delta=motion_info.pin_renorm_mean_abs_delta,
+                    max_abs_delta=motion_info.pin_renorm_max_abs_delta,
+                )
+            else:
+                if source_bridge_active:
+                    reason = "Source Bridge owns visual continuation"
+                elif not apply_visual_context:
+                    reason = context_link.visual_reason or "no visual previous context"
+                elif motion_info is not None and "pixels" in motion_info.visual_source:
+                    reason = "visual context used RGB fallback"
+                else:
+                    reason = "no valid predecessor video latent"
+                pin_diagnostics[timeline_slot] = format_pin_handoff(
+                    from_segment=timeline_slot - 1,
+                    to_segment=timeline_slot,
+                    requested_frames=requested_context,
+                    actual_frames=diag["actual_frames"],
+                    status="SKIPPED",
+                    reason=reason,
+                )
+
+        if color_reanchor_requested and motion_info is not None:
+            color_diagnostics[timeline_slot] = (
+                f"S{timeline_slot + 1}: Color Re-anchor: "
+                f"{'ON' if motion_info.color_reanchor_status != 'OFF' else 'OFF'}\n"
+                f"Anchor: {_color_anchor_label(seg, color_anchor)}\n"
+                f"Seam Color Match: {'applied' if seam_color_applied else 'not applied'}"
+            )
+        else:
+            reason = ""
+            if color_reanchor_requested and source_bridge_active:
+                reason = " (Source Bridge)"
+            elif color_reanchor_requested and not apply_visual_context:
+                reason = " (no Visual Previous Context)"
+            color_diagnostics[timeline_slot] = (
+                f"S{timeline_slot + 1}: Color Re-anchor: OFF{reason}\n"
+                "Seam Color Match: not applied"
+            )
         if source_bridge_active:
             reports.append(
                 f"Segment {ui_idx + 1}: visual Motion Context skipped; "
@@ -1178,6 +1335,10 @@ def execute_director_plan_core(
                     f"input std = {motion_info.pin_renorm_input_std}; "
                     f"scale = {motion_info.pin_renorm_scale:.6f}"
                 )
+                warning_messages.append(
+                    f"S{timeline_slot + 1}: requested {requested_context} context frames "
+                    f"but only {context_span} were usable"
+                )
             reports.append(
                 f"Segment {ui_idx + 1}: Color Re-anchor: "
                 f"{motion_info.color_reanchor_status}"
@@ -1208,6 +1369,7 @@ def execute_director_plan_core(
         # Full-export reconstruction always requires the full segment cache.
         # Motion Context caches are endpoint tails and must never masquerade as
         # a complete old segment after the V2 tail-cache migration.
+        cache_statuses[int(seg.index)] = segment_cache_status(node_id, seg, plan)
         cached = load_segment_cache(node_id, seg, plan)
         cached_context = None
         cached_latent_context = None
@@ -1249,6 +1411,7 @@ def execute_director_plan_core(
             completed_contexts[int(seg.timeline_index)] = cached_context
         if cached is not None:
             cached = cached.float()
+            cache_hit_indices.add(int(seg.index))
 
             cached_audio = None
             if audio_mode == AUDIO_MODE_GENERATE:
@@ -1350,6 +1513,22 @@ def execute_director_plan_core(
 
         window, skip_reason = resolve_source_bridge_window(plan, left, right)
         if window is None:
+            right_slot = int(right.timeline_index)
+            right_diag = boundary_diagnostics.get(right_slot)
+            if right_diag is not None:
+                right_diag["visual_source"] = "none (nominal hard cut)"
+            if pin_renorm_enabled:
+                pin_diagnostics[right_slot] = format_pin_handoff(
+                    from_segment=int(left.timeline_index),
+                    to_segment=right_slot,
+                    requested_frames=requested_context,
+                    actual_frames=0,
+                    status="SKIPPED",
+                    reason="Source Bridge was unavailable; nominal hard cut retained",
+                )
+            warning_messages.append(
+                f"S{int(left.timeline_index) + 1} -> S{right_slot + 1}: {skip_reason}"
+            )
             reports.append(
                 f"Boundary Segment {int(left.timeline_index) + 1} → "
                 f"{int(right.timeline_index) + 1}: {skip_reason} "
@@ -1360,6 +1539,23 @@ def execute_director_plan_core(
             "rv2v" in {left.task_key, right.task_key}
             and not reference_bundles_match(left, right)
         ):
+            right_slot = int(right.timeline_index)
+            right_diag = boundary_diagnostics.get(right_slot)
+            if right_diag is not None:
+                right_diag["visual_source"] = "none (nominal hard cut)"
+            if pin_renorm_enabled:
+                pin_diagnostics[right_slot] = format_pin_handoff(
+                    from_segment=int(left.timeline_index),
+                    to_segment=right_slot,
+                    requested_frames=requested_context,
+                    actual_frames=0,
+                    status="SKIPPED",
+                    reason="Source Bridge reference bundles differ; nominal hard cut retained",
+                )
+            warning_messages.append(
+                f"S{int(left.timeline_index) + 1} -> S{right_slot + 1}: "
+                "Source Bridge skipped because RV2V reference bundles differ"
+            )
             reports.append(
                 f"Boundary Segment {int(left.timeline_index) + 1} → "
                 f"{int(right.timeline_index) + 1}: Source Bridge skipped because "
@@ -1487,6 +1683,14 @@ def execute_director_plan_core(
                 frames=bridge_frames,
             )
         )
+        right_diag = boundary_diagnostics.get(int(right.timeline_index))
+        if right_diag is not None:
+            right_diag["visual_source"] = "Source Bridge"
+            right_diag["bridge_details"] = (
+                f"source frames = {window.source_start}..{window.source_end - 1}\n"
+                f"emitted bridge frames = {window.emitted_source_start}.."
+                f"{window.emitted_source_end - 1}"
+            )
         reports.append(
             f"Boundary Segment {int(left.timeline_index) + 1} → "
             f"{int(right.timeline_index) + 1}:\n"
@@ -1564,4 +1768,143 @@ def execute_director_plan_core(
         combined = cat_frames_variable_size(export_chunks)
     else:
         combined = concat_continuous_chunks(export_chunks, export_segments, plan)
-    return combined, segment_outputs, export_audios, "\n".join(reports)
+
+    skipped_indices = set(range(len(all_segments))) - set(run_indices)
+    execution_report.add(
+        "Run",
+        f"Segments: {segment_list(range(len(all_segments)))}",
+        f"Generated: {segment_list(generated_indices)}",
+        f"Reused from cache: {segment_list(cache_hit_indices)}",
+        f"Skipped by run selection: {segment_list(skipped_indices)}",
+        f"Run selection: {len(run_indices)}/{len(all_segments)}",
+        "Seed mode: fixed",
+        "Seeds: " + ", ".join(
+            f"S{index + 1}={int(seed)}" for index in sorted(generated_indices)
+        ) if generated_indices else "Seeds: none",
+        f"Sampling: {sampling_mode}",
+    )
+    if sampling_mode == "internal":
+        execution_report.add(
+            "Run",
+            f"Steps: {int(steps)}",
+            f"Sampler: {sampler}",
+            f"Scheduler: {scheduler}",
+            f"Video shift: {float(shift_video):g}",
+            f"Audio shift: {float(shift_audio):g}",
+        )
+    else:
+        sigma_identity = tensor_fingerprint(external_sigmas)
+        execution_report.add(
+            "Run",
+            f"Effective steps: {int(external_steps)}",
+            f"Sampler: {describe_external_sampler(external_sampler)}",
+            "Scheduler: external SIGMAS",
+            f"Video shift: {float(cache_settings['model_shift_video']):g}",
+            f"Audio shift: {float(cache_settings['model_shift_audio']):g}",
+            f"SIGMAS: {int(external_steps)} steps / hash {short_fingerprint(sigma_identity)}",
+        )
+
+    execution_report.add("Previous Context", "S1:\nroot segment")
+    execution_report.add("Audio Context", "S1: root segment")
+    for slot in range(1, len(all_segments)):
+        diag = boundary_diagnostics.get(slot)
+        if diag is None:
+            seg = all_segments[slot]
+            source_bridge_active = source_bridge_enabled(
+                seg.task_key, requested_source_bridge
+            )
+            resolved = resolve_context_link(
+                seg,
+                motion_context_enabled=motion_enabled,
+                audio_context_enabled=audio_context_requested,
+                audio_generate=audio_mode == AUDIO_MODE_GENERATE,
+                source_bridge_active=source_bridge_active,
+            )
+            diag = {
+                "requested_visual": resolved.requested_visual,
+                "requested_audio": resolved.requested_audio,
+                "visual": resolved.visual,
+                "audio": resolved.audio,
+                "visual_reason": resolved.visual_reason,
+                "audio_reason": resolved.audio_reason,
+                "visual_source": "validated full-segment cache" if slot in cache_hit_indices else "none",
+                "audio_source": "validated full-segment cache" if slot in cache_hit_indices else "none",
+                "requested_frames": requested_context,
+                "actual_frames": "cached" if slot in cache_hit_indices else 0,
+            }
+        execution_report.add(
+            "Previous Context", format_previous_context(slot - 1, slot, diag)
+        )
+        execution_report.add(
+            "Audio Context",
+            format_audio_context(slot - 1, slot, diag),
+        )
+
+    if not pin_renorm_enabled:
+        execution_report.add("Latent Scale Lock", "OFF")
+    else:
+        execution_report.add("Latent Scale Lock", "S1: SKIPPED (chain root)")
+        for slot in range(1, len(all_segments)):
+            if slot in pin_diagnostics:
+                execution_report.add("Latent Scale Lock", pin_diagnostics[slot])
+                continue
+            diag = boundary_diagnostics.get(slot)
+            if diag is not None and not diag["visual"]:
+                execution_report.add(
+                    "Latent Scale Lock",
+                    f"S{slot} -X-> S{slot + 1}\nchain reset\n"
+                    f"Pin Renorm: SKIPPED\nReason: {diag['visual_reason']}",
+                )
+            elif slot in cache_hit_indices:
+                execution_report.add(
+                    "Latent Scale Lock",
+                    f"S{slot} -> S{slot + 1}\nPin Renorm: SKIPPED\n"
+                    "Reason: segment reused full cache; no new latent was conditioned",
+                )
+        if not any("baseline:" in value for value in pin_diagnostics.values()):
+            warning_messages.append(
+                "pin_renorm ON but no raw video latent handoff occurred"
+            )
+
+    for slot in sorted(color_diagnostics):
+        execution_report.add("Color", color_diagnostics[slot])
+
+    for index in range(len(all_segments)):
+        if index in generated_indices:
+            state = "generated"
+        elif index in cache_hit_indices:
+            state = "cache hit"
+        elif index in passthrough_indices:
+            prior = cache_statuses.get(index, "missing")
+            state = f"cache {prior}; source passthrough (selection skipped)"
+        else:
+            state = "not part of this export"
+        execution_report.add("Cache", f"S{index + 1}: {state}")
+    for index in sorted(context_cache_hits):
+        execution_report.add(
+            "Cache", f"Previous context: S{index + 1} cache valid"
+        )
+    for index, status in sorted(cache_statuses.items()):
+        if status == "stale":
+            execution_report.add("Cache", f"S{index + 1}: stale / invalidated")
+            warning_messages.append(
+                f"S{index + 1}: segment cache stale because timeline or dependency changed"
+            )
+        elif status in {"missing", "error"} and index not in cache_hit_indices:
+            execution_report.add("Cache", f"S{index + 1}: cache {status}")
+
+    for slot, line in sorted(reference_diagnostics.items()):
+        execution_report.add("References", line)
+    for seg in all_segments:
+        slot = int(seg.timeline_index)
+        if slot not in reference_diagnostics and int(seg.index) in cache_hit_indices:
+            execution_report.add(
+                "References",
+                f"S{slot + 1}: Picture x{len(seg.refs or [])} / "
+                f"Video x{len(getattr(seg, 'ref_videos', None) or [])} / "
+                f"Audio x{len(seg.ref_audios or [])} (cache reuse)",
+            )
+
+    for message in dict.fromkeys(warning_messages):
+        execution_report.add("Warnings", f"- {message}")
+    return combined, segment_outputs, export_audios, execution_report.render()

@@ -209,13 +209,16 @@ class MiniMaxH3MotionDirector:
                     },
                 ),
                 **director_perf_inputs(),
+                # Kept at the serialized tail for workflow index compatibility.
+                # Frontend hides this legacy header and renders pin_renorm in
+                # the existing continuity façade without moving backend widgets.
                 "bd_grp_experimental": ("BDGROUP", {"default": "Experimental"}),
                 "pin_renorm_enabled": (
                     "BOOLEAN",
                     {
                         "default": False,
                         "tooltip": (
-                            "Experimental. Re-normalize only the previous segment's "
+                            "Re-normalize only the previous segment's "
                             "video latent tail to the first handoff std of the current "
                             "visual chain. Does not modify audio, source video, Picture "
                             "references, or RGB Color Re-anchor."

@@ -392,7 +392,9 @@ S1 → S2 → S3 × S4 → S5
 
 ## pin_renorm（Experimental）
 
-`pin_renorm` 默认关闭，放在节点末尾的 Experimental 分组中，方便旧 workflow 保持原行为并进行 A/B 测试。
+UI 中显示为“潜变量尺度锁定”，位于“跨段续接”的上下文帧数与音频续接之间，默认关闭。底层 backend widget 仍保留在序列化列表末尾；前端只使用原有 Source Bridge 隐藏行做代理显示，因此旧 workflow 的 widget index 不会发生错位。
+
+执行后，Director Report 会显示每次 handoff 的 baseline 来源、校正前后标准差、scale、`mean_abs_delta` 与 `max_abs_delta`。若实际走的是 RGB fallback、Source Bridge 或没有 Visual Previous Context，也会明确显示 `SKIPPED` 原因。
 
 开启后，第一份 Visual handoff 会记录该连续链的 video latent 标准差作为 baseline。后续每次把 video latent tail 注入下一段前，只把它的尺度重新校准到这个 baseline 附近：保留 latent 的平均值、内容、姿势与运动方向，只抑制长链中的统计尺度漂移。
 

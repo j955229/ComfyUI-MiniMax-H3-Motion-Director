@@ -23,6 +23,7 @@ FPS = 24.0
 AUDIO_LATENT_HZ = 40.0
 FRAME_PER_TOKEN = (1, 4, 4, 4, 4)
 VIDEO_CONTEXT_GRID = (39, 22, 5, 1)
+PIN_RENORM_PIPELINE = "pin_renorm_selected_context_v2"
 
 
 @dataclass(frozen=True)
@@ -39,7 +40,11 @@ class MotionContextInfo:
     context_end_frame: int = 0
     pin_renorm_baseline_std: float | None = None
     pin_renorm_input_std: float | None = None
+    pin_renorm_after_std: float | None = None
     pin_renorm_scale: float = 1.0
+    pin_renorm_mean_abs_delta: float = 0.0
+    pin_renorm_max_abs_delta: float = 0.0
+    pin_renorm_baseline_source: str | None = None
     pin_renorm_status: str = "OFF"
 
 
@@ -467,6 +472,7 @@ def apply_exported_motion_context(
     task_key: str = "unknown",
     pin_renorm_enabled: bool = False,
     pin_renorm_baseline_std: float | None = None,
+    pin_renorm_baseline_source: str | None = None,
 ) -> tuple[list, MotionContextInfo]:
     ready, reason = motion_context_patch_status()
     if not ready:
@@ -499,17 +505,48 @@ def apply_exported_motion_context(
     selected_context_end = int(context_end_frame or 0)
     pin_baseline = None
     pin_input_std = None
+    pin_after_std = None
     pin_scale = 1.0
+    pin_mean_abs_delta = 0.0
+    pin_max_abs_delta = 0.0
+    pin_baseline_source = None
     pin_status = "OFF"
     if visual_enabled and context_latent is not None and not color_reanchor_enabled:
-        visual_latent = context_latent
         if pin_renorm_enabled:
-            visual_latent, pin_baseline, pin_input_std, pin_scale = renorm_context_video_latent(
+            raw_blocks, offsets, selected_context_end = video_context_from_latent(
                 context_latent,
+                span=int(context_span),
+                context_end_frame=context_end_frame,
+            )
+            selected_video = torch.cat(raw_blocks, dim=2)
+            selected_latent = {"samples": (selected_video,)}
+            adjusted_latent, pin_baseline, pin_input_std, pin_scale = renorm_context_video_latent(
+                selected_latent,
                 pin_renorm_baseline_std,
             )
-            pin_status = "BASELINE" if pin_renorm_baseline_std is None else "APPLIED"
-        source_video = _latent_video_stream(visual_latent)
+            before_video = selected_video.float()
+            after_video = _latent_video_stream(adjusted_latent).float()
+            delta = (after_video - before_video).abs()
+            pin_after_std = float(after_video.std(unbiased=False).item())
+            pin_mean_abs_delta = float(delta.mean().item())
+            pin_max_abs_delta = float(delta.max().item())
+            pin_baseline_source = (
+                "created"
+                if pin_renorm_baseline_std is None
+                else (pin_renorm_baseline_source or "inherited")
+            )
+            pin_status = "APPLIED"
+            blocks = [
+                after_video[:, :, step : step + 1].to(dtype=selected_video.dtype)
+                for step in range(int(after_video.shape[2]))
+            ]
+        else:
+            blocks, offsets, selected_context_end = video_context_from_latent(
+                context_latent,
+                span=int(context_span),
+                context_end_frame=context_end_frame,
+            )
+        source_video = _latent_video_stream(context_latent)
         source_width = int(source_video.shape[-1]) * 16
         source_height = int(source_video.shape[-2]) * 16
         if (source_width, source_height) != (width, height):
@@ -518,11 +555,6 @@ def apply_exported_motion_context(
                 "segment is %dx%d. Regenerate the previous segment at this canvas."
                 % (source_width, source_height, width, height)
             )
-        blocks, offsets, selected_context_end = video_context_from_latent(
-            visual_latent,
-            span=int(context_span),
-            context_end_frame=context_end_frame,
-        )
         motion_keyframes = [
             {
                 "resolved_frame_index": 0,
@@ -606,7 +638,11 @@ def apply_exported_motion_context(
         context_end_frame=selected_context_end,
         pin_renorm_baseline_std=pin_baseline,
         pin_renorm_input_std=pin_input_std,
+        pin_renorm_after_std=pin_after_std,
         pin_renorm_scale=pin_scale,
+        pin_renorm_mean_abs_delta=pin_mean_abs_delta,
+        pin_renorm_max_abs_delta=pin_max_abs_delta,
+        pin_renorm_baseline_source=pin_baseline_source,
         pin_renorm_status=pin_status,
     )
     return merged, info
@@ -614,6 +650,7 @@ def apply_exported_motion_context(
 
 __all__ = [
     "MotionContextInfo",
+    "PIN_RENORM_PIPELINE",
     "apply_exported_motion_context",
     "latent_step_offsets",
     "merge_motion_conditioning",

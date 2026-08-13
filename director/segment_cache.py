@@ -284,7 +284,6 @@ def load_segment_audio_cache(
     """Load the complete generated audio belonging to a full segment cache."""
     if not node_id:
         return None
-
     root = _cache_root(node_id)
     if root is None:
         return None
@@ -336,3 +335,26 @@ def load_segment_audio_cache(
             exc,
         )
         return None
+
+
+def segment_cache_status(
+    node_id: str | None,
+    seg: SegmentPlan,
+    plan: DirectorPlan,
+) -> str:
+    """Return hit/missing/stale/error without loading the full frame tensor."""
+    if not node_id:
+        return "missing"
+    root = _cache_root(node_id)
+    if root is None:
+        return "missing"
+    idx = seg.index
+    meta_path = root / f"seg_{idx:04d}.meta.json"
+    tensor_path = root / f"seg_{idx:04d}.pt"
+    if not meta_path.is_file() or not tensor_path.is_file():
+        return "missing"
+    try:
+        stored = json.loads(meta_path.read_text(encoding="utf-8"))
+        return "hit" if stored == segment_cache_fingerprint(seg, plan) else "stale"
+    except Exception:
+        return "error"

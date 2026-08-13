@@ -43,6 +43,18 @@ test("pin_renorm widgets are appended after the legacy serialized widget sequenc
     assert.match(nodeSource.slice(pin, pin + 250), /"default": False/);
 });
 
+test("Latent Scale Lock is visually proxied into continuity without moving serialization", () => {
+    const context = nodeSource.indexOf('"context_length"');
+    const sourceFacade = nodeSource.indexOf('"source_overlap_frames"', context);
+    const audio = nodeSource.indexOf('"audio_context_enabled"', sourceFacade);
+    assert.ok(context >= 0 && sourceFacade > context && audio > sourceFacade);
+    assert.match(timeline, /const showPinFacade = segmentCount >= 2/);
+    assert.match(timeline, /setWidgetVisibility\(experimental, false\)/);
+    assert.match(timeline, /source\.label = t\("widget\.pinRenormEnabled"\)/);
+    assert.match(timeline, /onWidgetChanged\?\.\("pin_renorm_enabled", newValue, oldValue, pin\)/);
+    assert.match(timeline, /setWidgetVisibility\(pin, false\)/);
+});
+
 test("executor keeps legacy fallback global while allowing explicit links", async () => {
     const source = await readFile(new URL("../director/executor_core.py", import.meta.url), "utf8");
     assert.match(source, /resolve_context_link\([\s\S]*?motion_context_enabled=motion_enabled,/);

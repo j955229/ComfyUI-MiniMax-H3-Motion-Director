@@ -58,6 +58,8 @@ class ResolvedContextLink:
     visual: bool
     audio: bool
     explicit: bool
+    requested_visual: bool = False
+    requested_audio: bool = False
     visual_reason: str = ""
     audio_reason: str = ""
 
@@ -102,7 +104,9 @@ def resolve_context_link(
     """
     slot = int(getattr(segment, "timeline_index", getattr(segment, "index", 0)))
     if slot <= 0:
-        return ResolvedContextLink(False, False, True, "first segment", "first segment")
+        return ResolvedContextLink(
+            False, False, True, False, False, "root segment", "root segment"
+        )
 
     link = getattr(segment, "context_link", None)
     explicit_i2v_image = bool(
@@ -117,14 +121,22 @@ def resolve_context_link(
             visual,
             audio,
             False,
+            bool(motion_context_enabled),
+            bool(motion_context_enabled and audio_context_enabled),
             "legacy global Motion Context" if visual else "legacy global policy off",
             "legacy global Audio Context" if audio else "legacy global policy off",
         )
 
-    visual = bool(link.visual_enabled)
-    audio = bool(link.audio_enabled)
-    visual_reason = "per-boundary link"
-    audio_reason = "per-boundary link"
+    requested_visual = bool(link.visual_enabled)
+    requested_audio = bool(link.audio_enabled)
+    visual = requested_visual
+    audio = requested_audio
+    visual_reason = (
+        "per-boundary link" if requested_visual else "Context Link visual disabled"
+    )
+    audio_reason = (
+        "per-boundary link" if requested_audio else "Context Link audio disabled"
+    )
     if source_bridge_active and visual:
         visual = False
         visual_reason = "Source Bridge owns visual continuity"
@@ -134,7 +146,15 @@ def resolve_context_link(
     if audio and not audio_generate:
         audio = False
         audio_reason = "output audio mode is not generate"
-    return ResolvedContextLink(visual, audio, True, visual_reason, audio_reason)
+    return ResolvedContextLink(
+        visual,
+        audio,
+        True,
+        requested_visual,
+        requested_audio,
+        visual_reason,
+        audio_reason,
+    )
 
 
 def context_link_identity(segment) -> dict[str, Any] | None:
