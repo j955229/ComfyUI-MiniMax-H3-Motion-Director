@@ -157,6 +157,7 @@ export function newFl2vShot(overrides = {}) {
         negativePrompt: overrides.negativePrompt || DEFAULT_FL2V_NEGATIVE,
         startImage: normalizeImageRef(overrides.startImage || overrides.start_image) || null,
         endImage: normalizeImageRef(overrides.endImage || overrides.end_image) || null,
+        contextLink: overrides.contextLink || overrides.context_link || null,
     };
 }
 
@@ -241,6 +242,7 @@ export function migrateLegacyFl2vToShots(timeline) {
             negativePrompt: s.negativePrompt || DEFAULT_FL2V_NEGATIVE,
             startImage,
             endImage,
+            contextLink: s.contextLink || s.context_link || null,
         }));
     }
     return shots;
@@ -285,6 +287,7 @@ export function flattenFl2vShotsToSegments(editor) {
                     height: endImage.height || 0,
                 }
                 : null,
+            contextLink: shot.contextLink || null,
         };
         cursor += fc;
         return seg;
@@ -1429,6 +1432,7 @@ export function buildFl2vPayloadFields(editor) {
                 height: s.endImage.height || 0,
             }
             : null,
+        contextLink: s.contextLink || null,
     }));
     return {
         timelineMode: "fl2v",
@@ -1454,6 +1458,7 @@ export function buildFl2vPayloadFields(editor) {
             endImage: s.endImage || null,
             taskType: "",
             refs: [],
+            contextLink: s.contextLink || null,
         })),
         totalFrames: total,
         durationSec: getFl2vTotalDurationSec(editor),

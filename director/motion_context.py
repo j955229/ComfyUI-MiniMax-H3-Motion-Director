@@ -37,6 +37,10 @@ class MotionContextInfo:
     visual_source: str = "pixels (fallback)"
     audio_source: str = "off"
     context_end_frame: int = 0
+    pin_renorm_baseline_std: float | None = None
+    pin_renorm_input_std: float | None = None
+    pin_renorm_scale: float = 1.0
+    pin_renorm_status: str = "OFF"
 
 
 def pixel_frames_for_latent_steps(latent_t: int) -> int:
@@ -200,6 +204,41 @@ def _latent_video_stream(latent: dict[str, Any]) -> torch.Tensor:
     return video
 
 
+def renorm_context_video_latent(
+    context_latent: dict[str, Any],
+    baseline_std: float | None,
+    *,
+    epsilon: float = 1e-6,
+) -> tuple[dict[str, Any], float, float, float]:
+    """Match only the cached VIDEO latent scale to a chain-local baseline.
+
+    The global mean is retained, so this changes statistical scale without
+    substituting pose/content. Audio and every non-video stream are returned
+    unchanged.
+    """
+    video = _latent_video_stream(context_latent)
+    current_std = float(video.float().std(unbiased=False).item())
+    target_std = current_std if baseline_std is None else float(baseline_std)
+    if not torch.isfinite(torch.tensor(current_std)) or current_std <= epsilon:
+        raise ValueError("Motion Director: pin_renorm received a zero/invalid video latent std.")
+    if not torch.isfinite(torch.tensor(target_std)) or target_std <= epsilon:
+        raise ValueError("Motion Director: pin_renorm baseline std is zero or invalid.")
+    scale = target_std / current_std
+    mean = video.float().mean()
+    adjusted = ((video.float() - mean) * scale + mean).to(dtype=video.dtype)
+    samples = context_latent.get("samples")
+    if hasattr(samples, "unbind"):
+        streams = list(samples.unbind())
+    elif isinstance(samples, (tuple, list)):
+        streams = list(samples)
+    else:
+        streams = [samples]
+    streams[0] = adjusted
+    result = dict(context_latent)
+    result["samples"] = tuple(streams)
+    return result, target_std, current_std, scale
+
+
 def _encode_video_context(
     vae,
     frames: torch.Tensor,
@@ -324,6 +363,8 @@ def _merge_one_metadata(
     motion_audio_ref: dict[str, Any] | None,
     generation_frame_count: int,
     visible_last_index: int,
+    visible_start_index: int = 0,
+    visual_context_enabled: bool = True,
 ) -> tuple[dict[str, Any], int, int]:
     out = dict(metadata)
     existing_keyframes = list(out.get("minimax_keyframes") or [])
@@ -342,7 +383,13 @@ def _merge_one_metadata(
     for keyframe in existing_keyframes:
         resolved = int(keyframe.get("resolved_frame_index", 0))
         if resolved == 0:
-            removed_start += 1
+            if visual_context_enabled:
+                removed_start += 1
+                continue
+            merged = dict(keyframe)
+            merged[MC_KEY] = int(visible_start_index)
+            merged["resolved_frame_index"] = 0
+            kept.append(merged)
             continue
         merged = dict(keyframe)
         if resolved == old_frame_count - 1:
@@ -371,6 +418,8 @@ def merge_motion_conditioning(
     motion_audio_ref: dict[str, Any] | None,
     generation_frame_count: int,
     visible_last_index: int,
+    visible_start_index: int = 0,
+    visual_context_enabled: bool = True,
 ) -> tuple[list, int, int]:
     if not isinstance(conditioning, (list, tuple)) or not conditioning:
         raise ValueError("Motion Director: positive conditioning is empty.")
@@ -386,6 +435,8 @@ def merge_motion_conditioning(
             motion_audio_ref=motion_audio_ref,
             generation_frame_count=generation_frame_count,
             visible_last_index=visible_last_index,
+            visible_start_index=visible_start_index,
+            visual_context_enabled=visual_context_enabled,
         )
         new_entry = list(entry)
         new_entry[1] = metadata
@@ -409,10 +460,13 @@ def apply_exported_motion_context(
     target_frame_count: int,
     generation_frame_count: int,
     audio_enabled: bool,
+    visual_enabled: bool = True,
     fps: float,
     color_reanchor_enabled: bool = False,
     color_anchor: torch.Tensor | None = None,
     task_key: str = "unknown",
+    pin_renorm_enabled: bool = False,
+    pin_renorm_baseline_std: float | None = None,
 ) -> tuple[list, MotionContextInfo]:
     ready, reason = motion_context_patch_status()
     if not ready:
@@ -443,8 +497,19 @@ def apply_exported_motion_context(
         )
 
     selected_context_end = int(context_end_frame or 0)
-    if context_latent is not None and not color_reanchor_enabled:
-        source_video = _latent_video_stream(context_latent)
+    pin_baseline = None
+    pin_input_std = None
+    pin_scale = 1.0
+    pin_status = "OFF"
+    if visual_enabled and context_latent is not None and not color_reanchor_enabled:
+        visual_latent = context_latent
+        if pin_renorm_enabled:
+            visual_latent, pin_baseline, pin_input_std, pin_scale = renorm_context_video_latent(
+                context_latent,
+                pin_renorm_baseline_std,
+            )
+            pin_status = "BASELINE" if pin_renorm_baseline_std is None else "APPLIED"
+        source_video = _latent_video_stream(visual_latent)
         source_width = int(source_video.shape[-1]) * 16
         source_height = int(source_video.shape[-2]) * 16
         if (source_width, source_height) != (width, height):
@@ -454,7 +519,7 @@ def apply_exported_motion_context(
                 % (source_width, source_height, width, height)
             )
         blocks, offsets, selected_context_end = video_context_from_latent(
-            context_latent,
+            visual_latent,
             span=int(context_span),
             context_end_frame=context_end_frame,
         )
@@ -469,7 +534,7 @@ def apply_exported_motion_context(
         block_count = len(blocks)
         color_status = "OFF"
         visual_source = "latent"
-    else:
+    elif visual_enabled:
         if not isinstance(context_frames, torch.Tensor) or int(context_frames.shape[0]) <= 0:
             reason = "Color Re-anchor" if color_reanchor_enabled else "pixel fallback"
             raise ValueError(
@@ -489,6 +554,13 @@ def apply_exported_motion_context(
             "pixels (Color Re-anchor)" if color_reanchor_enabled else "pixels (fallback)"
         )
         selected_context_end = int(context_end_frame or int(context_frames.shape[0]))
+        if pin_renorm_enabled:
+            pin_status = "SKIPPED (pixel visual context)"
+    else:
+        motion_keyframes = []
+        block_count = 0
+        color_status = "OFF"
+        visual_source = "off"
     motion_audio_ref = None
     audio_steps = 0
     audio_source = "off"
@@ -518,9 +590,11 @@ def apply_exported_motion_context(
         motion_audio_ref=motion_audio_ref,
         generation_frame_count=int(generation_frame_count),
         visible_last_index=visible_last,
+        visible_start_index=int(context_span),
+        visual_context_enabled=bool(visual_enabled),
     )
     info = MotionContextInfo(
-        context_frames=int(context_span),
+        context_frames=int(context_span) if visual_enabled else 0,
         conditioning_blocks=block_count,
         audio_steps=audio_steps,
         audio_seconds=audio_steps / AUDIO_LATENT_HZ if audio_steps else 0.0,
@@ -530,6 +604,10 @@ def apply_exported_motion_context(
         visual_source=visual_source,
         audio_source=audio_source,
         context_end_frame=selected_context_end,
+        pin_renorm_baseline_std=pin_baseline,
+        pin_renorm_input_std=pin_input_std,
+        pin_renorm_scale=pin_scale,
+        pin_renorm_status=pin_status,
     )
     return merged, info
 
@@ -540,6 +618,7 @@ __all__ = [
     "latent_step_offsets",
     "merge_motion_conditioning",
     "pixel_frames_for_latent_steps",
+    "renorm_context_video_latent",
     "select_context_span",
     "video_context_from_latent",
 ]

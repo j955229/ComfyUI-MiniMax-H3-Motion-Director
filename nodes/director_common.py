@@ -193,6 +193,7 @@ def prepare_director_plan(
         i2v_groups=i2v_groups,
         r2v_groups=r2v_groups,
         motion_context_enabled=motion_context_enabled,
+        timeline_data=timeline_data,
     )
 
     if ext_groups is not None and family is not None:

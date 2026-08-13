@@ -9,15 +9,14 @@ from typing import Any
 import torch
 
 from ..lib.tensor_fingerprint import tensor_fingerprint
-from .source_bridge import should_apply_visual_motion_context
+from .context_links import context_link_identity, resolve_context_link
+from .source_bridge import source_bridge_enabled
 
 
-PRODUCER_IDENTITY_SCHEMA = "motion_context_segment_dependencies_v1"
+PRODUCER_IDENTITY_SCHEMA = "previous_context_segment_dependencies_v2"
 _CONSUMER_ONLY_SETTINGS = {
     "context_length",
     "latent_handoff_pipeline",
-    "pipeline",
-    "seed",
 }
 
 
@@ -134,6 +133,7 @@ def segment_identity(seg, plan) -> dict[str, Any]:
             [str(kind), str(asset_id), str(tag)]
             for (kind, asset_id), tag in sorted(tags.items())
         ],
+        "context_link": context_link_identity(seg),
     }
 
 
@@ -158,27 +158,20 @@ def generation_environment_identity(plan, settings: dict[str, Any]) -> dict[str,
 
 
 def _uses_incoming_context(seg, plan, settings: dict[str, Any]) -> bool:
-    slot = int(getattr(seg, "timeline_index", seg.index))
-    motion_enabled = bool((settings or {}).get("motion_context_enabled", False))
-    explicit_i2v_reset = bool(
-        motion_enabled
-        and str(seg.task_key).lower() == "i2v"
-        and slot > 0
-        and getattr(seg, "source_clip", None) is not None
-    )
     source_bridge_frames = int(
         (settings or {}).get(
             "source_overlap_frames", getattr(plan, "source_overlap_frames", 0)
         )
         or 0
     )
-    return should_apply_visual_motion_context(
-        motion_enabled,
-        str(seg.task_key),
-        slot,
-        source_bridge_frames,
-        explicit_i2v_reset,
+    link = resolve_context_link(
+        seg,
+        motion_context_enabled=bool((settings or {}).get("motion_context_enabled", False)),
+        audio_context_enabled=bool((settings or {}).get("audio_context_enabled", False)),
+        audio_generate=str((settings or {}).get("audio_mode", "generate")) == "generate",
+        source_bridge_active=source_bridge_enabled(str(seg.task_key), source_bridge_frames),
     )
+    return link.has_dependency
 
 
 def context_producer_fingerprint(seg, plan, settings: dict[str, Any]) -> dict[str, Any]:
@@ -195,13 +188,23 @@ def context_producer_fingerprint(seg, plan, settings: dict[str, Any]) -> dict[st
         if slot in memo:
             return memo[slot]
         upstream_digest = None
-        if _uses_incoming_context(item, plan, settings):
+        uses_incoming = _uses_incoming_context(item, plan, settings)
+        if uses_incoming:
             previous = segments_by_slot.get(slot - 1)
             upstream_digest = digest(previous) if previous is not None else f"missing:{slot - 1}"
         value = {
             "schema": PRODUCER_IDENTITY_SCHEMA,
             "segment": segment_identity(item, plan),
             "generation_environment_digest": environment_digest,
+            # context_length changes the consumer generation, not the cached
+            # producer it reads. Include it only for segments that actually
+            # consumed an incoming link, so S1 remains reusable when S2's
+            # requested span changes while S2/S3 outputs still invalidate.
+            "incoming_context_length": (
+                int((settings or {}).get("context_length", 0) or 0)
+                if uses_incoming
+                else None
+            ),
             "previous_context_producer_digest": upstream_digest,
         }
         memo[slot] = _sha_json(value)

@@ -139,6 +139,14 @@ import {
     createDirectorModal,
     DIRECTOR_LAUNCHER_HEIGHT,
 } from "./minimax_director_modal.js";
+import {
+    contextLinkMode,
+    ensureTimelineContextLinks,
+    legacyContextDefaults,
+    normalizedContextLink,
+    setContextLinkChannels,
+    toggleContextLink,
+} from "./minimax_context_links.mjs";
 
 const RULER_H = 24;
 const SEG_LABEL_H = 20;
@@ -152,6 +160,7 @@ const HANDLE_PX = 14;
 const RUN_CHECK_SIZE = 14;
 const RUN_CHECK_HIT_PAD_X = 8;
 const RUN_CHECK_HIT_PAD_Y = 4;
+const CONTEXT_LINK_RADIUS = 10;
 const THUMB_MAX_W = 168;
 const THUMB_JPEG_Q = 0.55;
 const TIMELINE_SYNC_DEBOUNCE_MS = 500;
@@ -339,6 +348,7 @@ const DIRECTOR_WIDGET_LABEL_KEYS = {
     source_overlap_frames: "widget.sourceBridgeEnabled",
     audio_context_enabled: "widget.audioContextEnabled",
     color_reanchor_enabled: "widget.colorReanchorEnabled",
+    pin_renorm_enabled: "widget.pinRenormEnabled",
     steps: "widget.steps",
     sampler_name: "widget.samplerName",
     scheduler: "widget.scheduler",
@@ -356,6 +366,7 @@ const DIRECTOR_WIDGET_TOOLTIP_KEYS = {
     source_overlap_frames: "widget.tooltip.sourceBridgeEnabled",
     audio_context_enabled: "widget.tooltip.audioContextEnabled",
     color_reanchor_enabled: "widget.tooltip.colorReanchorEnabled",
+    pin_renorm_enabled: "widget.tooltip.pinRenormEnabled",
     clear_vram_between_segments: "widget.tooltip.clearVram",
     export_source_images: "widget.tooltip.exportSourceImages",
 };
@@ -365,6 +376,7 @@ const DIRECTOR_GROUP_LABEL_KEYS = {
     bd_grp_motion: "widget.grpMotion",
     bd_grp_advanced: "widget.grpAdvanced",
     bd_grp_perf: "widget.grpPerf",
+    bd_grp_experimental: "widget.grpExperimental",
 };
 
 function applyDirectorWidgetLabels(node) {
@@ -634,6 +646,47 @@ function openContinuityStrategyMenu(event, pos, node) {
     root.querySelector('[role="menuitem"]')?.focus();
     document.addEventListener("pointerdown", closeOnOutside, true);
     document.addEventListener("keydown", closeOnEscape, true);
+}
+
+function openSegmentContextLinkMenu(event, editor, index) {
+    const options = [
+        { label: `${t("contextLink.visual")} + ${t("contextLink.audio")}`, visual: true, audio: true },
+        { label: t("contextLink.visual"), visual: true, audio: false },
+        { label: t("contextLink.audio"), visual: false, audio: true },
+        { label: "×", visual: false, audio: false },
+    ];
+    const choose = (value) => {
+        const option = typeof value === "string"
+            ? options.find((item) => item.label === value)
+            : value;
+        if (option) editor.setSegmentContextChannels(index, option);
+    };
+    const ContextMenu = globalThis.LiteGraph?.ContextMenu;
+    if (ContextMenu) {
+        new ContextMenu(options.map((item) => item.label), {
+            event,
+            node: editor.node,
+            scale: Math.max(1, Number(app.canvas?.ds?.scale) || 1),
+            className: "dark",
+            callback: choose,
+        });
+        return;
+    }
+    const root = document.createElement("div");
+    root.className = "litegraph litecontextmenu litemenubar-panel dark";
+    root.style.position = "fixed";
+    root.style.zIndex = "100000";
+    for (const option of options) {
+        const item = document.createElement("div");
+        item.className = "litemenu-entry submenu";
+        item.textContent = option.label;
+        item.onclick = () => { choose(option); root.remove(); };
+        root.append(item);
+    }
+    document.body.append(root);
+    root.style.left = `${Math.max(4, event.clientX)}px`;
+    root.style.top = `${Math.max(4, event.clientY)}px`;
+    setTimeout(() => document.addEventListener("pointerdown", () => root.remove(), { once: true }), 0);
 }
 
 function installContinuityPointerClick(widget, handler) {
@@ -1830,6 +1883,7 @@ class MiniMaxH3MotionDirectorEditor {
         const initTotal = Math.max(0, parseInt(this.totalFramesWidget?.value || 124, 10));
         const initFps = coerceTimelineFps(this.frameRateWidget?.value || 24);
         this.timeline = parseTimeline(this.timelineWidget?.value, initTotal, initFps);
+        this.ensureContextLinks();
         this.buildDOM();
         this.bindEvents();
         this._unsubLocale = onLocaleChange(() => this.applyLocale());
@@ -1842,6 +1896,7 @@ class MiniMaxH3MotionDirectorEditor {
         } else {
             this.ensureGenTimeline();
         }
+        this.ensureContextLinks();
         this.applyTaskLayout(this._directorMode);
 
         this.updateDomWidgetHeight();
@@ -1877,6 +1932,85 @@ class MiniMaxH3MotionDirectorEditor {
             || String(raw).trim().toLowerCase() === "false"
             || String(raw).trim().toLowerCase() === "off"
         );
+    }
+
+    _legacyContextDefaultsForSegment(seg, index) {
+        const taskKey = resolveTaskKey(
+            seg?.taskType || this.timeline?.global?.taskType || this.taskTypeWidget?.value || "",
+        );
+        const audioRaw = this.widget("audio_context_enabled")?.value;
+        const sourceRaw = this.widget("source_overlap_frames")?.value;
+        const hasExplicitI2vImage = !!(
+            seg?.genImage?.imageFile || seg?.genImage?.imageB64 || seg?.imageFile
+        );
+        return legacyContextDefaults({
+            taskKey,
+            motionEnabled: this.isMotionContextEnabled(),
+            audioEnabled: !(
+                audioRaw === false || audioRaw === 0 || audioRaw === "0"
+                || String(audioRaw).trim().toLowerCase() === "false"
+                || String(audioRaw).trim().toLowerCase() === "off"
+            ),
+            audioGenerate: normalizeAudioMode(this.timeline?.output?.audioMode) === "generate",
+            sourceBridgeFrames: Number(sourceRaw) || 0,
+            hasExplicitI2vImage: index > 0 && hasExplicitI2vImage,
+        });
+    }
+
+    ensureContextLinks() {
+        ensureTimelineContextLinks(
+            this.timeline,
+            (seg, index) => this._legacyContextDefaultsForSegment(seg, index),
+        );
+        if (Array.isArray(this.timeline?.shots)) {
+            this.timeline.shots.forEach((shot, index) => {
+                const seg = this.timeline.segments?.[index] || shot;
+                shot.contextLink = normalizedContextLink(
+                    shot.contextLink ?? shot.context_link ?? seg?.contextLink,
+                    index,
+                    this._legacyContextDefaultsForSegment(seg, index),
+                );
+                delete shot.context_link;
+            });
+        }
+        return this.timeline;
+    }
+
+    getSegmentContextLink(index) {
+        this.ensureContextLinks();
+        return this.timeline.segments?.[index]?.contextLink;
+    }
+
+    _commitContextLinkChange() {
+        const oldValue = String(this.timelineWidget?.value || "");
+        this._writeTimelineWidget();
+        const newValue = String(this.timelineWidget?.value || "");
+        if (newValue !== oldValue) {
+            this.node?.onWidgetChanged?.("timeline_data", newValue, oldValue, this.timelineWidget);
+            (app.graph ?? app.canvas?.graph)?.change?.();
+        }
+        this.renderImageBatchGroups?.();
+        this.scheduleRender?.();
+    }
+
+    toggleSegmentContextLink(index) {
+        const seg = this.timeline.segments?.[index];
+        if (!seg || index <= 0) return;
+        seg.contextLink = toggleContextLink(seg.contextLink, index);
+        if (this.timeline.shots?.[index]) this.timeline.shots[index].contextLink = { ...seg.contextLink };
+        this._commitContextLinkChange();
+    }
+
+    setSegmentContextChannels(index, channels) {
+        const seg = this.timeline.segments?.[index];
+        if (!seg || index <= 0) return;
+        seg.contextLink = setContextLinkChannels(seg.contextLink, index, channels || {});
+        if (this.timeline.shots?.[index]) this.timeline.shots[index].contextLink = { ...seg.contextLink };
+        this._commitContextLinkChange();
+    }
+
+    getSegmentContextMode(index) {
+        return contextLinkMode(this.getSegmentContextLink(index), index);
     }
 
     updateExternalGroupsBanner() {
@@ -2150,6 +2284,7 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     buildTimelinePayload() {
+        this.ensureContextLinks();
         if (this.isFl2vMode()) {
             const fl = buildFl2vPayloadFields(this);
             const outMode = this.timeline.output?.mode || "long_edge";
@@ -2225,6 +2360,7 @@ class MiniMaxH3MotionDirectorEditor {
                         refAudios: clean.refAudios || [],
                         refVideos: clean.refVideos || [],
                         genImage: clean.genImage || { imageFile: "" },
+                        contextLink: clean.contextLink,
                     };
                 }),
                 ...this._runSelectionPayload(),
@@ -2941,6 +3077,13 @@ class MiniMaxH3MotionDirectorEditor {
         });
         this.canvas.addEventListener("contextmenu", (e) => {
             e.preventDefault();
+            const { x, y } = this.getMousePos(e);
+            const hit = this.hitTest(x, y);
+            if (hit?.type === "context-link") {
+                stopDomEvent(e);
+                openSegmentContextLinkMenu(e, this, hit.index);
+                return;
+            }
             if (this.isFl2vMode()) return;
             this.addSplitAtMouse(e);
         });
@@ -2951,8 +3094,13 @@ class MiniMaxH3MotionDirectorEditor {
             const { x, y } = this.getMousePos(e);
             const hit = this.hitTest(x, y);
             this.canvas.classList.remove("bd-grab");
-            if (hit?.type === "run-check" || hit?.type === "split") {
+            if (hit?.type === "run-check" || hit?.type === "split" || hit?.type === "context-link") {
                 this.canvas.style.cursor = "pointer";
+                this.canvas.title = hit?.type === "context-link"
+                    ? t(this.getSegmentContextMode(hit.index) === "off"
+                        ? "contextLink.connectTooltip"
+                        : "contextLink.disconnectTooltip")
+                    : "";
             } else if (hit?.type === "edge") {
                 // Edge drag is always horizontal (change start/length); keep ↔ cursor.
                 this.canvas.style.cursor = "ew-resize";
@@ -6429,6 +6577,16 @@ class MiniMaxH3MotionDirectorEditor {
         };
     }
 
+    _contextLinkGeometry(index, width, segs = this.timeline.segments) {
+        const seg = segs?.[index];
+        if (!seg || index <= 0) return null;
+        return {
+            x: this.frameToX(seg.start, width),
+            y: TRACK_Y + CONTEXT_LINK_RADIUS + 3,
+            radius: CONTEXT_LINK_RADIUS,
+        };
+    }
+
     /** Draw fl2v edge grips; joints are split (top=prev yellow, bottom=next cyan). */
     _drawFl2vEdgeHandles(segs, index, x0, x1, width) {
         const ordered = (segs || [])
@@ -6530,6 +6688,13 @@ class MiniMaxH3MotionDirectorEditor {
             return { type: "ruler" };
         }
 
+        for (let i = 1; i < segs.length; i++) {
+            const g = this._contextLinkGeometry(i, width, segs);
+            if (g && Math.hypot(x - g.x, y - g.y) <= g.radius + 4) {
+                return { type: "context-link", index: i };
+            }
+        }
+
         // Checkbox corner wins over generic segment hit (same toggle action either way
         // in run-select mode; keeps hit type accurate for cursor / future hooks).
         if (this.isRunSelectEnabled() && this.getRunnableSegmentCount() >= 2 && y >= TRACK_Y && y <= trackBottom) {
@@ -6624,6 +6789,9 @@ class MiniMaxH3MotionDirectorEditor {
             this.clearSplitSelection();
         } else if (hit.type === "run-check") {
             this.toggleSegmentRun(hit.index);
+            this._drag = null;
+        } else if (hit.type === "context-link") {
+            this.toggleSegmentContextLink(hit.index);
             this._drag = null;
         } else if (hit.type === "split") {
             this.selectSplitFrame(hit.frame);
@@ -7938,6 +8106,36 @@ class MiniMaxH3MotionDirectorEditor {
                 const g = this._runCheckGeometry(seg, width);
                 this._drawSegmentRunCheck(g.boxX, g.boxY, runOn);
             }
+        }
+
+
+        // Consumer-side Previous Context controls. The icon sits at the
+        // boundary but slightly inside the track so split diamonds remain usable.
+        for (let i = 1; i < segs.length; i++) {
+            const g = this._contextLinkGeometry(i, width, segs);
+            if (!g) continue;
+            const mode = this.getSegmentContextMode(i);
+            const colors = {
+                both: ["#163723", "#4fff8f"],
+                visual: ["#102b37", "#7ad6ff"],
+                audio: ["#2d1738", "#ddb1ff"],
+                off: ["#321818", "#ef9696"],
+            };
+            const [fill, stroke] = colors[mode] || colors.off;
+            this.ctx.save();
+            this.ctx.fillStyle = fill;
+            this.ctx.strokeStyle = stroke;
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(g.x, g.y, g.radius, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.stroke();
+            this.ctx.fillStyle = stroke;
+            this.ctx.font = "bold 10px sans-serif";
+            this.ctx.textAlign = "center";
+            this.ctx.textBaseline = "middle";
+            this.ctx.fillText(mode === "off" ? "×" : (mode === "both" ? "↔" : mode[0].toUpperCase()), g.x, g.y + 0.5);
+            this.ctx.restore();
         }
 
         // fl2v: dashed overlay for the region past the sampling window.
@@ -9915,6 +10113,7 @@ app.registerExtension({
                 const initTotal = Math.max(0, parseInt(ed.totalFramesWidget?.value || 124, 10));
                 const initFps = coerceTimelineFps(ed.frameRateWidget?.value || 24);
                 ed.timeline = parseTimeline(ed.timelineWidget?.value, initTotal, initFps);
+                ed.ensureContextLinks();
                 ed.syncFrameRateUI(ed.timeline.frameRate);
                 ed._directorMode = ed.getDirectorMode();
                 if (ed._directorMode === "video") {
@@ -9924,6 +10123,7 @@ app.registerExtension({
                 } else {
                     ed.ensureGenTimeline();
                 }
+                ed.ensureContextLinks();
                 ed.applyTaskLayout(ed._directorMode);
                 ed.populateTaskSelect(ed.globalTask, ed.taskTypeWidget?.value);
                 ed.setEditMode(ed.timeline.editMode || "global");

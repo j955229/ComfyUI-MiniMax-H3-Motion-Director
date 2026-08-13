@@ -12,17 +12,17 @@ def test_readme_is_comprehensively_written_in_simplified_chinese():
     cjk_count = len(re.findall(r"[\u4e00-\u9fff]", text))
     assert cjk_count > 3000
     for heading in (
-        "## 安装",
-        "## 节点输入",
-        "## 节点输出",
-        "## 任务模式",
-        "## Motion Context",
-        "## Color Re-anchor",
-        "## Source Bridge（仅 V2V/RV2V）",
-        "## 全局 32 像素空间对齐",
-        "## 缓存与选择运行",
-        "## 已知限制",
-        "## 许可证与上游来源",
+        "# 安装",
+        "# 六种生成模式",
+        "# Previous Context（续接上一段）",
+        "## Visual Previous Context",
+        "## Audio Previous Context",
+        "## 选择运行与过期缓存",
+        "## pin_renorm（Experimental）",
+        "# Color Re-anchor",
+        "# Source Bridge",
+        "# 当前限制",
+        "# 项目关系与许可",
     ):
         assert heading in text
 
@@ -46,19 +46,10 @@ def test_readme_does_not_present_removed_or_misleading_behavior_as_current():
         assert stale not in text
 
     assert "降低多段链式生成中的累积性色彩漂移" in text
-    assert "它不是针对某一种颜色方向的特殊修正" in text
-    assert "Source Bridge v1 不运行 Motion Context 的 generated-audio continuation" in text
-    assert "所有 MiniMax H3 任务统一使用 32 像素空间网格" in text
-    assert "V2V/RV2V `<Video 1>`" in text
-    assert "Common Asset Pool" in text
-    assert "Common → Local" in text
-    assert "A、B、C、D" in text
-    assert "latent-first" in text
-    assert "Reroute" in text
-    assert "仅尾帧" in text
-    assert "Prompt chip" in text
-    assert "最后最多 39 帧" in text
-    assert "context_length" in text
-    assert "选择运行已开启 + 全部导出" in text
-    assert "ComfyUI/output/minimax_seg_cache" in text
-    assert "ComfyUI/output/minimax_motion_context_cache" in text
+    assert "Visual 与 Audio 已经分开" in text
+    assert "Segment 1 没有上一段" in text
+    assert "cache 缺失或 stale" in text
+    assert "第一份 Visual handoff" in text
+    assert "audio latent" in text
+    assert "Source Bridge 只拥有视觉路径" in text
+    assert "不会建立 recent generated memory bank" in text

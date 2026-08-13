@@ -43,6 +43,7 @@ from .gen_timeline import (
     _paired_video_audio_entries,
     _raw_asset_id,
 )
+from .context_links import parse_context_link
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.external_groups")
 
@@ -287,6 +288,7 @@ def validate_external_group_inputs(
     i2v_groups,
     r2v_groups,
     motion_context_enabled: bool = True,
+    timeline_data: str = "",
 ) -> tuple[str, list[dict[str, Any]] | None, str | None]:
     """Return (task_key, groups_or_None, family_or_None). None groups → use UI timeline."""
     i2v_linked = i2v_groups is not None
@@ -303,6 +305,8 @@ def validate_external_group_inputs(
             "or Reference to Video groups (r2v_groups), not both."
         )
     task_key = resolve_task_key(task_type)
+    timeline_meta = _parse_timeline_meta(timeline_data)
+    timeline_segments = list(timeline_meta.get("segments") or [])
     if not i2v and not r2v:
         return task_key, None, None
 
@@ -330,7 +334,13 @@ def validate_external_group_inputs(
                     "Remove last_frame or switch task to fl2v."
                 )
             if task_key == "i2v" and kind == "t2v":
-                if motion_context_enabled and idx > 0:
+                explicit_link = parse_context_link(
+                    timeline_segments[idx] if idx < len(timeline_segments) else {}, idx
+                )
+                if idx > 0 and (
+                    motion_context_enabled
+                    or bool(explicit_link and explicit_link.visual_enabled)
+                ):
                     continue
                 if motion_context_enabled:
                     raise ValueError(
@@ -407,10 +417,15 @@ def build_plan_from_external_groups(
         ("audio", common_audio_raw),
     )
     timeline_segments = list(timeline.get("segments") or [])
+    explicit_visual_inheritance = any(
+        bool(parse_context_link(item, idx) and parse_context_link(item, idx).visual_enabled)
+        for idx, item in enumerate(timeline_segments)
+        if idx > 0
+    )
     inheritance_active = bool(
-        motion_context_enabled
-        and family == "i2v"
+        family == "i2v"
         and task_key == "i2v"
+        and (motion_context_enabled or explicit_visual_inheritance)
     )
     planned_count = (
         max(len(groups), len(timeline_segments))
@@ -552,6 +567,7 @@ def build_plan_from_external_groups(
                     negative_prompt=DEFAULT_FL2V_NEGATIVE if seg_task_key == "fl2v" else "",
                     source_clip=source_clip,
                     ui_index=int(src_index),
+                    context_link=parse_context_link(seg_data, src_index),
                 )
             )
         else:
@@ -725,6 +741,7 @@ def build_plan_from_external_groups(
                     source_clip=None,
                     ui_index=int(src_index),
                     reference_tags=effective.tags,
+                    context_link=parse_context_link(seg_data, src_index),
                 )
             )
 

@@ -209,6 +209,19 @@ class MiniMaxH3MotionDirector:
                     },
                 ),
                 **director_perf_inputs(),
+                "bd_grp_experimental": ("BDGROUP", {"default": "Experimental"}),
+                "pin_renorm_enabled": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": (
+                            "Experimental. Re-normalize only the previous segment's "
+                            "video latent tail to the first handoff std of the current "
+                            "visual chain. Does not modify audio, source video, Picture "
+                            "references, or RGB Color Re-anchor."
+                        ),
+                    },
+                ),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -277,6 +290,7 @@ class MiniMaxH3MotionDirector:
         shift_audio=3.0,
         clear_vram_between_segments=True,
         export_source_images=False,
+        pin_renorm_enabled=False,
         **kwargs,
     ):
         del kwargs
@@ -317,6 +331,7 @@ class MiniMaxH3MotionDirector:
             source_overlap_frames=source_overlap_frames,
             audio_context_enabled=audio_context_enabled,
             color_reanchor_enabled=color_reanchor_enabled,
+            pin_renorm_enabled=pin_renorm_enabled,
             clear_vram_between_segments=clear_vram_between_segments,
         )
 

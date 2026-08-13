@@ -327,58 +327,83 @@ Prompt：1、2、3...
 
 ---
 
-# Motion Context
+# Previous Context（续接上一段）
 
-## 续接上一段（Motion Context）
-
-`Motion Context` 可以理解成：
-
-> 把上一段结尾的生成状态交给下一段，让下一段不要完全从零开始。
-
-它主要用于多段连续生成。
+Director 现在把“是否读取上一段”保存为**每个分段边界自己的状态**，不再要求整条时间线只能统一开启或统一关闭。
 
 例如：
 
 ```text
-S1 生成
-→ 把 S1 结尾状态交给 S2
-→ S2 接着生成
-→ 再把 S2 结尾交给 S3
+S1 → S2 → S3 × S4 → S5
 ```
 
-这比单纯在 Prompt 里写“继续上一段”更直接，因为模型真的会拿到上一段的上下文。
+表示 S2 读取 S1，S3 读取 S2；S4 与旧链完全断开；S5 再从 S4 建立一条新链。Segment 1 没有上一段，所以永远是断开的。
 
-当前 Motion Context 要求：
+在提示词组卡片之间会看到 `🔗` 或 `×`。在视频时间线上，相同状态显示在两个分段的边界处：
 
-```text
-24 fps
-```
+- 点击主图标：在“Visual + Audio 都继承”与“全部断开”之间切换。
+- 点击卡片连接器旁的 `⋯`，或在视频时间线连接图标上按右键：分别设置 Visual 与 Audio。
+- 绿色表示 Visual + Audio；蓝色表示只有 Visual；紫色表示只有 Audio；红色 `×` 表示完全断开。
 
-可用的 H3 上下文长度是：
+旧 workflow 没有这些边界字段。第一次加载时，Director 会依据旧的全局 `Motion Context`、`Audio Context`、音频模式与 Source Bridge 设置推导相同行为，不会让旧项目突然全部断链，也不会突然开启以前没有的声音续接。旧的全局开关仍作为旧 workflow 与新分段的默认值；真正执行时，以已经保存的每段边界状态为准。
+
+## Visual Previous Context
+
+Visual Context 会把上一段最终有效输出的 video latent tail 交给下一段，让人物动作和镜头运动不要完全从零开始。H3 支持的上下文长度仍然是：
 
 ```text
 1 / 5 / 22 / 39
 ```
 
-一般用户不需要理解为什么是这些数字，只需要知道 Director 会按 H3 支持的长度处理。
+Director 优先使用保存的 video latent；只有无法使用 latent 或开启 Color Re-anchor 时才走 RGB fallback。这个路径只负责最近一段的动作状态，不会把生成结果自动加入人物参考素材，也不会建立 recent generated memory bank。
 
-## 延续上一段生成的声音
+如果 I2V 当前段明确上传了新图片，这张图片仍是当前段的首帧基准，Visual Previous Context 会在该边界 reset。Audio 可以独立保持开启，所以可以做到“换场景，但 BGM / ambience 继续”。
+
+当前 Previous Context 要求 H3 原生 `24 fps`。如果缓存缺失、已经过期、画布尺寸不一致或无法覆盖请求的上下文长度，Director 会明确报错，不会静默读取错误历史结果。
+
+## Audio Previous Context
 
 Audio Context 的意思是：
 
-> 把上一段模型生成音频的尾巴也交给下一段。
+> 把上一段模型生成音频的有效 audio latent tail 交给下一段。
 
-它不是“有没有声音”的总开关。
+它不是“是否生成音频”的总开关。只有输出音频模式为 `generate` 时才可继承；`source` 与 `mute` 会关闭该段的 Audio Previous Context。Visual 与 Audio 已经分开，因此支持四种组合：
 
-T2V / I2V / FL2V / R2V 本身可以由 H3 生成音频。
+| Visual | Audio | 实际效果 |
+|---|---|---|
+| ON | ON | 动作、镜头与连续声音都读取上一段 |
+| ON | OFF | 动作继续，声音从当前段重新开始 |
+| OFF | ON | 场景或镜头切换，但 BGM、环境声或连续声音继续 |
+| OFF | OFF | 当前段完全独立 |
 
-V2V / RV2V 还会涉及：
+Audio 路径优先使用上一段保存的 H3 audio latent，必要时才使用完整 generated waveform 重新编码。它不会修改 Voice Ref，也不会把声音素材自动转成跨项目记忆。
 
-- 模型生成音频
-- 使用原视频声音
-- 静音
+## 选择运行与过期缓存
 
-只有走模型生成音频并使用 Motion Context 时，才会继续上一段 generated audio。
+每个 Segment cache 与 Motion/Audio Context cache 都会记录当前段身份、生成环境以及实际启用的上游依赖。重新修改或生成中间段后，下游缓存会沿着仍开启 Visual 或 Audio 的边界变成 stale，直到遇到第一个 Visual、Audio 都关闭的边界为止。
+
+例如：
+
+```text
+S1 → S2 → S3 × S4 → S5
+```
+
+改变 S2 会让 S3 失效，但不会让 S4、S5 失效。即使 S3 是 `Visual OFF / Audio ON`，它仍依赖 S2 的声音，所以 S2 改变后 S3 仍会失效。选择运行单独执行依赖段时，上一段 cache 有效就读取；cache 缺失或 stale 就明确要求先运行上一段或完整序列。
+
+## pin_renorm（Experimental）
+
+`pin_renorm` 默认关闭，放在节点末尾的 Experimental 分组中，方便旧 workflow 保持原行为并进行 A/B 测试。
+
+开启后，第一份 Visual handoff 会记录该连续链的 video latent 标准差作为 baseline。后续每次把 video latent tail 注入下一段前，只把它的尺度重新校准到这个 baseline 附近：保留 latent 的平均值、内容、姿势与运动方向，只抑制长链中的统计尺度漂移。
+
+它绝不会处理：
+
+- audio latent
+- 用户 Picture Ref
+- Source Video
+- RGB Color Re-anchor 输入
+
+当 Visual 边界断开时，旧链 baseline 同时结束。下一次重新开启 Visual inheritance 时，会从新链的第一份 handoff 建立新 baseline。baseline 会跟随 versioned latent cache 保存、恢复与验证，所以完整顺序运行、选择运行和重启 ComfyUI 后的行为一致。
 
 ---
 
@@ -397,7 +422,7 @@ RV2V
 
 当前实现固定使用 5 帧窗口。
 
-V2V / RV2V 的视觉衔接方式是三选一：
+V2V / RV2V 每个边界的视觉衔接方式是三选一：
 
 ```text
 Source Bridge
@@ -406,6 +431,8 @@ Motion Context
 ```
 
 Source Bridge 和 Motion Context 不会同时叠加视觉上下文。
+
+Source Bridge 只拥有视觉路径；如果该边界另外开启 Audio Previous Context，生成音频仍可独立续接，不会把 Source Bridge 误当成上一段画面记忆。
 
 ---
 
@@ -420,11 +447,13 @@ Source Bridge 和 Motion Context 不会同时叠加视觉上下文。
 - 饱和度变化
 - 对比度变化
 
-Color Re-anchor 用来减轻这种累积偏色。
+Color Re-anchor 用来降低多段链式生成中的累积性色彩漂移。
 
 它只会处理“准备交给下一段的画面上下文”，不会回头修改已经生成好的视频。
 
 Source Bridge 路径不会使用 Color Re-anchor。
+
+Color Re-anchor 的长期颜色基准来自用户原始 Picture 或当前 source；Seam Color Match 只用上一段尾部处理相邻接缝。两者不会把 S1 的生成色彩递归当成 S2、S3、S4 的长期标准。
 
 ---
 
@@ -471,6 +500,8 @@ Director 就会改用外接采样。
 # 当前限制
 
 - Motion Context 当前要求 24 fps。
+- Segment 1 永远不能读取 Previous Context。
+- pin_renorm 是默认关闭的实验功能，只作用于 video latent handoff。
 - Source Bridge 只用于 V2V / RV2V，并固定为 5 帧策略。
 - RV2V 素材库当前只开放图片、音频和 Prompt。
 - RV2V 的 Source Video 仍从 Director 本地上传。

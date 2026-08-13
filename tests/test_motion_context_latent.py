@@ -52,7 +52,7 @@ class _VideoVae:
         return torch.zeros((1, 1, steps, 2, 2))
 
 
-def _apply(monkeypatch, *, context_latent, color=False, audio=True):
+def _apply(monkeypatch, *, context_latent, color=False, audio=True, visual=True, conditioning=None):
     monkeypatch.setattr(motion_context, "motion_context_patch_status", lambda: (True, "ok"))
     vae = _VideoVae()
     color_calls = []
@@ -62,7 +62,7 @@ def _apply(monkeypatch, *, context_latent, color=False, audio=True):
         lambda frames, anchor: color_calls.append((frames, anchor)) or frames,
     )
     target = _video_latent(12, with_audio=True)  # 39 target frames
-    conditioning = [[torch.zeros(1), {"minimax_frame_count": 39, "minimax_keyframes": []}]]
+    conditioning = conditioning or [[torch.zeros(1), {"minimax_frame_count": 39, "minimax_keyframes": []}]]
     merged, info = motion_context.apply_exported_motion_context(
         conditioning,
         video_vae=vae,
@@ -76,6 +76,7 @@ def _apply(monkeypatch, *, context_latent, color=False, audio=True):
         target_frame_count=5,
         generation_frame_count=39,
         audio_enabled=audio,
+        visual_enabled=visual,
         fps=24,
         color_reanchor_enabled=color,
         color_anchor=torch.ones((1, 32, 32, 3)),
@@ -93,6 +94,8 @@ def test_in_memory_av_latent_is_visual_first_and_skips_rgb_vae_encode(monkeypatc
     assert info.visual_source == "latent"
     assert info.audio_source == "latent"
     assert merged[0][1]["minimax_keyframes"]
+    assert info.pin_renorm_status == "OFF"
+    assert info.pin_renorm_baseline_std is None
 
 
 def test_missing_av_latent_uses_exported_pixel_fallback(monkeypatch):
@@ -112,3 +115,42 @@ def test_color_reanchor_forces_pixel_visual_but_audio_remains_latent_first(monke
     assert len(color_calls) == 1
     assert info.visual_source == "pixels (Color Re-anchor)"
     assert info.audio_source == "latent"
+
+
+def test_audio_only_context_skips_video_path_and_preserves_visible_start_anchor(monkeypatch):
+    conditioning = [[
+        torch.zeros(1),
+        {
+            "minimax_frame_count": 5,
+            "minimax_keyframes": [{"resolved_frame_index": 0, "latent": torch.ones(1)}],
+        },
+    ]]
+    vae, color_calls, merged, info = _apply(
+        monkeypatch,
+        context_latent=_video_latent(42),
+        color=False,
+        audio=True,
+        visual=False,
+        conditioning=conditioning,
+    )
+    metadata = merged[0][1]
+    assert vae.calls == 0
+    assert color_calls == []
+    assert info.visual_source == "off"
+    assert info.context_frames == 0
+    assert info.audio_source == "latent"
+    assert metadata["minimax_keyframes"][0][motion_context.MC_KEY] == 22
+    assert metadata["minimax_refs"][-1][motion_context.MC_AUDIO_KEY] == 22.0
+
+
+def test_visual_only_context_never_injects_audio_reference(monkeypatch):
+    _vae, _color_calls, merged, info = _apply(
+        monkeypatch,
+        context_latent=_video_latent(42),
+        color=False,
+        audio=False,
+        visual=True,
+    )
+    assert info.visual_source == "latent"
+    assert info.audio_source == "off"
+    assert not merged[0][1].get("minimax_refs")

@@ -13,17 +13,18 @@ def _plan(*, selection=False, export_mode="all"):
     return SimpleNamespace(
         run_select_enabled=selection,
         export_mode=export_mode,
+        segments=[SimpleNamespace(), SimpleNamespace()],
     )
 
 
-def test_normal_full_run_does_not_persist_segment_cache():
+def test_normal_multi_segment_run_persists_future_partial_rerun_cache():
     enabled = cache_policy.should_persist_segment_cache(
         _plan(selection=False, export_mode="all"),
         source_bridge_active=False,
     )
     calls = []
-    assert not cache_policy.write_segment_cache_if_required(enabled, lambda: calls.append(1))
-    assert calls == []
+    assert cache_policy.write_segment_cache_if_required(enabled, lambda: calls.append(1))
+    assert calls == [1]
 
 
 def test_selection_mode_full_export_persists_even_when_every_segment_is_selected():
@@ -38,8 +39,8 @@ def test_selection_mode_full_export_persists_even_when_every_segment_is_selected
     assert calls == [1]
 
 
-def test_selection_mode_segment_export_does_not_persist_without_bridge():
-    assert not cache_policy.should_persist_segment_cache(
+def test_multi_segment_segment_export_still_persists_for_future_partial_rerun():
+    assert cache_policy.should_persist_segment_cache(
         _plan(selection=True, export_mode="segments"),
         source_bridge_active=False,
     )

@@ -40,6 +40,7 @@ from .gen_timeline import (
     build_gen_director_plan,
     is_gen_timeline,
 )
+from .context_links import ContextLink, parse_context_link
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director")
 
@@ -99,6 +100,9 @@ class SegmentPlan:
     ui_index: int | None = None
     # Semantic asset identity → official per-segment prompt tag.
     reference_tags: dict[tuple[str, str], str] = field(default_factory=dict)
+    # Consumer-side link from timeline Segment N-1. None preserves legacy
+    # workflows that only have the global Motion/Audio Context widgets.
+    context_link: ContextLink | None = None
 
     @property
     def frame_count(self) -> int:
@@ -144,6 +148,8 @@ class DirectorPlan:
     color_reanchor_enabled: bool = False
     spatial_stride: int = 32
     global_ref_audios: list[SegmentRefAudio] = field(default_factory=list)
+    # Populated by the executor before any persistent cache access.
+    cache_settings: dict | None = None
 
     @property
     def segment_count(self) -> int:
@@ -681,6 +687,7 @@ def build_director_plan(
                 ref_audios=seg_ref_audios,
                 reference_video_meta=seg_ref_video,
                 reference_video_start_frame=ref_start,
+                context_link=parse_context_link(seg_data, idx),
             )
         )
 

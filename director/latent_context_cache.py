@@ -16,9 +16,9 @@ from .segment_cache import _write_via_temp
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.latent_context_cache")
 
-LATENT_CACHE_VERSION = 3
-LATENT_CACHE_FORMAT = "minimax_h3_motion_director_av_latent_tail_v3"
-LATENT_HANDOFF_PIPELINE = "motion_context_latent_tail_v3"
+LATENT_CACHE_VERSION = 4
+LATENT_CACHE_FORMAT = "minimax_h3_motion_director_av_latent_tail_v4"
+LATENT_HANDOFF_PIPELINE = "motion_context_latent_tail_v4_pin_renorm"
 MAX_PERSISTED_CONTEXT_FRAMES = 39
 
 
@@ -82,7 +82,7 @@ def _sample_streams(latent: dict[str, Any]) -> list[Any]:
 def prepare_latent_context_tail(
     latent: dict[str, Any],
     handoff: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, int]]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Keep only the largest reusable H3 AV-latent endpoint window.
 
     The returned handoff uses a local 0..span timeline.  Original coordinates
@@ -140,6 +140,9 @@ def prepare_latent_context_tail(
             handoff.get("selected_source_end_frame", selected_end)
         ),
     }
+    baseline = handoff.get("pin_renorm_baseline_std")
+    if baseline is not None:
+        tail_handoff["pin_renorm_baseline_std"] = float(baseline)
     return tail_latent, tail_handoff
 
 
@@ -241,6 +244,11 @@ def load_latent_context_cache(
         if not required.issubset(handoff):
             return None
         clean_handoff = {key: int(handoff[key]) for key in required}
+        if handoff.get("pin_renorm_baseline_std") is not None:
+            baseline = float(handoff["pin_renorm_baseline_std"])
+            if not torch.isfinite(torch.tensor(baseline)) or baseline <= 0:
+                return None
+            clean_handoff["pin_renorm_baseline_std"] = baseline
         stored = clean_handoff["stored_tail_frames"]
         if stored not in {1, 5, 22, 39}:
             return None

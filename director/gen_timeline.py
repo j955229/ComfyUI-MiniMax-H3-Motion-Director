@@ -19,6 +19,7 @@ from .effective_refs import (
     compile_effective_references,
     compile_semantic_prompt,
 )
+from .context_links import parse_context_link
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.gen")
 
@@ -213,16 +214,22 @@ def _build_gen_source_clips(
         if submode == "gen_blank":
             clip = torch.full((frame_count, height, width, 3), 0.5, dtype=torch.float32)
         else:
+            saved_link = parse_context_link(seg_data, seg_index)
+            segment_visual_context = bool(
+                saved_link.visual_enabled
+                if saved_link is not None
+                else motion_context_enabled
+            )
             ref = _resolve_gen_image_ref(
                 seg_data,
                 edit_mode=edit_mode,
                 global_block=global_block,
                 task_key=task_key,
                 segment_index=seg_index,
-                motion_context_enabled=motion_context_enabled,
+                motion_context_enabled=segment_visual_context,
             )
             if ref is None:
-                if motion_context_enabled and task_key == "i2v":
+                if segment_visual_context and task_key == "i2v":
                     if seg_index == 0:
                         raise ValueError(
                             "MiniMax H3 Motion Director:\n"
@@ -623,6 +630,7 @@ def build_gen_director_plan(
                 negative_prompt=seg_negative,
                 source_clip=seg_source,
                 reference_tags=reference_tags,
+                context_link=parse_context_link(seg_data, idx),
             )
         )
 

@@ -28,6 +28,8 @@ from ..lib.image_prep import H3_SPATIAL_PIPELINE
 from ..lib.tensor_fingerprint import tensor_fingerprint
 from .frame_align import H3_REFERENCE_VIDEO_PIPELINE, H3_SOURCE_BRIDGE_PIPELINE
 from .color_reanchor import COLOR_REANCHOR_PIPELINE
+from .context_identity import context_producer_fingerprint
+from .context_links import context_link_identity
 from .plan import DirectorPlan, SegmentPlan
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.cache")
@@ -91,6 +93,7 @@ def segment_cache_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[str,
         "color_reanchor_pipeline": COLOR_REANCHOR_PIPELINE,
         "spatial_stride": int(getattr(plan, "spatial_stride", 32)),
         "spatial_pipeline": H3_SPATIAL_PIPELINE,
+        "context_link": context_link_identity(seg),
     }
     if seg.task_key in {"v2v", "rv2v"}:
         fingerprint["reference_video_pipeline"] = H3_REFERENCE_VIDEO_PIPELINE
@@ -98,6 +101,11 @@ def segment_cache_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[str,
         fingerprint["source_overlap_frames"] = max(
             0, int(getattr(plan, "source_overlap_frames", 0))
         )
+    cache_settings = getattr(plan, "cache_settings", None)
+    if isinstance(cache_settings, dict):
+        fingerprint["context_dependency"] = context_producer_fingerprint(
+            seg, plan, cache_settings
+        )["producer_digest"]
     return fingerprint
 
 

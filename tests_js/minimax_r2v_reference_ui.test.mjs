@@ -161,9 +161,11 @@ test("disabled Common mention commits after its semantic token is inserted", () 
     const insertedBlock = source.slice(insertedStart, callbackEnd);
     assert.doesNotMatch(enableBlock, /editor\.commit\s*\(/);
     assert.match(insertedBlock, /editor\.commit\(true, \{ syncTimeline: true \}\)/);
+    const commitAt = insertedBlock.indexOf("editor.commit");
+    const deferredRebuildAt = insertedBlock.indexOf("setTimeout");
     assert.ok(
-        insertedBlock.indexOf("editor.commit") < insertedBlock.indexOf("setTimeout"),
-        "the enabled state and inserted token must commit before the prompt cards are rebuilt",
+        commitAt >= 0 && (deferredRebuildAt < 0 || commitAt < deferredRebuildAt),
+        "the enabled state and inserted token must commit before any deferred prompt-card rebuild",
     );
 });
 

@@ -26,6 +26,7 @@ import torch
 
 from ..lib.image_prep import fit_canvas, fit_video_long_edge, resolve_output_dimensions
 from ..lib.task_prompts import resolve_task_key, task_type_option_label, TASK_PROMPT_BY_KEY
+from .context_links import parse_context_link
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.fl2v")
 
@@ -143,6 +144,7 @@ def _normalize_shots(raw_shots: list | None, *, frame_rate: float = 24.0) -> lis
                     or DEFAULT_FL2V_NEGATIVE
                 ).strip()
                 or DEFAULT_FL2V_NEGATIVE,
+                "contextLink": item.get("contextLink") or item.get("context_link"),
             }
         )
         cursor += fc
@@ -598,9 +600,14 @@ def build_fl2v_director_plan(
     # runSelection uses shot indices when shots[] is present; else keyframe indices.
     run_count = len(timeline.get("shots") or []) if used_explicit_shots else len(keyframes)
     run_sel = _parse_run_selection(timeline, max(1, run_count))
+    selected_plan_indices: set[int] = set()
     if run_sel is not None:
-        shots = [s for s in shots if int(s["source_index"]) in run_sel]
-        if not shots:
+        selected_plan_indices = {
+            plan_idx
+            for plan_idx, shot in enumerate(shots)
+            if int(shot["source_index"]) in run_sel
+        }
+        if not selected_plan_indices:
             raise ValueError(
                 "MiniMax H3 Motion Director: 「选择运行」已开启，但未勾选任何首尾帧组。"
                 "请勾选至少一组再执行。"
@@ -724,6 +731,7 @@ def build_fl2v_director_plan(
                 refs=refs,
                 negative_prompt=shot_negative,
                 source_clip=source_clip,
+                context_link=parse_context_link(shot, plan_index),
             )
         )
         plan_index += 1
@@ -757,6 +765,8 @@ def build_fl2v_director_plan(
         edit_mode="segment",
         raw=raw,
         export_mode=export_mode,
-        run_indices=None,
+        run_indices=(
+            frozenset(selected_plan_indices) if run_sel is not None else None
+        ),
         run_select_enabled=_run_selection_enabled(timeline),
     )

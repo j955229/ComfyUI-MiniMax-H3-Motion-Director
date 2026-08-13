@@ -7,9 +7,10 @@ import torch
 
 from _minimax_h3_motion_director_testpkg.director import context_cache
 from _minimax_h3_motion_director_testpkg.director import latent_context_cache
+from _minimax_h3_motion_director_testpkg.director.context_links import ContextLink
 
 
-def _segment(index: int, prompt: str, *, source_clip=None, refs=None):
+def _segment(index: int, prompt: str, *, source_clip=None, refs=None, context_link=None):
     return SimpleNamespace(
         index=index,
         timeline_index=index,
@@ -27,6 +28,7 @@ def _segment(index: int, prompt: str, *, source_clip=None, refs=None):
         reference_video_meta={},
         reference_video_start_frame=0,
         reference_tags={},
+        context_link=context_link,
     )
 
 
@@ -160,7 +162,7 @@ def test_editing_first_mc_segment_invalidates_entire_downstream_chain(monkeypatc
     ) is None
 
 
-@pytest.mark.parametrize("mutation", ["duration", "source", "settings"])
+@pytest.mark.parametrize("mutation", ["duration", "source", "settings", "seed", "context_length"])
 def test_current_segment_producer_changes_invalidate_cache(monkeypatch, tmp_path, mutation):
     s1 = _segment(0, "one", source_clip=torch.ones((1, 2, 2, 3)))
     s2 = _segment(1, "two")
@@ -172,6 +174,10 @@ def test_current_segment_producer_changes_invalidate_cache(monkeypatch, tmp_path
         s3.end_frame += 1
     elif mutation == "source":
         s3.source_clip = torch.ones((1, 2, 2, 3))
+    elif mutation == "seed":
+        changed_settings["seed"] = 8
+    elif mutation == "context_length":
+        changed_settings["context_length"] = 5
     else:
         changed_settings["steps"] = 9
 
@@ -206,6 +212,34 @@ def test_i2v_explicit_reset_breaks_upstream_cache_dependency(monkeypatch, tmp_pa
     assert context_cache.load_motion_context_cache(
         "node", s3, plan, settings=_settings(), strict=True
     ) is not None
+
+
+def test_explicit_link_off_breaks_upstream_dependency_chain(monkeypatch, tmp_path):
+    s1 = _segment(0, "one", source_clip=torch.ones((1, 2, 2, 3)))
+    s2 = _segment(1, "two", context_link=ContextLink(True, True, True))
+    s3 = _segment(2, "three", context_link=ContextLink(False, False, False))
+    s4 = _segment(3, "four", context_link=ContextLink(True, True, True))
+    plan = _plan(s1, s2, s3, s4)
+    _save_rgb(monkeypatch, tmp_path, s4, plan)
+
+    s2.prompt = "changed before explicit break"
+
+    assert context_cache.load_motion_context_cache(
+        "node", s4, plan, settings=_settings(), strict=True
+    ) is not None
+
+
+def test_audio_only_link_keeps_upstream_dependency(monkeypatch, tmp_path):
+    s1 = _segment(0, "one", source_clip=torch.ones((1, 2, 2, 3)))
+    s2 = _segment(1, "two", context_link=ContextLink(True, False, True))
+    plan = _plan(s1, s2)
+    _save_rgb(monkeypatch, tmp_path, s2, plan)
+
+    s1.prompt = "changed audio producer"
+
+    assert context_cache.load_motion_context_cache(
+        "node", s2, plan, settings=_settings()
+    ) is None
 
 
 def test_selection_run_new_i2v_segment_uses_previous_cached_tail(monkeypatch, tmp_path):

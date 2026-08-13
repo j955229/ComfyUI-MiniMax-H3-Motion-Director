@@ -256,6 +256,16 @@ export const IMAGE_BATCH_STYLES = `
 .bd-batch-run-all input{width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4fff8f}
 /* max-height must stay in sync with BATCH_LIST_MAX_H in getImageBatchUiHeight(). */
 .bd-batch-list{display:flex;flex-direction:column;gap:8px;width:100%;max-height:640px;overflow-y:auto;padding-right:2px}
+.bd-context-link-row{display:flex;align-items:center;justify-content:center;gap:6px;min-height:28px;margin:-2px 0;color:#aaa}
+.bd-context-link-line{height:1px;flex:1 1 auto;max-width:140px;background:#343434}
+.bd-context-link-toggle,.bd-context-link-advanced-btn{border:1px solid #4a4a4a;border-radius:999px;background:#171717;color:#aaa;cursor:pointer;font-size:11px;line-height:1;padding:6px 10px}
+.bd-context-link-toggle[data-mode="both"]{border-color:#4fff8f;color:#4fff8f;background:#13251a}
+.bd-context-link-toggle[data-mode="visual"]{border-color:#5ec8ff;color:#8bd8ff;background:#10222b}
+.bd-context-link-toggle[data-mode="audio"]{border-color:#d6a4ff;color:#e0baff;background:#24152d}
+.bd-context-link-toggle[data-mode="off"]{border-color:#664040;color:#e39191;background:#281515}
+.bd-context-link-advanced{display:none;align-items:center;gap:10px;padding:5px 9px;border:1px solid #333;border-radius:7px;background:#111;font-size:10px;color:#ccc}
+.bd-context-link-row.advanced-open .bd-context-link-advanced{display:flex}
+.bd-context-link-advanced label{display:inline-flex;align-items:center;gap:4px;cursor:pointer}.bd-context-link-advanced input{accent-color:#4fff8f}
 .bd-r2v-common-toggle.hidden,.bd-r2v-common-popover[hidden]{display:none!important}
 .bd-r2v-common-popover{position:fixed;z-index:150;box-sizing:border-box;max-width:calc(100vw - 32px);overflow-y:auto;padding:14px;border:1px solid #46644f;border-radius:12px;background:linear-gradient(165deg,#172019 0%,#131713 58%,#101210 100%);box-shadow:0 18px 54px rgba(0,0,0,.65)}
 .bd-r2v-common-popover-title{margin:0 0 12px;color:#f0f5f1;font-size:14px;font-weight:700}
@@ -1633,6 +1643,64 @@ function renderPreview(el, seg, running, isVideo, fps) {
     else renderImagePreview(el, seg, running);
 }
 
+function buildContextLinkConnector(editor, index) {
+    if (index <= 0) return null;
+    const row = document.createElement("div");
+    row.className = "bd-context-link-row";
+    row.dataset.contextBoundary = String(index);
+    const left = document.createElement("span");
+    left.className = "bd-context-link-line";
+    const right = left.cloneNode();
+    const link = editor.getSegmentContextLink?.(index) || {};
+    const mode = editor.getSegmentContextMode?.(index) || "off";
+    const main = document.createElement("button");
+    main.type = "button";
+    main.className = "bd-context-link-toggle";
+    main.dataset.mode = mode;
+    main.textContent = mode === "off" ? "×" : "🔗";
+    main.title = t(mode === "off" ? "contextLink.connectTooltip" : "contextLink.disconnectTooltip");
+    main.setAttribute("aria-pressed", mode === "off" ? "false" : "true");
+    main.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        editor.toggleSegmentContextLink?.(index);
+    };
+
+    const advancedButton = document.createElement("button");
+    advancedButton.type = "button";
+    advancedButton.className = "bd-context-link-advanced-btn";
+    advancedButton.textContent = "⋯";
+    advancedButton.title = t("contextLink.advancedTooltip");
+    const advanced = document.createElement("span");
+    advanced.className = "bd-context-link-advanced";
+    const channel = (name, checked, labelKey) => {
+        const label = document.createElement("label");
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = !!checked;
+        input.dataset.contextChannel = name;
+        input.onchange = (event) => {
+            event.stopPropagation();
+            const visual = advanced.querySelector('[data-context-channel="visual"]')?.checked;
+            const audio = advanced.querySelector('[data-context-channel="audio"]')?.checked;
+            editor.setSegmentContextChannels?.(index, { visual, audio });
+        };
+        label.append(input, document.createTextNode(t(labelKey)));
+        return label;
+    };
+    advanced.append(
+        channel("visual", link.visual, "contextLink.visual"),
+        channel("audio", link.audio, "contextLink.audio"),
+    );
+    advancedButton.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        row.classList.toggle("advanced-open");
+    };
+    row.append(left, main, advancedButton, advanced, right);
+    return row;
+}
+
 export function renderImageBatchGroups(editor) {
     const list = editor.batchList;
     if (!list) return;
@@ -1709,6 +1777,8 @@ export function renderImageBatchGroups(editor) {
         editor._r2vCommonPopover?.close();
     }
     editor.timeline.segments.forEach((seg, index) => {
+        const connector = buildContextLinkConnector(editor, index);
+        if (connector) list.appendChild(connector);
         const isR2v = key === "r2v";
         const card = document.createElement("div");
         const layoutClass = isR2v

@@ -103,3 +103,26 @@ def test_old_exported_context_cache_is_invalid(monkeypatch, tmp_path, version, f
     assert context_cache.load_motion_context_cache(
         "node", seg, plan, settings={"seed": 1}
     ) is None
+
+
+def test_strict_selection_load_distinguishes_missing_context_cache(monkeypatch, tmp_path):
+    seg, plan, _frames, _audio = _objects(39)
+    monkeypatch.setattr(context_cache, "_cache_root", lambda _node: tmp_path)
+    with pytest.raises(context_cache.MotionContextCacheError, match="cache file is missing"):
+        context_cache.load_motion_context_cache(
+            "node", seg, plan, settings={"seed": 1}, strict=True
+        )
+
+
+def test_strict_selection_load_reports_stale_context_cache(monkeypatch, tmp_path):
+    seg, plan, frames, _audio = _objects(39)
+    monkeypatch.setattr(context_cache, "_cache_root", lambda _node: tmp_path)
+    monkeypatch.setattr(context_cache, "context_fingerprint", lambda *_a, **_k: {"fp": 1})
+    assert context_cache.save_motion_context_cache(
+        "node", seg, plan, frames=frames, audio=None, settings={"seed": 1}
+    )
+    monkeypatch.setattr(context_cache, "context_fingerprint", lambda *_a, **_k: {"fp": 2})
+    with pytest.raises(context_cache.MotionContextCacheError, match="timeline or generation settings changed"):
+        context_cache.load_motion_context_cache(
+            "node", seg, plan, settings={"seed": 1}, strict=True
+        )

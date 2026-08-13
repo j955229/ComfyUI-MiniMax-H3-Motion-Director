@@ -114,3 +114,18 @@ def test_old_or_stale_latent_cache_is_not_mistaken_for_current_handoff(
     assert latent_context_cache.load_latent_context_cache(
         "node", seg, plan, settings={"seed": 1}
     ) is None
+
+
+def test_pin_renorm_baseline_survives_disk_cache_round_trip(monkeypatch, tmp_path):
+    seg, plan, latent, handoff = _objects()
+    handoff["pin_renorm_baseline_std"] = 1.125
+    monkeypatch.setattr(latent_context_cache, "_cache_root", lambda _node: tmp_path)
+    monkeypatch.setattr(latent_context_cache, "context_fingerprint", lambda *_a, **_k: {"fp": 1})
+    assert latent_context_cache.save_latent_context_cache(
+        "node", seg, plan, latent=latent, handoff=handoff, settings={"pin_renorm_enabled": True}
+    )
+    loaded = latent_context_cache.load_latent_context_cache(
+        "node", seg, plan, settings={"pin_renorm_enabled": True}
+    )
+    assert loaded is not None
+    assert loaded.handoff["pin_renorm_baseline_std"] == 1.125

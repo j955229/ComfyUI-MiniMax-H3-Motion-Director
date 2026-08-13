@@ -155,7 +155,7 @@ def test_color_reanchor_cache_settings_distinguish_off_and_on():
     assert off != on
     assert off["color_reanchor_enabled"] is False
     assert on["color_reanchor_enabled"] is True
-    assert on["color_reanchor_pipeline"] == "color_reanchor_v1"
+    assert on["color_reanchor_pipeline"] == color.COLOR_REANCHOR_PIPELINE
 
 
 def test_segment_cache_fingerprint_tracks_i2v_and_r2v_color_anchor_content():
