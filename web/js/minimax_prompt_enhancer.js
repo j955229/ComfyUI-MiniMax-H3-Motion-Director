@@ -911,3 +911,18 @@ export function registerDirectorPromptEnhancerEvents(findDirectorNode) {
         findDirectorNode(detail?.node)?._minimaxEditor?._promptEnhancer?.handleServerEnhanced?.(detail);
     });
 }
+
+// ComfyUI can keep a rejected ES module in the current page's module map.
+// Recover through a versioned URL so the Director cannot silently remain as
+// raw backend widgets after one stale/failed entry import.
+setTimeout(async () => {
+    if (globalThis.__MMX_MOTION_DIRECTOR_EXTENSION_REGISTERED__) return;
+    try {
+        await import("./minimax_timeline.js?boot=director_ui_recovery_v3");
+        if (!globalThis.__MMX_MOTION_DIRECTOR_EXTENSION_REGISTERED__) {
+            throw new Error("Director extension did not register after recovery import.");
+        }
+    } catch (error) {
+        console.error("[MiniMax H3 Motion Director] UI recovery import failed:", error);
+    }
+}, 0);

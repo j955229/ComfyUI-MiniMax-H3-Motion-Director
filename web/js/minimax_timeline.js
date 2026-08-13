@@ -88,10 +88,10 @@ import {
     updateFl2vDetailUI,
     updateFl2vToolbarBtns,
 } from "./minimax_fl2v.js";
-import { mountPromptImageMentions } from "./minimax_prompt_mentions.js";
+import { mountPromptImageMentions } from "./minimax_prompt_mentions.js?boot=director_ui_v2";
 import {
     createTimelineShortcutHandler,
-} from "./minimax_prompt_mentions_core.mjs";
+} from "./minimax_prompt_mentions_core.mjs?boot=director_ui_v2";
 import {
     ensureR2vReferenceAssetSchema,
     ensureReferenceAssetSchema,
@@ -122,7 +122,7 @@ import {
     setWidgetVisibility,
     syncDisabledWidgetState,
     toggleBooleanWidgetValue,
-} from "./minimax_continuity_ui.mjs";
+} from "./minimax_continuity_ui.mjs?boot=director_ui_v3";
 import {
     applyI18nDom,
     aspectDisplayLabel,
@@ -138,7 +138,11 @@ import {
     migrateLegacySamplingControlWorkflow,
     seedControlModeFromWidgets,
 } from "./minimax_sampling_ui.js";
-import { createDirectorModal, DIRECTOR_LAUNCHER_HEIGHT } from "./minimax_director_modal.js";
+import {
+    createDirectorModal,
+    destroyDirectorModalForHost,
+    DIRECTOR_LAUNCHER_HEIGHT,
+} from "./minimax_director_modal.js";
 import {
     contextLinkMode,
     ensureTimelineContextLinks,
@@ -1724,6 +1728,8 @@ function initDirectorEditor(node) {
         syncDirectorNodeSize(node, node._minimaxEditor);
         return node._minimaxEditor;
     } catch (err) {
+        destroyDirectorModalForHost(container);
+        node._minimaxEditor = null;
         console.error("[MiniMax H3 Motion Director] UI init failed:", err);
         return null;
     }
@@ -10010,6 +10016,7 @@ function normalizeDirectorOutputs(node) {
     migrateDirectorOutputLinks(node);
 }
 
+if (!globalThis.__MMX_MOTION_DIRECTOR_EXTENSION_REGISTERED__) {
 app.registerExtension({
     name: "ComfyUI.MiniMaxH3MotionDirectorPlugin",
     async beforeConfigureGraph(graphData) {
@@ -10311,3 +10318,5 @@ app.registerExtension({
         };
     },
 });
+globalThis.__MMX_MOTION_DIRECTOR_EXTENSION_REGISTERED__ = true;
+}

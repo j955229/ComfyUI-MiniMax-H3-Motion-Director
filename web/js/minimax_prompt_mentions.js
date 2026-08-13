@@ -33,13 +33,13 @@ import {
     referenceChipPresentation,
     resolveMentionInsertion,
     shouldCloseMentionForScroll,
-} from "./minimax_prompt_mentions_core.mjs";
+} from "./minimax_prompt_mentions_core.mjs?boot=director_ui_v2";
 export {
     isPromptEditingKey,
     mentionQueryFromText,
     moveMentionActiveIndex,
     shouldCloseMentionForScroll,
-} from "./minimax_prompt_mentions_core.mjs";
+} from "./minimax_prompt_mentions_core.mjs?boot=director_ui_v2";
 
 const MENTION_STYLES = `
 .bd-prompt-editor{width:100%;min-height:64px;box-sizing:border-box;background:#141414;border:1px solid #333;border-radius:5px;color:#eee;padding:7px;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.45 inherit;outline:none}
@@ -568,7 +568,24 @@ export function wirePromptImageMentions(editor, textarea, getMedia, options = {}
         closeMenu();
     };
     const onWindowScroll = (event) => {
-        if (shouldCloseMentionForScroll(menu, event.target)) closeMenu();
+        const modalContent = editor?._directorModalContent || null;
+        // Scroll events retarget inconsistently across Chromium versions: a
+        // Director content scroll may arrive with content, document or window
+        // as its target. While the page-root Director is open, keep the picker
+        // alive and reposition it instead of treating that retargeting as an
+        // outside scroll.
+        if (modalContent && editor?._directorModalOpen) {
+            requestAnimationFrame(() => {
+                if (!destroyed && menu && !menu.classList.contains("hidden")) {
+                    positionMenu(menu, rich);
+                }
+            });
+            return;
+        }
+        if (!shouldCloseMentionForScroll(menu, event.target, modalContent)) {
+            return;
+        }
+        closeMenu();
     };
     listeners.add(document, "mousedown", onDocumentMouseDown);
     listeners.add(window, "scroll", onWindowScroll, true);

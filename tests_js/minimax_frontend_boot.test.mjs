@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const timelineUrl = new URL("../web/js/minimax_timeline.js", import.meta.url);
 const timeline = await readFile(timelineUrl, "utf8");
+const recoveryUrl = new URL("../web/js/minimax_prompt_enhancer.js", import.meta.url);
 
 test("boot-critical local named imports used by the Director entry module exist", async () => {
     const bootCritical = new Set([
@@ -34,4 +35,11 @@ test("Director boot path still installs hidden widgets and continuity UI", () =>
     assert.match(timeline, /for \(const w of node\.widgets \|\| \[\]\) \{[\s\S]*?HIDDEN_WIDGETS\.includes\(w\.name\)[\s\S]*?hideWidget\(w\)/);
     assert.match(timeline, /setWidgetVisibility\(source, false\)/);
     assert.match(timeline, /setWidgetVisibility\(pin, false\)/);
+});
+
+test("Director has an independent cache-busted recovery entry", async () => {
+    const recovery = await readFile(recoveryUrl, "utf8");
+    assert.match(timeline, /__MMX_MOTION_DIRECTOR_EXTENSION_REGISTERED__/);
+    assert.match(recovery, /minimax_timeline\.js\?boot=/);
+    assert.match(recovery, /UI recovery import failed/);
 });

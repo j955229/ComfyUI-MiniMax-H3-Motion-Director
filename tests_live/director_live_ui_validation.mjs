@@ -185,9 +185,17 @@ await call("Browser.grantPermissions", {
 });
 await call("Page.reload", { ignoreCache: true });
 console.log("LIVE_UI stage=page-reloaded");
-await waitFor(`document.readyState === "complete"
-    && globalThis.app?.graph
-    && globalThis.LiteGraph?.registered_node_types?.MiniMaxH3MotionDirector`, 20_000);
+// Page.reload resolves before the old document is necessarily replaced. Avoid
+// accepting the old page's app object as proof that the new document is ready.
+await new Promise((resolveWait) => setTimeout(resolveWait, 750));
+try {
+    await waitFor(`document.readyState === "complete"
+        && globalThis.app?.graph
+        && globalThis.LiteGraph?.registered_node_types?.MiniMaxH3MotionDirector`, 20_000);
+} catch (error) {
+    console.error(`LIVE_UI boot-errors=${JSON.stringify(consoleErrors)}`);
+    throw error;
+}
 
 await evaluate(`(async () => {
     globalThis.app.graph.clear();
@@ -265,10 +273,29 @@ console.log("LIVE_UI stage=node-screenshots");
 const modal = await evaluate(`(() => {
     const editor = globalThis.__mmxLiveNode._minimaxEditor;
     editor._directorModalController.open();
-    return editor._directorModalOpen;
+    return {
+        open: editor._directorModalOpen,
+        hasContent: !!editor._directorModalContent.querySelector(".bd-wrap"),
+        childCount: editor._directorModalContent.childElementCount,
+    };
 })()`);
-assert.equal(modal, true);
+assert.equal(modal.open, true);
+assert.equal(modal.hasContent, true, "Director modal must contain the mounted editor UI.");
+assert.ok(modal.childCount > 0, "Director modal must not open as an empty shell.");
 await new Promise((resolveWait) => setTimeout(resolveWait, 200));
+
+const closeButtonState = await evaluate(`(() => {
+    const editor = globalThis.__mmxLiveNode._minimaxEditor;
+    editor._directorModalController.closeButton.click();
+    const closed = {
+        open: editor._directorModalOpen,
+        hidden: editor._directorModalController.overlay.hidden,
+        ariaHidden: editor._directorModalController.overlay.getAttribute("aria-hidden"),
+    };
+    editor._directorModalController.open();
+    return closed;
+})()`);
+assert.deepEqual(closeButtonState, { open: false, hidden: true, ariaHidden: "true" });
 
 const selectorRects = {};
 const modalScreenshots = [];
@@ -337,6 +364,12 @@ await evaluate(`(() => {
     const controller = editor._promptMentionControllers.find((item) => item.rich.getClientRects().length > 0);
     controller.setValue("");
     controller.rich.focus();
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(controller.rich);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
 })()`);
 await call("Input.insertText", { text: "@" });
 await new Promise((resolveWait) => setTimeout(resolveWait, 80));

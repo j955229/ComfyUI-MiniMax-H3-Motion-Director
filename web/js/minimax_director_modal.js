@@ -4,6 +4,7 @@ export const DIRECTOR_LAUNCHER_HEIGHT = 40;
 
 const STYLE_ID = "mmx-director-modal-styles";
 let activeDirectorModal = null;
+const directorModalByHost = new WeakMap();
 
 const EDITABLE_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 const EDITING_COMMAND_KEYS = new Set(["a", "c", "v", "x", "y", "z"]);
@@ -81,6 +82,7 @@ export function createDirectorModal({
     onResize,
 }) {
     if (!launcherHost) throw new Error("Director launcher host is required");
+    directorModalByHost.get(launcherHost)?.destroy?.();
     ensureStyles();
 
     launcherHost.classList.add("mmx-director-launcher-host");
@@ -157,6 +159,10 @@ export function createDirectorModal({
         });
     };
 
+    const reportLifecycleError = (phase, error) => {
+        console.error(`[MiniMax H3 Motion Director] modal ${phase} failed:`, error);
+    };
+
     const api = {
         launcher,
         openButton,
@@ -170,7 +176,7 @@ export function createDirectorModal({
         get isOpen() { return isOpen; },
         updateLocale,
         open() {
-            if (destroyed || isOpen) return;
+            if (destroyed || isOpen) return false;
             if (activeDirectorModal && activeDirectorModal !== api) {
                 activeDirectorModal.close({ restoreFocus: false });
             }
@@ -179,21 +185,35 @@ export function createDirectorModal({
             isOpen = true;
             overlay.hidden = false;
             overlay.setAttribute("aria-hidden", "false");
-            onOpen?.();
+            try {
+                onOpen?.();
+            } catch (error) {
+                reportLifecycleError("open", error);
+                api.close({ restoreFocus: false });
+                return false;
+            }
             scheduleResize();
             requestAnimationFrame(() => closeButton.focus({ preventScroll: true }));
+            return true;
         },
         close({ restoreFocus = true } = {}) {
-            if (destroyed || !isOpen) return;
-            onClose?.();
+            if (destroyed || !isOpen) return false;
+            // Hide before cleanup. A cleanup error must never leave the page
+            // blocked by an undismissable Director overlay.
             isOpen = false;
             overlay.hidden = true;
             overlay.setAttribute("aria-hidden", "true");
             if (activeDirectorModal === api) activeDirectorModal = null;
+            try {
+                onClose?.();
+            } catch (error) {
+                reportLifecycleError("close", error);
+            }
             if (restoreFocus && restoreFocusEl?.isConnected) {
                 restoreFocusEl.focus?.({ preventScroll: true });
             }
             restoreFocusEl = null;
+            return true;
         },
         destroy() {
             if (destroyed) return;
@@ -213,6 +233,9 @@ export function createDirectorModal({
             overlay.remove();
             launcher.remove();
             launcherHost.classList.remove("mmx-director-launcher-host");
+            if (directorModalByHost.get(launcherHost) === api) {
+                directorModalByHost.delete(launcherHost);
+            }
         },
     };
 
@@ -230,6 +253,7 @@ export function createDirectorModal({
     };
     const handleCloseClick = (event) => {
         event.preventDefault();
+        event.stopPropagation();
         api.close();
     };
     const handleBackdropClick = (event) => {
@@ -257,5 +281,13 @@ export function createDirectorModal({
     window.addEventListener("keydown", api.keyHandler, true);
     window.addEventListener("resize", scheduleResize);
     updateLocale();
+    directorModalByHost.set(launcherHost, api);
     return api;
+}
+
+export function destroyDirectorModalForHost(launcherHost) {
+    const modal = launcherHost ? directorModalByHost.get(launcherHost) : null;
+    if (!modal) return false;
+    modal.destroy();
+    return true;
 }

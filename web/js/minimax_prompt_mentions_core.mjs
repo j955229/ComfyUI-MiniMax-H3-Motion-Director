@@ -111,8 +111,16 @@ export function filterMentionPickerItems(items, query = "") {
     });
 }
 
-export function shouldCloseMentionForScroll(menu, eventTarget) {
-    return !(menu && eventTarget && (eventTarget === menu || menu.contains?.(eventTarget)));
+export function shouldCloseMentionForScroll(menu, eventTarget, keepOpenRoot = null) {
+    if (!menu || !eventTarget) return true;
+    if (eventTarget === menu || menu.contains?.(eventTarget)) return false;
+    if (
+        keepOpenRoot
+        && (eventTarget === keepOpenRoot || keepOpenRoot.contains?.(eventTarget))
+    ) {
+        return false;
+    }
+    return true;
 }
 
 export function isPromptEditingKey(key) {

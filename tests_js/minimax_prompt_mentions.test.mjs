@@ -207,8 +207,12 @@ test("reference chip presentation uses effective tag without changing semantic i
 test("scrolling inside the mention menu does not close it", () => {
     const child = {};
     const menu = { contains: (target) => target === child };
+    const modalChild = {};
+    const modalContent = { contains: (target) => target === modalChild };
     assert.equal(shouldCloseMentionForScroll(menu, child), false);
     assert.equal(shouldCloseMentionForScroll(menu, menu), false);
+    assert.equal(shouldCloseMentionForScroll(menu, modalContent, modalContent), false);
+    assert.equal(shouldCloseMentionForScroll(menu, modalChild, modalContent), false);
     assert.equal(shouldCloseMentionForScroll(menu, {}), true);
 });
 
