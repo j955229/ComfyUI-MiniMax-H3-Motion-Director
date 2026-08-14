@@ -81,7 +81,7 @@ export function mountOutputUI(container, store, {
           <select data-segment-select hidden></select><span data-range-label hidden></span>
         </div>
         <div class="mmx-result-viewer">
-          <img data-result-image hidden alt="Director result preview"><video data-result-video hidden playsinline controls></video>
+          <img data-result-image hidden alt="Director result preview"><video data-result-video hidden playsinline autoplay loop muted></video>
           <div class="mmx-result-empty" data-output-text="waiting">等待模型生成成果…</div>
           <div class="mmx-result-badge" data-result-badge data-output-text="idle">Idle</div>
         </div>
@@ -185,9 +185,28 @@ export function mountOutputUI(container, store, {
         video.hidden = !isVideo; image.hidden = isVideo || !frames.length; empty.hidden = isVideo || !!frames.length;
         if (isVideo) {
             const src = dataUrl(result.image_b64, mediaType);
-            if (video.src !== src) video.src = src;
+
+            video.controls = false;
+            video.autoplay = true;
+            video.loop = true;
+            video.muted = true;
+            video.playsInline = true;
+
+            if (video.src !== src) {
+                video.src = src;
+                video.load();
+            }
+
+            video.play().catch(() => {});
         } else if (frames.length) {
-            image.src = dataUrl(frames[state.index], frames[state.index]?.startsWith?.("data:") ? "" : (result?.frames?.length ? "image/jpeg" : mediaType));
+            video.pause();
+
+            image.src = dataUrl(
+                frames[state.index],
+                frames[state.index]?.startsWith?.("data:")
+                    ? ""
+                    : (result?.frames?.length ? "image/jpeg" : mediaType),
+            );
         }
         seek.max = Math.max(0, frames.length - 1); seek.value = state.index;
         const fps = Number(result?.fps || 24);
