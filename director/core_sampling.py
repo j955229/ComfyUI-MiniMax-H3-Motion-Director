@@ -140,17 +140,18 @@ def sample_single_stage(
     on_phase: PhaseCallback | None = None,
     on_step_preview: StepPreviewCallback | None = None,
     preview_every: int = 1,
+    denoise: float = 1.0,
+    phase_name: str = "sample",
 ):
     import comfy.sample
     import comfy.utils
-    import latent_preview
     from comfy_extras.nodes_minimax_h3 import MiniMaxH3SigmaShift
 
     def notify(phase: str, value: float) -> None:
         if on_phase:
             on_phase(phase, value)
 
-    notify("sample", 0)
+    notify(phase_name, 0)
     mode = resolve_sampling_mode(external_sampler, external_sigmas)
     if mode == "internal":
         shifted = MiniMaxH3SigmaShift.execute(model, float(shift_video), float(shift_audio))
@@ -181,7 +182,6 @@ def sample_single_stage(
     )
     noise_mask = latent.get("noise_mask", None)
 
-    base_cb = latent_preview.prepare_callback(model_for_sampling, step_count)
     every = max(1, int(preview_every))
 
     def callback(step, x0, x, total_steps):
@@ -191,8 +191,9 @@ def sample_single_stage(
                     on_step_preview(int(step), int(total_steps), x0)
             except Exception as exc:
                 log.debug("Step preview callback skipped: %s", exc)
-        if base_cb is not None:
-            base_cb(step, x0, x, total_steps)
+        # Intentionally do not install ComfyUI's latent preview callback here.
+        # Director owns its bounded side-channel preview; the native
+        # sampler preview stays suppressed even when Director Preview is OFF.
 
     disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
     if mode == "internal":
@@ -206,7 +207,7 @@ def sample_single_stage(
             positive,
             neg,
             latent_image,
-            denoise=1.0,
+            denoise=float(denoise),
             noise_mask=noise_mask,
             callback=callback,
             disable_pbar=disable_pbar,
@@ -239,7 +240,7 @@ def sample_single_stage(
     out.pop("downscale_ratio_spacial", None)
     out.pop("downscale_ratio_temporal", None)
     out["samples"] = samples
-    notify("sample", 1)
+    notify(phase_name, 1)
     return out
 
 

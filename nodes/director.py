@@ -12,6 +12,7 @@ from __future__ import annotations
 import comfy.samplers
 
 from ..director.executor_core import execute_director_plan_core
+from ..director.progress import report_director_audio_preview, report_director_report
 from .director_common import (
     finalize_director_outputs,
     prepare_director_plan,
@@ -225,6 +226,17 @@ class MiniMaxH3MotionDirector:
                         ),
                     },
                 ),
+                # Append-only serialized state.  The frontend hides this raw
+                # JSON widget and exposes synchronized proxy controls on the
+                # node and in the single Director modal.
+                "postprocess_config": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "tooltip": "Internal Director post-processing and Output Preview configuration.",
+                    },
+                ),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -294,6 +306,7 @@ class MiniMaxH3MotionDirector:
         clear_vram_between_segments=True,
         export_source_images=False,
         pin_renorm_enabled=False,
+        postprocess_config="",
         **kwargs,
     ):
         del kwargs
@@ -336,9 +349,10 @@ class MiniMaxH3MotionDirector:
             color_reanchor_enabled=color_reanchor_enabled,
             pin_renorm_enabled=pin_renorm_enabled,
             clear_vram_between_segments=clear_vram_between_segments,
+            postprocess_config=postprocess_config,
         )
 
-        return finalize_director_outputs(
+        outputs = finalize_director_outputs(
             plan,
             combined,
             segment_outputs,
@@ -346,3 +360,6 @@ class MiniMaxH3MotionDirector:
             export_source_images=export_source_images,
             segment_audios=segment_audios,
         )
+        report_director_report(unique_id, outputs[-1])
+        report_director_audio_preview(unique_id, outputs[1])
+        return outputs

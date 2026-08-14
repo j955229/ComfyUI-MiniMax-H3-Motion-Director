@@ -7,16 +7,18 @@ export function mountR2vCommonToggle(outputBar, documentRef = globalThis.documen
     const existing = outputBar.querySelector('[data-a="r2v-common-toggle"]');
     if (existing) return existing;
     const livePreview = outputBar.querySelector('[data-a="live-tae-preview"]');
-    if (!livePreview) {
-        throw new Error("R2V Common toggle requires the live preview button.");
-    }
-    let buttonGroup = livePreview.parentElement;
+    let buttonGroup = livePreview?.parentElement
+        || outputBar.querySelector(".bd-output-button-group");
     if (!buttonGroup?.classList?.contains("bd-output-button-group")) {
         buttonGroup = documentRef.createElement("span");
         buttonGroup.className = "bd-output-button-group";
         buttonGroup.classList?.add?.("bd-output-button-group");
-        livePreview.replaceWith(buttonGroup);
-        buttonGroup.appendChild(livePreview);
+        if (livePreview) {
+            livePreview.replaceWith(buttonGroup);
+            buttonGroup.appendChild(livePreview);
+        } else {
+            outputBar.appendChild(buttonGroup);
+        }
     }
     const button = documentRef.createElement("button");
     button.type = "button";
@@ -25,8 +27,12 @@ export function mountR2vCommonToggle(outputBar, documentRef = globalThis.documen
     button.setAttribute("data-i18n", "batch.r2v.commonReferences");
     button.setAttribute("aria-expanded", "false");
     button.textContent = "公共素材";
-    if (!livePreview.insertAdjacentElement("afterend", button)) {
-        throw new Error("Unable to mount R2V Common toggle beside live preview.");
+    if (livePreview) {
+        if (!livePreview.insertAdjacentElement("afterend", button)) {
+            throw new Error("Unable to mount R2V Common toggle beside live preview.");
+        }
+    } else {
+        buttonGroup.appendChild(button);
     }
     return button;
 }

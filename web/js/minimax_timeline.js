@@ -7,6 +7,13 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import {
+    PostprocessConfigStore,
+    faceRefineSummary,
+    globalRefineSummary,
+    mountPostprocessUI,
+} from "./minimax_postprocess_ui.mjs?boot=postprocess_output_v4";
+import { mountOutputUI } from "./minimax_output_ui.mjs?boot=postprocess_output_v4";
 import { resolveExternalGroupTerminal } from "./minimax_external_groups.mjs";
 import {
     CUSTOM_ASPECT_RATIO,
@@ -57,7 +64,6 @@ import {
     mountImageBatchPanel,
     normalizeImageBatchSegments,
     renderImageBatchGroups,
-    setImageBatchPreview,
     setR2vToolbar,
     setToolbarDisabledForBatch,
     updateR2vToolbarBtns,
@@ -103,7 +109,7 @@ import {
 import {
     mountR2vCommonToggle,
     syncR2vCommonToggleForTask,
-} from "./minimax_r2v_common_ui.mjs";
+} from "./minimax_r2v_common_ui.mjs?boot=postprocess_output_v4";
 import {
     commitRunSelectionMutation as commitRunSelectionMutationNow,
     ensureRunSelectionSerialized,
@@ -142,7 +148,8 @@ import {
     createDirectorModal,
     destroyDirectorModalForHost,
     DIRECTOR_LAUNCHER_HEIGHT,
-} from "./minimax_director_modal.js";
+    getDirectorModalForHost,
+} from "./minimax_director_modal.js?boot=director_node_style_v2";
 import {
     contextLinkMode,
     ensureTimelineContextLinks,
@@ -341,7 +348,7 @@ function stripTimelineEphemeralFields(timeline) {
 
 const HIDDEN_WIDGETS = [
     "timeline_data", "total_frames", "width", "height", "ref_max_size",
-    "task_type", "global_prompt", "frame_rate", "cfg",
+    "task_type", "global_prompt", "frame_rate", "cfg", "postprocess_config",
     // seed stays visible under 采样设置 (with control_after_generate)
 ];
 
@@ -378,6 +385,7 @@ const DIRECTOR_WIDGET_TOOLTIP_KEYS = {
 const DIRECTOR_GROUP_LABEL_KEYS = {
     bd_grp_sample: "widget.grpSample",
     bd_grp_motion: "widget.grpMotion",
+    mmx_postprocess_group: "widget.grpPostprocess",
     bd_grp_advanced: "widget.grpAdvanced",
     bd_grp_perf: "widget.grpPerf",
     bd_grp_experimental: "widget.grpExperimental",
@@ -802,6 +810,135 @@ function drawDirectorBooleanWidget(ctx, _node, width, y, height = 20) {
     ctx.restore();
 }
 
+function getNodePostprocessStore(node) {
+    if (node?._mmxPostprocessStore) return node._mmxPostprocessStore;
+    const widget = node?.widgets?.find((item) => item.name === "postprocess_config");
+    if (!widget) return null;
+    node._mmxPostprocessStore = new PostprocessConfigStore(widget, {
+        onChange: () => {
+            node.setDirtyCanvas?.(true, true);
+            (app.graph ?? app.canvas?.graph)?.change?.();
+            node._minimaxEditor?.postprocessUi?.render?.(node._mmxPostprocessStore.get());
+        },
+    });
+    return node._mmxPostprocessStore;
+}
+
+function postprocessProxyState(node, section) {
+    const store = getNodePostprocessStore(node);
+    const config = store?.get?.();
+    const enabled = !!config?.[section]?.enabled;
+    const label = section === "global_refine" ? t("postprocess.global") : t("postprocess.face");
+    const summary = section === "global_refine"
+        ? globalRefineSummary(config, Number(node.widgets?.find((w) => w.name === "width")?.value || 864), Number(node.widgets?.find((w) => w.name === "height")?.value || 480), getLocale())
+        : faceRefineSummary(config, getLocale());
+    return { enabled, label, summary };
+}
+
+function drawPostprocessToggle(ctx, node, width, y, height = 20) {
+    const state = postprocessProxyState(node, this._mmxSection);
+    this.value = state.enabled;
+    this.label = state.label;
+    drawDirectorBooleanWidget.call(this, ctx, node, width, y, height);
+}
+
+function drawPostprocessSummary(ctx, node, width, y, height = 18) {
+    const state = postprocessProxyState(node, this._mmxSection);
+    const maxWidth = Math.max(20, width - 44);
+    ctx.save();
+    ctx.fillStyle = state.enabled ? "#9da7bc" : DIRECTOR_STATE_COLORS.disabled;
+    ctx.font = "10px ui-sans-serif, system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    let clipped = String(state.summary || (getLocale() === "en" ? "Disabled" : "已停用"));
+    while (clipped.length > 1 && ctx.measureText(clipped).width > maxWidth) clipped = `${clipped.slice(0, -2)}…`;
+    ctx.fillText(clipped, 22, y + Math.max(16, Number(height) || 18) / 2);
+    ctx.restore();
+}
+
+function installDirectorPostprocessUi(node) {
+    const store = getNodePostprocessStore(node);
+    if (!store || !node?.widgets) return;
+    const backend = node.widgets.find((item) => item.name === "postprocess_config");
+    hideWidget(backend);
+    const specs = [
+        ["mmx_postprocess_group", null, 26, null, "group"],
+        ["mmx_global_refine_proxy", "global_refine", 24, drawPostprocessToggle, "toggle"],
+        ["mmx_global_refine_summary", "global_refine", 18, drawPostprocessSummary, "summary"],
+        ["mmx_face_refine_proxy", "face_refine", 24, drawPostprocessToggle, "toggle"],
+        ["mmx_face_refine_summary", "face_refine", 18, drawPostprocessSummary, "summary"],
+    ];
+    const proxies = specs.map(([name, section, height, draw, kind]) => {
+        let widget = node.widgets.find((item) => item.name === name);
+        if (!widget) {
+            widget = kind === "group"
+                ? makeGroupHeaderWidget(name, ["BDGROUP", { default: t("widget.grpPostprocess") }])
+                : {
+                    name, type: "custom", value: null, serialize: false,
+                    options: { serialize: false }, _mmxSection: section,
+                    computeSize: (width) => [width, height], draw,
+                    mouse: () => false,
+                };
+            widget.serialize = false;
+            widget.options = { ...(widget.options || {}), serialize: false };
+            if (kind === "toggle") installContinuityPointerClick(widget, (event, pos) => {
+                store.toggle(section);
+                node.setDirtyCanvas?.(true, true);
+                return true;
+            });
+        }
+        return widget;
+    });
+    for (const proxy of proxies) {
+        const index = node.widgets.indexOf(proxy);
+        if (index >= 0) node.widgets.splice(index, 1);
+    }
+    const advancedIndex = node.widgets.findIndex((item) => item.name === "bd_grp_advanced");
+    node.widgets.splice(advancedIndex >= 0 ? advancedIndex : node.widgets.length, 0, ...proxies);
+}
+
+const DIRECTOR_TRANSIENT_WIDGETS = new Set([
+    "mmx_postprocess_group", "mmx_global_refine_proxy", "mmx_global_refine_summary",
+    "mmx_face_refine_proxy", "mmx_face_refine_summary", "mmx_pin_renorm_proxy",
+]);
+
+function detachDirectorTransientWidgets(node) {
+    if (!node?.widgets?.length) return;
+    for (let index = node.widgets.length - 1; index >= 0; index -= 1) {
+        if (DIRECTOR_TRANSIENT_WIDGETS.has(node.widgets[index]?.name)) node.widgets.splice(index, 1);
+    }
+}
+
+function repairInvalidDirectorSamplingState(node) {
+    const widget = (name) => node?.widgets?.find((item) => item.name === name);
+    const steps = widget("steps");
+    const sampler = widget("sampler_name");
+    const scheduler = widget("scheduler");
+    const videoShift = widget("shift_video");
+    const audioShift = widget("shift_audio");
+    const invalidCount = [
+        !Number.isFinite(Number(steps?.value)) || Number(steps?.value) < 1,
+        !Number.isFinite(Number(videoShift?.value)) || Number(videoShift?.value) < 0.01,
+        !Number.isFinite(Number(audioShift?.value)) || Number(audioShift?.value) < 0.01,
+    ].filter(Boolean).length;
+    if (invalidCount < 2) return false;
+
+    // Recovery for the short-lived frontend build that inserted non-serialized
+    // postprocess proxies before LiteGraph applied widgets_values.
+    if (steps) steps.value = 25;
+    if (sampler) sampler.value = "res_multistep";
+    if (scheduler) scheduler.value = "simple";
+    if (videoShift) videoShift.value = 12;
+    if (audioShift) audioShift.value = 3;
+    const clearVram = widget("clear_vram_between_segments");
+    const sourceImages = widget("export_source_images");
+    if (clearVram) clearVram.value = true;
+    if (sourceImages) sourceImages.value = false;
+    console.warn("[MiniMax H3 Motion Director] repaired invalid sampling values caused by transient widget ordering");
+    node?.setDirtyCanvas?.(true, true);
+    return true;
+}
+
 function ensurePinRenormProxy(node, pin) {
     const existing = node.widgets?.find((w) => w.name === "mmx_pin_renorm_proxy");
     if (existing) return existing;
@@ -821,7 +958,12 @@ function ensurePinRenormProxy(node, pin) {
 }
 
 function installDirectorContinuityUi(node) {
-    if (!node || node._mmxContinuityUiInstalled) return;
+    if (!node) return;
+    if (node._mmxContinuityUiInstalled) {
+        const pin = node.widgets?.find((w) => w.name === "pin_renorm_enabled");
+        if (pin && !node.widgets?.some((w) => w.name === "mmx_pin_renorm_proxy")) ensurePinRenormProxy(node, pin);
+        return;
+    }
     const source = node.widgets?.find((w) => w.name === "source_overlap_frames");
     const audio = node.widgets?.find((w) => w.name === "audio_context_enabled");
     const motion = node.widgets?.find((w) => w.name === "motion_context_enabled");
@@ -1184,6 +1326,9 @@ const STYLES = `
 .bd-stage-empty{color:#555;font-size:11px;pointer-events:none}
 .bd-stage-badge{position:absolute;left:8px;bottom:8px;padding:2px 7px;border-radius:3px;background:rgba(0,0,0,.65);color:#ccc;font-size:10px;line-height:1.4;cursor:pointer;user-select:none}
 .bd-stage-badge:hover{color:#fff;background:rgba(0,0,0,.8)}
+.bd-main.bd-output-before-timeline .bd-stage{border:1px solid #222;border-radius:6px}
+.bd-main.bd-output-before-timeline .bd-controls{border-radius:6px;border-color:#333;background:#1e1e1e}
+.bd-main.bd-output-before-timeline .bd-output{min-height:42px}
 .bd-frame-jump{display:inline-flex;align-items:center;gap:4px;color:#ddd;font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .bd-frame-jump .bd-frame-input{width:64px;background:#181818;border:1px solid #444;border-radius:4px;color:#eee;padding:4px 4px;font-size:11px;text-align:center;-moz-appearance:textfield}
 .bd-frame-jump .bd-frame-input:focus{border-color:#4fff8f;outline:none}
@@ -1211,9 +1356,9 @@ const STYLES = `
 .bd-btn-sm{padding:3px 8px;font-size:10px}
 .bd-btn-run-select.active{background:#1a3a2a;color:#4fff8f;border-color:#4fff8f}
 .bd-output .bd-output-button-group{margin-left:auto;display:inline-flex;align-items:center;gap:6px;flex-wrap:nowrap;flex-shrink:0}
-.bd-output .bd-btn-live-preview,.bd-output .bd-r2v-common-toggle{background:#222;border-color:#333;color:#aaa;white-space:nowrap;height:29px;min-height:29px;padding:4px 12px}
-.bd-output .bd-btn-live-preview:hover,.bd-output .bd-r2v-common-toggle:hover{background:#2a2a2a;border-color:#555;color:#ddd}
-.bd-output .bd-btn-live-preview.active,.bd-output .bd-r2v-common-toggle.active{background:#1a3a2a;color:#4fff8f;border-color:#4fff8f;box-shadow:0 0 0 1px rgba(79,255,143,.35)}
+.bd-output .bd-r2v-common-toggle{background:#222;border-color:#333;color:#aaa;white-space:nowrap;height:29px;min-height:29px;padding:4px 12px}
+.bd-output .bd-r2v-common-toggle:hover{background:#2a2a2a;border-color:#555;color:#ddd}
+.bd-output .bd-r2v-common-toggle.active{background:#1a3a2a;color:#4fff8f;border-color:#4fff8f;box-shadow:0 0 0 1px rgba(79,255,143,.35)}
 .bd-live-sample{width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:10px 12px;background:linear-gradient(165deg,#1a1a1a 0%,#121212 100%);border:1px solid #333;border-radius:10px;flex-shrink:0}
 .bd-live-sample.hidden{display:none!important}
 .bd-live-sample.receiving{border-color:#4fff8f;box-shadow:0 0 0 1px rgba(79,255,143,.35)}
@@ -1690,6 +1835,7 @@ function moveDirectorPerfWidgetsBeforeTimeline(node) {
 }
 
 function finalizeDirectorWidgetOrder(node) {
+    installDirectorPostprocessUi(node);
     moveDirectorPerfWidgetsBeforeTimeline(node);
     moveDirectorDomWidgetToEnd(node);
 }
@@ -1728,7 +1874,20 @@ function initDirectorEditor(node) {
         syncDirectorNodeSize(node, node._minimaxEditor);
         return node._minimaxEditor;
     } catch (err) {
-        destroyDirectorModalForHost(container);
+        // createDirectorModal() runs at the start of the constructor.  Keep
+        // that launcher visible even if a later page/component fails, so the
+        // user is never left with an unopenable node and no diagnosis.
+        const openButton = container.querySelector?.('[data-a="open-director"]');
+        if (openButton) {
+            openButton.title = `Director UI init failed: ${err?.message || err}`;
+            openButton.dataset.initError = String(err?.message || err);
+        }
+        const modal = getDirectorModalForHost(container);
+        const errorPanel = document.createElement("div");
+        errorPanel.className = "mmx-director-init-error";
+        errorPanel.style.cssText = "margin:12px;padding:12px;border:1px solid #8b3434;border-radius:7px;background:#2a1717;color:#ffb1b1;font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap";
+        errorPanel.textContent = `Director UI init failed\n${err?.message || err}`;
+        modal?.pages?.generation?.prepend(errorPanel);
         node._minimaxEditor = null;
         console.error("[MiniMax H3 Motion Director] UI init failed:", err);
         return null;
@@ -2042,12 +2201,48 @@ class MiniMaxH3MotionDirectorEditor {
         this.widthWidget = this.widget("width");
         this.heightWidget = this.widget("height");
         this.refMaxWidget = this.widget("ref_max_size");
+        this.postprocessWidget = this.widget("postprocess_config");
+        this._hadSerializedPostprocessConfig = !!String(this.postprocessWidget?.value || "").trim();
+        this.postprocessStore = getNodePostprocessStore(this.node)
+            || new PostprocessConfigStore(this.postprocessWidget);
 
         const initTotal = Math.max(0, parseInt(this.totalFramesWidget?.value || 124, 10));
         const initFps = coerceTimelineFps(this.frameRateWidget?.value || 24);
         this.timeline = parseTimeline(this.timelineWidget?.value, initTotal, initFps);
-        this.ensureContextLinks();
-        this.buildDOM();
+        if (!this._hadSerializedPostprocessConfig) {
+            this.postprocessStore.patch("preview", "enabled", this.timeline.liveTaePreview !== false);
+        }
+        const initPhase = (label, callback) => {
+            try { return callback(); }
+            catch (error) {
+                const wrapped = new Error(`${label}: ${error?.message || error}`);
+                wrapped.cause = error;
+                throw wrapped;
+            }
+        };
+        initPhase("Generation state", () => this.ensureContextLinks());
+        initPhase("Generation DOM", () => this.buildDOM());
+        this.postprocessUi = initPhase("Postprocess page", () => mountPostprocessUI(
+            this._directorModalController.pages.postprocess,
+            this.postprocessStore,
+            {
+                fetchApi: (path) => api.fetchApi(path),
+                directorSize: () => [Number(this.widthWidget?.value || 864), Number(this.heightWidget?.value || 480)],
+                locale: getLocale,
+            },
+        ));
+        this.outputUi = initPhase("Output page", () => mountOutputUI(
+            this._directorModalController.pages.output,
+            this.postprocessStore,
+            { locale: getLocale },
+        ));
+        this.runStatusEl = this.outputUi.runStatusEl;
+        this.runTitleEl = this.outputUi.runTitleEl;
+        this.runDetailEl = this.outputUi.runDetailEl;
+        this.runOverallEl = this.outputUi.runOverallEl;
+        this.runPhaseEl = this.outputUi.runPhaseEl;
+        this.runSelectBar = this.outputUi.runSelectBar;
+        this.runSelectSummary = this.outputUi.runSelectSummary;
         this.bindEvents();
         this._unsubLocale = onLocaleChange(() => this.applyLocale());
         this.applyLocale();
@@ -2802,30 +2997,13 @@ class MiniMaxH3MotionDirectorEditor {
                 <label><input type="checkbox" data-r="segment-continuity-cb"><span data-i18n="output.segmentContinuity">段间引导</span></label>
                 <span class="bd-meta" data-i18n="output.continuityOverlap">参考帧数</span>
                 <input type="number" class="bd-num" data-r="segment-continuity-overlap" min="1" max="81" step="4" value="9" style="width:48px">
-            </span>
-            <button type="button" class="bd-btn bd-btn-live-preview active" data-a="live-tae-preview" data-i18n="toolbar.liveTaePreview" data-i18n-title="tooltip.liveTaePreview">实时预览</button>`;
+            </span>`;
         this.r2vCommonToggle = mountR2vCommonToggle(outputBar);
         this.mainBody.appendChild(outputBar);
         this.outputBarEl = outputBar;
 
-        const liveSample = document.createElement("div");
-        liveSample.className = "bd-live-sample hidden";
-        liveSample.setAttribute("data-r", "live-sample");
-        liveSample.innerHTML = `
-            <div class="bd-live-sample-head">
-                <b data-i18n="liveSample.title">采样预览</b>
-                <span class="bd-meta" data-r="live-sample-meta" data-i18n="liveSample.idleHint">开启后，采样过程中显示实时画面</span>
-            </div>
-            <div class="bd-live-sample-body">
-                <img class="hidden" data-r="live-sample-img" alt="live preview">
-                <div class="bd-live-sample-empty" data-r="live-sample-empty" data-i18n="liveSample.waiting">等待采样…</div>
-                <div class="bd-live-sample-badge hidden" data-r="live-sample-badge"></div>
-            </div>`;
-        this.liveSampleEl = liveSample;
-        this.liveSampleImg = liveSample.querySelector('[data-r="live-sample-img"]');
-        this.liveSampleEmpty = liveSample.querySelector('[data-r="live-sample-empty"]');
-        this.liveSampleBadge = liveSample.querySelector('[data-r="live-sample-badge"]');
-        this.liveSampleMeta = liveSample.querySelector('[data-r="live-sample-meta"]');
+        // Model-result preview lives exclusively on the Output page.
+        this.liveSampleEl = null;
         this._liveSampleHost = null;
 
         const bottom = document.createElement("div");
@@ -2926,21 +3104,6 @@ class MiniMaxH3MotionDirectorEditor {
             this.fl2vUi.totalInput = this.root.querySelector('[data-r="fl2v-total"]');
         }
         bindFl2vEvents(this);
-
-        const runStatus = document.createElement("div");
-        runStatus.className = "bd-run-status idle";
-        runStatus.dataset.r = "run-status";
-        runStatus.innerHTML = `
-            <div class="bd-run-title" data-r="run-title" data-i18n="run.titleIdle">运行状态：待命</div>
-            <div class="bd-run-detail" data-r="run-detail" data-i18n="run.detailIdle">队列执行时将显示当前片段与阶段进度</div>
-            <div class="bd-run-select-bar hidden" data-r="run-select-bar">
-                <span data-r="run-select-summary" data-i18n="run.summaryAllSegments">将运行全部片段</span>
-            </div>
-            <div class="bd-run-bars">
-                <div class="bd-run-bar" data-i18n-title="run.bar.overall"><div class="bd-run-bar-fill" data-r="run-overall" style="width:0%"></div></div>
-                <div class="bd-run-bar bd-run-bar-sub" data-i18n-title="run.bar.phase"><div class="bd-run-bar-fill" data-r="run-phase" style="width:0%"></div></div>
-            </div>`;
-        this.root.appendChild(runStatus);
 
         this.container.appendChild(this.root);
 
@@ -3088,7 +3251,6 @@ class MiniMaxH3MotionDirectorEditor {
         bind('[data-a="mode-segment"]', () => this.setEditMode("segment"));
         bind('[data-a="play"]', () => this.togglePlay());
         bind('[data-a="loop"]', () => this.toggleLoop());
-        bind('[data-a="live-tae-preview"]', () => this.toggleLiveTaePreview());
         bind('[data-a="frame-prev"]', () => this.stepFrame(-1));
         bind('[data-a="frame-next"]', () => this.stepFrame(1));
         bind('[data-a="zoom-in"]', () => this.adjustZoom(0.5));
@@ -3348,6 +3510,10 @@ class MiniMaxH3MotionDirectorEditor {
         this._batchPromptMentionControllers = [];
         this._r2vCommonPopover?.destroy?.();
         this._r2vCommonPopover = null;
+        this.postprocessUi?.destroy?.();
+        this.outputUi?.destroy?.();
+        this.postprocessUi = null;
+        this.outputUi = null;
         this._directorModalController?.destroy();
         this._directorModalController = null;
         this._directorModalOverlay = null;
@@ -3483,6 +3649,29 @@ class MiniMaxH3MotionDirectorEditor {
             hasFile(segment?.referenceVideo)
             || (segment?.refVideos || []).some(hasFile)
         ));
+    }
+
+    updateGenerationRowOrder(taskKey = this.getTaskKey()) {
+        const { stageEl, outputBarEl, controlsBar, splitEditBarEl, viewport } = this;
+        if (!stageEl || !outputBarEl || !controlsBar || !splitEditBarEl || !viewport) return;
+
+        const swapOutputAndSourceControls = ["fl2v", "r2v", "v2v", "rv2v"].includes(taskKey);
+        this.mainBody.classList.toggle("bd-output-before-timeline", swapOutputAndSourceControls);
+        if (swapOutputAndSourceControls) {
+            // Swap only the two requested regions while preserving everything between them.
+            // stage -> output parameters -> split tools -> timeline -> source player controls
+            stageEl.after(outputBarEl);
+            outputBarEl.after(splitEditBarEl);
+            splitEditBarEl.after(viewport);
+            viewport.after(controlsBar);
+            return;
+        }
+
+        // Restore the original Generation order for T2V / I2V and other modes.
+        stageEl.after(controlsBar);
+        controlsBar.after(splitEditBarEl);
+        splitEditBarEl.after(viewport);
+        viewport.after(outputBarEl);
     }
 
     getH3SpatialStride() {
@@ -4200,7 +4389,6 @@ class MiniMaxH3MotionDirectorEditor {
         this.timecodeEl?.classList.toggle("hidden", !isFl2v && !isR2v && (hideTimeline || isBatch));
         this.viewport?.classList.toggle("hidden", isBatch && !isR2v);
         this.updateStageVisibility();
-        this.updateLiveSamplePanel();
         this.syncExternalGroupsTimeline();
         this.root.querySelector(".bd-split")?.classList.toggle("hidden", isBatch || isFl2v);
         this.batchPanel?.classList.toggle("hidden", !isBatch);
@@ -4319,6 +4507,7 @@ class MiniMaxH3MotionDirectorEditor {
             this.updateModeUI();
             this.updateSelectionUI();
         }
+        this.updateGenerationRowOrder(taskKey);
         this.updateDomWidgetHeight();
         this.syncOutputUIFromTimeline();
         this.seekBar.max = Math.max(0, this.getTotalFrames() - 1);
@@ -5191,6 +5380,9 @@ class MiniMaxH3MotionDirectorEditor {
 
     applyLocale() {
         this._directorModalController?.updateLocale();
+        this.postprocessUi?.updateLocale?.(getLocale());
+        this.outputUi?.updateLocale?.(getLocale());
+        this.node?.setDirtyCanvas?.(true, true);
         this.root?.classList.toggle("locale-en", getLocale() === "en");
         this.root?.classList.toggle("locale-zh", getLocale() !== "en");
         applyI18nDom(this.root);
@@ -9016,21 +9208,17 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     isLiveTaePreviewEnabled() {
-        return this.timeline?.liveTaePreview !== false;
+        return this.postprocessStore?.get?.().preview?.enabled !== false;
     }
 
     /** fl2v / v2v / rv2v (and aliases): show dedicated live-sample panel when toggle is on. */
     needsLiveSamplePanel() {
-        if (!this.isLiveTaePreviewEnabled()) return false;
-        if (this.isImageBatch?.()) return false;
-        if (this.isFl2vMode?.()) return true;
-        const key = this.getTaskKey?.() || "";
-        return key === "v2v" || key === "mv2v" || key === "ads2v"
-            || key === "rv2v" || key === "vrc2v" || key === "vi2v";
+        return false;
     }
 
     toggleLiveTaePreview() {
-        this.timeline.liveTaePreview = !this.isLiveTaePreviewEnabled();
+        this.postprocessStore?.patch("preview", "enabled", !this.isLiveTaePreviewEnabled());
+        this.timeline.liveTaePreview = this.isLiveTaePreviewEnabled();
         this.refreshLiveTaePreviewButton();
         this.updateLiveSamplePanel();
         this.scheduleTimelineSync();
@@ -9134,9 +9322,11 @@ class MiniMaxH3MotionDirectorEditor {
         this.liveSampleEmpty?.classList.remove("hidden");
         this.liveSampleBadge?.classList.add("hidden");
         if (this.liveSampleMeta) this.liveSampleMeta.textContent = t("liveSample.idleHint");
+        this.outputUi?.clear?.();
     }
 
     setLiveSamplePreview(detail = {}) {
+        this.outputUi?.consumePreview?.(detail);
         if (!this.needsLiveSamplePanel()) return;
         const b64 = detail.image_b64 || detail.imageB64 || "";
         if (!b64) return;
@@ -9178,6 +9368,7 @@ class MiniMaxH3MotionDirectorEditor {
 
     setRunProgress(detail) {
         if (!this.runStatusEl) return;
+        this.outputUi?.setPipelineStatus?.(detail);
         this._lastRunProgressDetail = { ...detail };
         this._lastRunErrorMessage = null;
         const timelineTotal = this.timeline?.segments?.length || 0;
@@ -10048,22 +10239,15 @@ app.registerExtension({
         api.addEventListener("minimax_motion_director_preview", ({ detail }) => {
             const editor = findDirectorNode(detail?.node_id)?._minimaxEditor;
             if (!editor) return;
-            if (editor.isImageBatch?.()) {
-                setImageBatchPreview(
-                    editor,
-                    detail?.segment_index ?? 0,
-                    detail?.image_b64 || "",
-                    {
-                        frames: detail?.live ? undefined : detail?.frames,
-                        fps: detail?.fps,
-                        live: !!detail?.live,
-                        step: detail?.step,
-                        total_steps: detail?.total_steps,
-                    },
-                );
-                return;
-            }
-            editor.setLiveSamplePreview?.(detail);
+            editor.outputUi?.consumePreview?.(detail);
+        });
+
+        api.addEventListener("minimax_motion_director_report", ({ detail }) => {
+            findDirectorNode(detail?.node_id)?._minimaxEditor?.outputUi?.setReport?.(detail?.report || "");
+        });
+
+        api.addEventListener("minimax_motion_director_audio", ({ detail }) => {
+            findDirectorNode(detail?.node_id)?._minimaxEditor?.outputUi?.setAudio?.(detail);
         });
 
         api.addEventListener("executing", ({ detail }) => {
@@ -10072,17 +10256,7 @@ app.registerExtension({
             const editor = node?._minimaxEditor;
             if (!editor) return;
             editor.flushTimelineSync?.();
-            editor.clearLiveSamplePreview?.();
-            if (editor.isImageBatch?.()) {
-                for (const seg of editor.timeline.segments || []) {
-                    seg.previewB64 = "";
-                    seg.previewFrames = [];
-                    seg.previewLive = false;
-                    seg.previewStep = null;
-                    seg.previewTotalSteps = null;
-                }
-                editor.renderImageBatchGroups?.();
-            }
+            editor.outputUi?.clear?.();
             const segTotal = editor.getRunProgressSegmentTotal?.() ?? (editor.timeline?.segments?.length || 1);
             const timelineTotal = editor.timeline?.segments?.length || segTotal;
             editor.setRunProgress({
@@ -10215,7 +10389,6 @@ app.registerExtension({
             widget.element = container;
             ensureDirectorDomWidgetWidth(self);
             self._minimaxDomWidget = widget;
-            finalizeDirectorWidgetOrder(self);
 
             setTimeout(() => {
                 finalizeDirectorWidgetOrder(self);
@@ -10270,6 +10443,9 @@ app.registerExtension({
 
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
+            // LiteGraph applies widgets_values by widget order.  Transient
+            // visual facades must never exist while native deserialization runs.
+            detachDirectorTransientWidgets(this);
             migrateLegacySamplingControlNode(arguments[0]);
             migrateColorReanchorWidgetValues(arguments[0], this.widgets || []);
             normalizeDirectorOutputs(this);
@@ -10279,6 +10455,7 @@ app.registerExtension({
                 out = onConfigure?.apply(this, arguments);
             } finally {
                 this._mmxContinuityConfiguring = false;
+                repairInvalidDirectorSamplingState(this);
                 for (const widget of this.widgets || []) {
                     if (widget?._mmxContinuityDisabled) {
                         widget._mmxContinuityStoredValue = widget.value;
@@ -10287,6 +10464,7 @@ app.registerExtension({
             }
             setTimeout(() => {
                 finalizeDirectorWidgetOrder(this);
+                this._mmxPostprocessStore?.reload?.();
                 applyDirectorWidgetLabels(this);
                 const ed = initDirectorEditor(this) || this._minimaxEditor;
                 if (!ed) return;

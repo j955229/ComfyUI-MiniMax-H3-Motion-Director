@@ -10,6 +10,11 @@
 from __future__ import annotations
 
 import logging
+import base64
+import io
+import wave
+
+import torch
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director")
 
@@ -17,14 +22,24 @@ DIRECTOR_PHASES = (
     "prepare",
     "context_encode",
     "sample",
+    "global_upscale",
+    "global_refine",
     "decode",
+    "assemble",
+    "face_refine",
+    "finalize",
 )
 
 PHASE_LABELS = {
     "prepare": "准备片段",
     "context_encode": "H3 条件编码",
     "sample": "采样",
+    "global_upscale": "全局精修 · 放大",
+    "global_refine": "全局精修 · 二次采样",
     "decode": "AV 解码",
+    "assemble": "多段组合",
+    "face_refine": "人脸精修",
+    "finalize": "最终结果 / 导出",
     "plan": "解析时间轴 / 加载视频",
     "finish": "全部完成",
 }
@@ -125,6 +140,9 @@ def report_director_segment_preview(
     live: bool = False,
     step: int | None = None,
     total_steps: int | None = None,
+    stage: str = "Generation",
+    media_type: str = "image/jpeg",
+    result_kind: str = "segment",
 ) -> None:
     if not node_id or not image_b64:
         return
@@ -135,6 +153,9 @@ def report_director_segment_preview(
         "width": width,
         "height": height,
         "live": bool(live),
+        "stage": str(stage),
+        "media_type": str(media_type),
+        "result_kind": str(result_kind),
     }
     if frames:
         payload["frames"] = frames
@@ -151,6 +172,63 @@ def report_director_segment_preview(
             srv.send_sync("minimax_motion_director_preview", payload, srv.client_id)
     except Exception as exc:
         log.debug("Director preview send skipped: %s", exc)
+
+
+def report_director_report(node_id: str | None, report: str) -> None:
+    if not node_id:
+        return
+    try:
+        from server import PromptServer
+
+        srv = PromptServer.instance
+        if srv:
+            srv.send_sync(
+                "minimax_motion_director_report",
+                {"node_id": str(node_id), "report": str(report or "")},
+                srv.client_id,
+            )
+    except Exception as exc:
+        log.debug("Director report send skipped: %s", exc)
+
+
+def report_director_audio_preview(node_id: str | None, audio_outputs) -> None:
+    """Send CPU WAV side-channel data for Output volume/playback controls."""
+    if not node_id:
+        return
+    audio = audio_outputs[0] if isinstance(audio_outputs, (list, tuple)) and audio_outputs else audio_outputs
+    waveform = audio.get("waveform") if isinstance(audio, dict) else None
+    sample_rate = int(audio.get("sample_rate") or 0) if isinstance(audio, dict) else 0
+    if not isinstance(waveform, torch.Tensor) or waveform.numel() <= 0 or sample_rate <= 0:
+        return
+    try:
+        samples = waveform.detach().float().cpu()
+        while samples.ndim > 2:
+            samples = samples[0]
+        if samples.ndim == 1:
+            samples = samples.unsqueeze(0)
+        pcm = (samples.clamp(-1, 1).transpose(0, 1).contiguous().numpy() * 32767).astype("int16")
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav:
+            wav.setnchannels(int(pcm.shape[1]))
+            wav.setsampwidth(2)
+            wav.setframerate(sample_rate)
+            wav.writeframes(pcm.tobytes())
+        from server import PromptServer
+
+        srv = PromptServer.instance
+        if srv:
+            srv.send_sync(
+                "minimax_motion_director_audio",
+                {
+                    "node_id": str(node_id),
+                    "audio_b64": base64.b64encode(buffer.getvalue()).decode("ascii"),
+                    "media_type": "audio/wav",
+                    "sample_rate": sample_rate,
+                },
+                srv.client_id,
+            )
+    except Exception as exc:
+        log.debug("Director audio preview skipped: %s", exc)
 
 
 def report_director_finish(node_id: str | None, segment_total: int) -> None:

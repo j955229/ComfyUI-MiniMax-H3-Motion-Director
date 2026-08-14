@@ -47,6 +47,19 @@ def test_report_has_stable_sections_and_omits_empty_warnings():
     assert "[Warnings]" not in text
 
 
+def test_postprocess_preview_and_final_sections_have_stable_order():
+    report = DirectorExecutionReport()
+    report.add("Generation", "Status: SUCCESS")
+    report.add("Global Refine", "Status: FAILED", "Fallback: FIRST_PASS_RESULT")
+    report.add("Face Refine", "Status: SUCCESS")
+    report.add("Preview", "ComfyUI Default Preview: SUPPRESSED")
+    report.add("Final", "Status: SUCCESS_WITH_WARNING")
+    text = report.render()
+    assert text.index("[Generation]") < text.index("[Global Refine]")
+    assert text.index("[Global Refine]") < text.index("[Face Refine]")
+    assert text.index("[Face Refine]") < text.index("[Preview]") < text.index("[Final]")
+
+
 def test_pin_off_report_is_compact():
     report = DirectorExecutionReport()
     report.add("Latent Scale Lock", "OFF")

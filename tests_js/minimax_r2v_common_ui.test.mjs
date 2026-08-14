@@ -112,6 +112,15 @@ test("R2V Common toggle mounts next to live preview inside the output bar", () =
     assert.equal(outputBar.querySelectorAll('[data-a="r2v-common-toggle"]').length, 1);
 });
 
+test("R2V Common toggle remains in Generation after generated-result preview moves to Output", () => {
+    const documentRef = new TestDocument();
+    const outputBar = documentRef.createElement("div");
+    const toggle = mountR2vCommonToggle(outputBar, documentRef);
+    assert.equal(toggle.parentElement.classList.contains("bd-output-button-group"), true);
+    assert.equal(toggle.parentElement.parentElement, outputBar);
+    assert.equal(outputBar.querySelector('[data-a="live-tae-preview"]'), null);
+});
+
 test("R2V Common toggle visibility, active state and tooltip follow task and expansion", () => {
     assert.equal(typeof syncR2vCommonToggle, "function");
     const documentRef = new TestDocument();

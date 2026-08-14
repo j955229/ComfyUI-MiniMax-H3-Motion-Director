@@ -284,6 +284,68 @@ assert.equal(modal.hasContent, true, "Director modal must contain the mounted ed
 assert.ok(modal.childCount > 0, "Director modal must not open as an empty shell.");
 await new Promise((resolveWait) => setTimeout(resolveWait, 200));
 
+const threePages = await evaluate(`(() => {
+    const editor = globalThis.__mmxLiveNode._minimaxEditor;
+    const modal = editor._directorModalController;
+    const pages = Object.fromEntries(Object.entries(modal.pages).map(([name, element]) => [name, {
+        hidden: element.hidden,
+        children: element.childElementCount,
+    }]));
+    const sourceControls = {
+        play: !!modal.pages.generation.querySelector('[data-a="play"]'),
+        seek: !!modal.pages.generation.querySelector('[data-r="seek"]'),
+        framePrev: !!modal.pages.generation.querySelector('[data-a="frame-prev"]'),
+        frameNext: !!modal.pages.generation.querySelector('[data-a="frame-next"]'),
+    };
+    modal.nextButton.click();
+    const afterNext = modal.currentPage;
+    modal.nextButton.click();
+    const afterNextAgain = modal.currentPage;
+    modal.nextButton.click();
+    const afterWrap = modal.currentPage;
+    modal.previousButton.click();
+    const afterPreviousWrap = modal.currentPage;
+    const postprocess = {
+        columns: modal.pages.postprocess.querySelectorAll('.mmx-post-column').length,
+        global: !!modal.pages.postprocess.querySelector('[data-section="global_refine"]'),
+        face: !!modal.pages.postprocess.querySelector('[data-section="face_refine"]'),
+    };
+    const output = {
+        tabs: modal.pages.output.querySelectorAll('[data-result-tab]').length,
+        resultSeek: !!modal.pages.output.querySelector('[data-result-seek]'),
+        runStatus: !!modal.pages.output.querySelector('[data-r="run-status"]'),
+        report: !!modal.pages.output.querySelector('[data-report]'),
+    };
+    modal.setPage('generation');
+    return { pages, sourceControls, afterNext, afterNextAgain, afterWrap, afterPreviousWrap, postprocess, output };
+})()`);
+assert.deepEqual(threePages.sourceControls, { play: true, seek: true, framePrev: true, frameNext: true });
+assert.equal(threePages.afterNext, "postprocess");
+assert.equal(threePages.afterNextAgain, "output");
+assert.equal(threePages.afterWrap, "generation");
+assert.equal(threePages.afterPreviousWrap, "output");
+assert.deepEqual(threePages.postprocess, { columns: 2, global: true, face: true });
+assert.deepEqual(threePages.output, { tabs: 4, resultSeek: true, runStatus: true, report: true });
+
+const postprocessSync = await evaluate(`(() => {
+    const node = globalThis.__mmxLiveNode;
+    const editor = node._minimaxEditor;
+    const store = editor.postprocessStore;
+    store.patch('global_refine', 'enabled', true);
+    store.patch('face_refine', 'enabled', true);
+    const enabled = store.get();
+    const saved = JSON.parse(node.widgets.find((widget) => widget.name === 'postprocess_config').value);
+    const proxies = node.widgets.filter((widget) => ['mmx_postprocess_group','mmx_global_refine_proxy','mmx_face_refine_proxy'].includes(widget.name)).map((widget) => widget.name);
+    store.patch('global_refine', 'enabled', false);
+    store.patch('face_refine', 'enabled', false);
+    return { global: enabled.global_refine.enabled, face: enabled.face_refine.enabled, savedGlobal: saved.global_refine.enabled, savedFace: saved.face_refine.enabled, proxies };
+})()`);
+assert.deepEqual(postprocessSync, {
+    global: true, face: true, savedGlobal: true, savedFace: true,
+    proxies: ["mmx_postprocess_group", "mmx_global_refine_proxy", "mmx_face_refine_proxy"],
+});
+console.log("LIVE_UI stage=three-pages-postprocess-output");
+
 const closeButtonState = await evaluate(`(() => {
     const editor = globalThis.__mmxLiveNode._minimaxEditor;
     editor._directorModalController.closeButton.click();
@@ -446,6 +508,8 @@ const report = {
     runSelection,
     mentionState,
     modalPaste,
+    threePages,
+    postprocessSync,
     beforeModalPasteNodes,
     afterClosedPasteNodes,
     consoleErrorCount: directorErrors.length,

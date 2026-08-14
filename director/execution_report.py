@@ -16,7 +16,12 @@ SECTION_ORDER = (
     "Audio Context",
     "Cache",
     "References",
+    "Generation",
+    "Global Refine",
+    "Face Refine",
+    "Preview",
     "Warnings",
+    "Final",
 )
 
 

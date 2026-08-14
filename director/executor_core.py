@@ -33,6 +33,10 @@ from .core_sampling import (
     resolve_sampling_mode,
     validate_external_sampling,
 )
+from .postprocess_config import normalize_postprocess_config, postprocess_cache_fingerprint
+from .refine_sampling import apply_global_refine
+from .preview_manager import DirectorPreviewManager
+from .face_refine_pipeline import apply_face_refine
 from .frame_align import (
     H3_REFERENCE_VIDEO_PIPELINE,
     H3_SOURCE_BRIDGE_PIPELINE,
@@ -104,7 +108,12 @@ from .plan import (
     reinforce_rv2v_prompt,
     reinforce_v2v_prompt,
 )
-from .progress import report_director_finish, report_director_progress, report_director_segment_preview
+from .progress import (
+    report_director_finish,
+    report_director_progress,
+    report_director_report,
+    report_director_segment_preview,
+)
 from .segment_cache import (
     load_segment_audio_cache,
     load_segment_cache,
@@ -336,8 +345,20 @@ def execute_director_plan_core(
     color_reanchor_enabled: bool = False,
     pin_renorm_enabled: bool = False,
     clear_vram_between_segments: bool = True,
+    postprocess_config: str | dict[str, Any] = "",
 ) -> tuple[torch.Tensor, list[torch.Tensor], list[dict[str, Any]], str]:
     """Process every segment with MiniMax H3 conditioning + single-stage sampling."""
+    legacy_preview = (plan.raw or {}).get(
+        "liveTaePreview", (plan.raw or {}).get("live_tae_preview", True)
+    )
+    config_source: Any = postprocess_config
+    if not (isinstance(config_source, str) and config_source.strip()) and not isinstance(config_source, dict):
+        config_source = {"liveTaePreview": legacy_preview}
+    postprocess = normalize_postprocess_config(config_source)
+    global_refine_config = postprocess["global_refine"]
+    face_refine_config = postprocess["face_refine"]
+    preview_config = postprocess["preview"]
+    preview_manager = DirectorPreviewManager(node_id, preview_config)
     audio_mode = resolve_audio_mode(plan)
     decode_audio = audio_mode == AUDIO_MODE_GENERATE
     sampling_mode = resolve_sampling_mode(external_sampler, external_sigmas)
@@ -414,6 +435,7 @@ def execute_director_plan_core(
         "model_options": _stable_cache_value(getattr(model, "model_options", {}) or {}),
     }
     cache_settings.update(color_reanchor_cache_settings(color_reanchor_requested))
+    cache_settings.update(postprocess_cache_fingerprint(postprocess))
     cache_settings.update(
         {
             "spatial_stride": int(plan_spatial_stride),
@@ -446,9 +468,7 @@ def execute_director_plan_core(
             }
         )
     plan.cache_settings = cache_settings
-    # UI toggle on the player bar (timeline.liveTaePreview); default on.
-    raw_live = (plan.raw or {}).get("liveTaePreview", (plan.raw or {}).get("live_tae_preview", True))
-    live_tae_preview = False if raw_live in (False, 0, "0", "false", "False", "off") else True
+    live_tae_preview = bool(preview_config["enabled"])
 
     all_segments = plan.segments
     source_bridge_pairs = [
@@ -580,6 +600,7 @@ def execute_director_plan_core(
     color_diagnostics: dict[int, str] = {}
     reference_diagnostics: dict[int, str] = {}
     warning_messages: list[str] = []
+    global_refine_outcomes: dict[int, Any] = {}
 
     def _run_one_segment(
         seg, *, progress_index: int
@@ -1028,26 +1049,14 @@ def execute_director_plan_core(
                 phase=phase, phase_value=value, phase_max=1, **meta,
             )
 
-        def _report_step_preview(step: int, total_steps: int, x0) -> None:
-            # Live frame for the batch-card preview slot (「生成中…」 area).
-            try:
-                from .tae_preview import pil_to_jpeg_b64, x0_to_preview_pil
-
-                pil = x0_to_preview_pil(x0, max_side=512)
-                if pil is None:
-                    return
-                report_director_segment_preview(
-                    node_id,
-                    segment_index=ui_idx,
-                    image_b64=pil_to_jpeg_b64(pil),
-                    width=pil.width,
-                    height=pil.height,
-                    live=True,
-                    step=step + 1,
-                    total_steps=total_steps,
-                )
-            except Exception as exc:
-                log.debug("Live TAE preview skipped: %s", exc)
+        def _report_step_preview(step: int, total_steps: int, x0, *, stage: str = "Generation") -> None:
+            preview_manager.submit(
+                segment_index=ui_idx,
+                stage=stage,
+                step=step + 1,
+                total_steps=total_steps,
+                x0=x0,
+            )
 
         try:
             samples = sample_single_stage(
@@ -1066,7 +1075,7 @@ def execute_director_plan_core(
                 external_sigmas=external_sigmas,
                 on_phase=_report_sample_phase,
                 on_step_preview=_report_step_preview if live_tae_preview else None,
-                preview_every=1,
+                preview_every=int(preview_config["preview_every"]),
             )
         except torch.cuda.OutOfMemoryError as exc:
             raise RuntimeError(
@@ -1075,6 +1084,75 @@ def execute_director_plan_core(
                 "references, or keep clear_vram_between_segments enabled. No "
                 "context/reference was silently removed."
             ) from exc
+
+        def _repin_refined_context(refine_positive, refine_latent):
+            if context_entry is None or not apply_visual_context:
+                return refine_positive
+            rebuilt, _ = apply_exported_motion_context(
+                refine_positive,
+                video_vae=vae,
+                audio_vae=audio_vae,
+                latent=refine_latent,
+                context_frames=context_entry.frames,
+                context_audio=context_entry.audio,
+                # A successful upscale changes the latent canvas.  Re-encode
+                # the cached RGB tail at that canvas; never reuse mismatched
+                # latent keyframes from the first pass.
+                context_latent=None,
+                context_end_frame=int((context_entry.handoff or {}).get("context_end_frame") or 0) or None,
+                context_span=context_span,
+                target_frame_count=target_len,
+                generation_frame_count=num_frames,
+                visual_enabled=True,
+                audio_enabled=apply_audio_context,
+                fps=float(plan.frame_rate or 24.0),
+                color_reanchor_enabled=color_reanchor_requested,
+                color_anchor=color_anchor,
+                task_key=seg.task_key,
+                pin_renorm_enabled=bool(pin_renorm_enabled),
+                pin_renorm_baseline_std=(context_entry.handoff or {}).get("pin_renorm_baseline_std"),
+                pin_renorm_baseline_source="upscale-rgb-repin",
+            )
+            return rebuilt
+
+        global_outcome = apply_global_refine(
+            global_refine_config,
+            task_key=seg.task_key,
+            samples=samples,
+            model=model,
+            vae=vae,
+            positive=positive,
+            negative=negative,
+            seed=seed,
+            cfg=cfg,
+            first_steps=int(external_steps or steps),
+            sampler_name=sampler,
+            scheduler=scheduler,
+            shift_video=shift_video,
+            shift_audio=shift_audio,
+            director_width=ctx_w,
+            director_height=ctx_h,
+            repin=_repin_refined_context if context_entry is not None else None,
+            on_phase=_report_sample_phase,
+            on_step_preview=(
+                (lambda step, total, x0: _report_step_preview(
+                    step, total, x0, stage="Global Refine"
+                )) if live_tae_preview else None
+            ),
+            preview_every=int(preview_config["preview_every"]),
+            preserve_noise_mask=context_span > 0,
+        )
+        global_refine_outcomes[timeline_slot] = global_outcome
+        samples = global_outcome.samples
+        if global_outcome.status == "FAILED":
+            # The failed stage may have left large temporary decode/upscale
+            # allocations in the CUDA caching allocator.  Keep every model
+            # loaded and the exact first-pass latent alive, but release only
+            # unreachable stage temporaries before first-pass decode resumes.
+            cleanup_segment_vram(enabled=True, unload_models=False)
+            warning_messages.append(
+                f"S{timeline_slot + 1}: Global Refine FAILED; fallback FIRST_PASS_RESULT — {global_outcome.error}"
+            )
 
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
@@ -1148,10 +1226,22 @@ def execute_director_plan_core(
         sampled_context_latent = None
         cached_handoff = None
         if context_pipeline_active:
-            sampled_context_latent, cached_handoff = prepare_latent_context_tail(
-                samples,
-                handoff,
+            refined_canvas_changed = bool(
+                global_outcome.succeeded
+                and global_refine_config.get("mode") == "upscale"
+                and (global_outcome.target_width, global_outcome.target_height) != (ctx_w, ctx_h)
             )
+            if refined_canvas_changed:
+                # The next first pass still uses the Director canvas.  Persist
+                # final RGB/audio for natural fallback and never write a
+                # spatially incompatible refined latent into its handoff.
+                cached_handoff = dict(handoff)
+                cached_handoff["latent_status"] = "RGB_FALLBACK_UPSCALE_CANVAS"
+            else:
+                sampled_context_latent, cached_handoff = prepare_latent_context_tail(
+                    samples,
+                    handoff,
+                )
         if audio_has_samples(audio_dict):
             audio_dict = {
                 "waveform": audio_dict["waveform"].detach().cpu(),
@@ -1192,7 +1282,13 @@ def execute_director_plan_core(
                 warning_messages.append(
                     f"S{ui_idx + 1}: Motion Context cache write failed"
                 )
-            if not save_latent_context_cache(
+            if sampled_context_latent is None:
+                reports.append(
+                    f"Segment {ui_idx + 1}: Global Refine output canvas differs from "
+                    "the next first-pass canvas; continuity will use validated RGB/audio "
+                    "cache instead of an incompatible latent handoff."
+                )
+            elif not save_latent_context_cache(
                 node_id,
                 seg,
                 plan,
@@ -1692,6 +1788,43 @@ def execute_director_plan_core(
                 "Source Bridge. No source frame or nominal hard cut was silently "
                 "substituted."
             ) from exc
+        bridge_refine_outcome = apply_global_refine(
+            global_refine_config,
+            task_key=right.task_key,
+            samples=bridge_samples,
+            model=model,
+            vae=vae,
+            positive=positive,
+            negative=negative,
+            seed=seed,
+            cfg=cfg,
+            first_steps=int(external_steps or steps),
+            sampler_name=sampler,
+            scheduler=scheduler,
+            shift_video=shift_video,
+            shift_audio=shift_audio,
+            director_width=bridge_width,
+            director_height=bridge_height,
+            on_phase=None,
+            on_step_preview=(
+                (lambda step, total, x0: preview_manager.submit(
+                    segment_index=int(right.timeline_index),
+                    stage="Global Refine · Source Bridge",
+                    step=step + 1,
+                    total_steps=total,
+                    x0=x0,
+                )) if live_tae_preview else None
+            ),
+            preview_every=int(preview_config["preview_every"]),
+        )
+        bridge_samples = bridge_refine_outcome.samples
+        if bridge_refine_outcome.status == "FAILED":
+            cleanup_segment_vram(enabled=True, unload_models=False)
+            warning_messages.append(
+                f"S{int(left.timeline_index) + 1}->S{int(right.timeline_index) + 1} "
+                f"Source Bridge Global Refine FAILED; fallback FIRST_PASS_RESULT — "
+                f"{bridge_refine_outcome.error}"
+            )
         bridge_decoded, _ignored_audio = _decode_av_latent(
             bridge_samples, vae, audio_vae, decode_audio=False
         )
@@ -1701,6 +1834,13 @@ def execute_director_plan_core(
                 "to expose source conditioning pixels or pad generated output."
             )
         bridge_frames = bridge_decoded[:5].detach().cpu().float()
+        target_height = int(left_frames.shape[1])
+        target_width = int(left_frames.shape[2])
+        if (int(bridge_frames.shape[1]), int(bridge_frames.shape[2])) != (target_height, target_width):
+            # FIRST_PASS_RESULT remains the fallback.  Spatial fitting here is
+            # only the existing bridge assembly contract, never a substitute
+            # Global Refine algorithm.
+            bridge_frames = fit_canvas(bridge_frames, target_width, target_height)
         generated_bridges.append(
             GeneratedSourceBridge(
                 left_segment_index=int(left.index),
@@ -1770,7 +1910,14 @@ def execute_director_plan_core(
     if not segment_outputs:
         raise ValueError("Director plan produced no segments.")
 
-    report_director_finish(node_id, seg_total)
+    report_director_progress(
+        node_id,
+        segment_index=max(0, seg_total - 1),
+        segment_total=max(1, seg_total),
+        phase="assemble",
+        phase_value=0,
+        phase_max=1,
+    )
     if plan.export_mode == "all":
         missing_all = [seg.index for seg in all_segments if seg.index not in all_export_results]
         if missing_all:
@@ -1794,6 +1941,90 @@ def execute_director_plan_core(
         combined = cat_frames_variable_size(export_chunks)
     else:
         combined = concat_continuous_chunks(export_chunks, export_segments, plan)
+    report_director_progress(
+        node_id,
+        segment_index=max(0, seg_total - 1),
+        segment_total=max(1, seg_total),
+        phase="assemble",
+        phase_value=1,
+        phase_max=1,
+    )
+
+    def _report_face_phase(phase: str, value: float) -> None:
+        report_director_progress(
+            node_id,
+            segment_index=max(0, seg_total - 1),
+            segment_total=max(1, seg_total),
+            phase=phase,
+            phase_value=value,
+            phase_max=1,
+        )
+
+    face_outcome = apply_face_refine(
+        face_refine_config,
+        images=combined,
+        model=model,
+        vae=vae,
+        audio_vae=audio_vae,
+        clip=clip,
+        prompt=str(getattr(plan, "global_prompt", "") or "Refine the tracked face with stable natural detail."),
+        seed=seed,
+        cfg=cfg,
+        sampler_name=sampler,
+        scheduler=scheduler,
+        shift_video=shift_video,
+        shift_audio=shift_audio,
+        chunk_lengths=[int(chunk.shape[0]) for chunk in export_chunks],
+        on_phase=_report_face_phase,
+        on_step_preview=(
+            (lambda step, total, x0: preview_manager.submit(
+                segment_index=max(0, len(export_chunks) - 1),
+                stage="Face Refine",
+                step=step + 1,
+                total_steps=total,
+                x0=x0,
+            )) if live_tae_preview else None
+        ),
+        preview_every=int(preview_config["preview_every"]),
+    )
+    if face_outcome.succeeded:
+        combined = face_outcome.images
+        lengths = [int(chunk.shape[0]) for chunk in export_chunks]
+        if sum(lengths) == int(combined.shape[0]):
+            refined_chunks = []
+            cursor = 0
+            for length in lengths:
+                refined_chunks.append(combined[cursor : cursor + length])
+                cursor += length
+            export_chunks = refined_chunks
+            if plan.export_mode != "all" or len(segment_outputs) == len(refined_chunks):
+                segment_outputs = refined_chunks
+            if node_id:
+                for export_segment, refined_chunk in zip(export_segments, refined_chunks):
+                    try:
+                        frames_b64 = [
+                            tensor_frame_to_jpeg_b64(refined_chunk[index])
+                            for index in range(int(refined_chunk.shape[0]))
+                        ]
+                        report_director_segment_preview(
+                            node_id,
+                            segment_index=int(export_segment.timeline_index),
+                            image_b64=frames_b64[0],
+                            width=int(refined_chunk.shape[2]),
+                            height=int(refined_chunk.shape[1]),
+                            frames=frames_b64,
+                            fps=float(plan.frame_rate or 24),
+                            stage="Face Refine Final",
+                            result_kind="segment",
+                        )
+                    except Exception as exc:
+                        log.debug("Face-refined segment preview skipped: %s", exc)
+    elif face_outcome.status in {"FAILED", "NO_FACE"}:
+        if face_outcome.status == "FAILED":
+            cleanup_segment_vram(enabled=True, unload_models=False)
+        warning_messages.append(
+            f"Face Refine {face_outcome.status}; fallback ASSEMBLED_RESULT — {face_outcome.error}"
+        )
 
     skipped_indices = set(range(len(all_segments))) - set(run_indices)
     execution_report.add(
@@ -1808,6 +2039,12 @@ def execute_director_plan_core(
             f"S{index + 1}={int(seed)}" for index in sorted(generated_indices)
         ) if generated_indices else "Seeds: none",
         f"Sampling: {sampling_mode}",
+    )
+    execution_report.add(
+        "Generation",
+        f"Status: {'SUCCESS' if combined is not None and int(combined.shape[0]) > 0 else 'FAILED'}",
+        f"Modes: {', '.join(sorted({seg.task_key.upper() for seg in all_segments}))}",
+        f"Output frames: {int(combined.shape[0])}",
     )
     if sampling_mode == "internal":
         execution_report.add(
@@ -1927,6 +2164,85 @@ def execute_director_plan_core(
                 f"S{slot + 1}: cache reuse; no H3 reference conditioning executed this run",
             )
 
+    execution_report.add(
+        "Global Refine",
+        f"Enabled: {'ON' if global_refine_config['enabled'] else 'OFF'}",
+        f"Mode: {str(global_refine_config['mode']).title()}",
+        f"Denoise: {float(global_refine_config['denoise']):g}",
+        f"Steps: {int(global_refine_config['steps']) or 'Auto'}",
+        f"Seed Mode: {str(global_refine_config['seed_mode']).title()}",
+        f"Upscale Method: {global_refine_config['upscale_method']}",
+    )
+    for slot, outcome in sorted(global_refine_outcomes.items()):
+        execution_report.add(
+            "Global Refine",
+            "\n".join(
+                line for line in (
+                    f"S{slot + 1} Status: {outcome.status}",
+                    f"Target Resolution: {outcome.target_width}x{outcome.target_height}" if outcome.target_width else "",
+                    f"Error: {outcome.error}" if outcome.error else "",
+                    f"Fallback: {outcome.fallback}" if outcome.fallback else "",
+                ) if line
+            ),
+        )
+    execution_report.add(
+        "Face Refine",
+        f"Enabled: {'ON' if face_refine_config['enabled'] else 'OFF'}",
+        f"Detector: {face_refine_config['detector']}",
+        f"Canvas: {face_outcome.canvas or face_refine_config['canvas_mode']}",
+        f"Mask mode: {face_refine_config['mask_mode']}",
+        f"Status: {face_outcome.status}",
+        f"Detection statistics: {face_outcome.statistics or 'n/a'}",
+        f"Error: {face_outcome.error}" if face_outcome.error else "",
+        f"Fallback: {face_outcome.fallback}" if face_outcome.fallback else "",
+    )
+    execution_report.add(
+        "Preview",
+        f"Director Preview: {'ON' if preview_config['enabled'] else 'OFF'}",
+        "ComfyUI Default Preview: SUPPRESSED",
+        f"preview_frames: {preview_config['preview_frames']}",
+        f"preview_fps: {preview_config['preview_fps']}",
+        f"max_resolution: {preview_config['max_resolution']}",
+        f"jpeg_quality: {preview_config['jpeg_quality']}",
+        f"preview_every: {preview_config['preview_every']}",
+    )
+
     for message in dict.fromkeys(warning_messages):
         execution_report.add("Warnings", f"- {message}")
-    return combined, segment_outputs, export_audios, execution_report.render()
+    execution_report.add(
+        "Final",
+        "Status: SUCCESS_WITH_WARNING" if warning_messages else "Status: SUCCESS",
+    )
+    report_director_progress(
+        node_id,
+        segment_index=max(0, seg_total - 1),
+        segment_total=max(1, seg_total),
+        phase="finalize",
+        phase_value=1,
+        phase_max=1,
+    )
+    report_director_finish(node_id, seg_total)
+    rendered_report = execution_report.render()
+    report_director_report(node_id, rendered_report)
+    if node_id:
+        try:
+            final_frames_b64 = [
+                tensor_frame_to_jpeg_b64(combined[index])
+                for index in range(int(combined.shape[0]))
+            ]
+            if final_frames_b64:
+                report_director_segment_preview(
+                    node_id,
+                    segment_index=max(0, len(export_chunks) - 1),
+                    image_b64=final_frames_b64[0],
+                    width=int(combined.shape[2]),
+                    height=int(combined.shape[1]),
+                    frames=final_frames_b64,
+                    fps=float(plan.frame_rate or 24),
+                    stage="Final",
+                    result_kind="final",
+                )
+        except Exception as exc:
+            log.debug("Final result preview skipped: %s", exc)
+    preview_manager.close()
+    return combined, segment_outputs, export_audios, rendered_report

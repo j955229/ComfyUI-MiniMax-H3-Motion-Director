@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import shutil
+import importlib.util
 
 import folder_paths
 from aiohttp import web
@@ -231,6 +232,30 @@ def _register_route(routes, method: str, path: str, handler) -> None:
         raise AttributeError("Unsupported ComfyUI route table API")
 
 
+async def minimax_postprocess_capabilities(_request):
+    """Lazy dependency/model discovery for modal selectors only."""
+    def filenames(*categories):
+        result = []
+        for category in categories:
+            try:
+                result.extend(folder_paths.get_filename_list(category) or [])
+            except Exception:
+                continue
+        return sorted(dict.fromkeys(str(value) for value in result))
+
+    return web.json_response({
+        "upscale_models": filenames("upscale_models"),
+        "face_detectors": filenames("ultralytics_bbox", "ultralytics"),
+        "sam_models": filenames("sams", "sam", "ultralytics_segm"),
+        "dependencies": {
+            "nvidia_rtx_vsr": importlib.util.find_spec("nvvfx") is not None,
+            "ultralytics": importlib.util.find_spec("ultralytics") is not None,
+            "insightface": importlib.util.find_spec("insightface") is not None,
+            "sam": importlib.util.find_spec("ultralytics") is not None,
+        },
+    })
+
+
 def register_routes() -> bool:
     """Register MiniMax H3 Motion Director HTTP routes on the ComfyUI PromptServer."""
     global _ROUTES_REGISTERED
@@ -247,6 +272,7 @@ def register_routes() -> bool:
     _register_route(routes, "POST", "/minimax/motion-director/probe_video", minimax_probe_video)
     _register_route(routes, "GET", "/minimax/motion-director/probe_video", minimax_probe_video)
     _register_route(routes, "POST", "/minimax/motion-director/detect_shots", minimax_detect_shots)
+    _register_route(routes, "GET", "/minimax/motion-director/postprocess_capabilities", minimax_postprocess_capabilities)
     register_material_library_routes(routes)
     _ROUTES_REGISTERED = True
     log.info("MiniMax H3 Motion Director HTTP routes registered")

@@ -501,6 +501,39 @@ Director 就会改用外接采样。
 
 ---
 
+
+# 后期处理与 Output 成果中心
+
+Motion Director 仍然只有一个节点、一个 Director 弹窗。打开 Director 后，顶部可以直接点击
+`Generation`、`后期处理`、`Output`，也可以用左右箭头循环切换。Generation 继续负责六种模式的
+素材、提示词、原片播放器、切片和时间轴编辑；原片的播放、逐帧和 seek bar 没有搬走。
+
+主节点的「后期处理」分组只有两个开关与摘要。完整参数位于同一个 Director 的「后期处理」页：
+
+- 「全局精修」在每段第一次 H3 生成成功后执行低 denoise 二次采样。Upscale 模式会先解码视频
+  latent，在像素空间严格使用所选 Lanczos、Upscale Model 或 NVIDIA RTX VSR，再 VAE encode，
+  与原 audio latent 重新组成 AV latent 后进行 H3 二次采样。Steps 设为 0 时取第一次 steps 的
+  约 40%，最少 8 steps。
+- 「人脸精修」在有效多段结果组合后执行一次跨段 tracking，再建立平滑 crop、注入 H3 video
+  latent、按人脸大小控制逐帧 denoise，最后用 Rect、Ellipse 或可选 SAM mask stitch 回原视频。
+  因此 tracking 不会在每个 Segment 边界重新开始。
+
+后期处理遵循严格的保底规则：所选算法失败、依赖缺失或 CUDA OOM 时，不会偷偷换算法、降低
+分辨率或改变 mask。Global Refine 失败就保留该段 first-pass result；Face Refine 失败或没有检测到
+脸就保留进入人脸精修前的 assembled result。主生成已有可用结果时，最终状态为
+`SUCCESS_WITH_WARNING`，而不是让整条 Queue 报废。
+
+Output 是唯一的模型成果中心，包含「实时 / 分段 / 多段 / 最终结果」四个视图、成果播放器、两条
+独立的运行进度条、Preview Settings 和 report。Generation 中的原片 seek bar 是编辑工具；Output
+中的 result seek bar 才是生成成果播放器。Director 采样期间始终抑制 ComfyUI 默认 sampler
+preview：Director Preview 开启时只显示 Output 的有界异步预览，关闭时不显示采样画面，但正常
+ComfyUI 执行与进度仍然工作。
+
+所有设置保存在追加于旧 widget 序列末尾的一份内部 JSON 中。旧 workflow 打开时两项后期处理默认
+关闭，Generation 行为和旧 `widgets_values` 索引保持不变。正式输出仍然只有
+`images / audio / fps / frame_count / source_images / report`，不会额外输出或长期保留多份中间
+IMAGE batch。
+
 # 当前限制
 
 - Motion Context 当前要求 24 fps。
@@ -535,6 +568,7 @@ Director 就会改用外接采样。
 
 - [AIMixer/ComfyUI_MiniMaxH3_Director](https://github.com/AIMixer/ComfyUI_MiniMaxH3_Director)
 - [NikoDemon80/ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
+- [Carasibana/ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine)（MIT，算法整合）
 
 本仓库使用 GPL-3.0 发布。
 

@@ -918,7 +918,7 @@ export function registerDirectorPromptEnhancerEvents(findDirectorNode) {
 setTimeout(async () => {
     if (globalThis.__MMX_MOTION_DIRECTOR_EXTENSION_REGISTERED__) return;
     try {
-        await import("./minimax_timeline.js?boot=director_ui_recovery_v3");
+        await import("./minimax_timeline.js?boot=director_ui_recovery_v8");
         if (!globalThis.__MMX_MOTION_DIRECTOR_EXTENSION_REGISTERED__) {
             throw new Error("Director extension did not register after recovery import.");
         }

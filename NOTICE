@@ -19,6 +19,13 @@ It is a derivative work containing and modifying code from:
    beginning 2026-08-09. The original copyright notice and license text are
    preserved at LICENSES/GPL-3.0.txt.
 
+3. ComfyUI-H3-FaceRefine
+   Copyright Carasibana
+   https://github.com/Carasibana/ComfyUI-H3-FaceRefine
+   Tracking, crop, per-frame denoise, latent injection, and stitch algorithms
+   were adapted from commit 79a97ce under the MIT License. The original license
+   text is retained at LICENSES/MIT-H3-FaceRefine.txt.
+
 This project substantially modifies and integrates both upstream projects into
 a standalone MiniMax H3 multi-segment Director with Motion/Audio Context
 continuity. It is not the original ComfyUI-H3-Motion-Context or AIMixer Director
