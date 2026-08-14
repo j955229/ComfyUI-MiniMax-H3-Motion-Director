@@ -9,7 +9,7 @@ const OUTPUT_TEXT = {
         volume: "Volume", current_run: "Current Run · Idle", task_detail: "Task / Segment / Stage / Step",
         pipeline_status: "Pipeline Status", pipeline_path: "Generation → Global Refine → Assemble → Face Refine → Finalize / Export",
         preview_settings: "Preview Settings", director_preview: "Director Preview", suppressed: "ComfyUI Default Preview: SUPPRESSED",
-        save_video: "Save Video", auto_save: "Auto-save Final Result", filename_prefix: "Filename prefix", format: "Format",
+        save_video: "Save Video", auto_save: "Auto-save Final Result", output_path: "Output path", filename_prefix: "Filename prefix", format: "Format",
         codec: "Codec", encoding: "Encoding", crf: "CRF", save_button: "Save Video", save_not_ready: "Final Result is not ready",
         save_ready: "Ready to save", save_working: "Saving…", save_done: "Saved: {path}", save_failed: "Save failed: {error}",
         encoding_auto: "Auto", encoding_reencode: "Re-encode",
@@ -27,7 +27,7 @@ const OUTPUT_TEXT = {
         volume: "音量", current_run: "当前运行 · 待命", task_detail: "任务 / 片段 / 阶段 / 步数",
         pipeline_status: "管线状态", pipeline_path: "生成 → 全局精修 → 组合 → 人脸精修 → 最终处理 / 导出",
         preview_settings: "预览设置", director_preview: "Director 预览", suppressed: "ComfyUI 默认采样预览：已抑制",
-        save_video: "保存影片", auto_save: "自动保存最终结果", filename_prefix: "文件名前缀", format: "格式",
+        save_video: "保存影片", auto_save: "自动保存最终结果", output_path: "路径", filename_prefix: "文件名前缀", format: "格式",
         codec: "编码器", encoding: "编码模式", crf: "CRF", save_button: "保存影片", save_not_ready: "最终结果尚未完成",
         save_ready: "可保存", save_working: "正在保存…", save_done: "已保存：{path}", save_failed: "保存失败：{error}",
         encoding_auto: "自动", encoding_reencode: "重新编码",
@@ -112,8 +112,22 @@ export function mountOutputUI(container, store, {
           <div class="mmx-result-info" data-output-text="suppressed">ComfyUI Default Preview: SUPPRESSED</div>
         </section>
         <section class="mmx-output-card" data-save-video-card hidden><h4 data-output-text="save_video">Save Video</h4>
-          <label><span data-output-text="auto_save">Auto-save Final Result</span><input type="checkbox" data-save="auto_save"></label>
-          <label><span data-output-text="filename_prefix">Filename prefix</span><input type="text" data-save="filename_prefix"></label>
+          <label>
+            <span data-output-text="auto_save">Auto-save Final Result</span>
+            <input type="checkbox" data-save="auto_save">
+          </label>
+          <label>
+            <span data-output-text="output_path">Output path</span>
+            <input
+              type="text"
+              data-save="output_path"
+              placeholder="D:/tool/ComfyUI-aki-v1.6/ComfyUI/output/video"
+            >
+          </label>
+          <label>
+            <span data-output-text="filename_prefix">Filename prefix</span>
+            <input type="text" data-save="filename_prefix">
+          </label>
           <label><span data-output-text="format">Format</span><select data-save="format"><option value="auto">auto</option><option value="mp4">mp4</option></select></label>
           <label><span data-output-text="codec">Codec</span><select data-save="codec"><option value="auto">auto</option><option value="h264">h264</option></select></label>
           <label><span data-output-text="encoding">Encoding</span><select data-save="encoding"><option value="auto" data-output-text="encoding_auto">Auto</option><option value="re-encode" data-output-text="encoding_reencode">Re-encode</option></select></label>

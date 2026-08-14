@@ -88,7 +88,21 @@ def encode_preview_job(job: PreviewJob, config: dict[str, Any]) -> dict[str, Any
             encoded, media_type = _encode_nvenc_fragmented_mp4(frames, fps)
         except Exception as exc:
             log.debug("NVENC preview unavailable; using animated WebP: %s", exc)
-            encoded, media_type = _encode_animated_webp(frames, fps, quality)
+            try:
+                encoded, media_type = _encode_animated_webp(
+                    frames,
+                    fps,
+                    quality,
+                )
+            except Exception as webp_exc:
+                log.warning(
+                    "Animated WebP preview unavailable; using JPEG fallback: %s",
+                    webp_exc,
+                )
+                encoded, media_type = _encode_jpeg(
+                    frames[0],
+                    quality,
+                )
     return {
         "image_b64": encoded,
         "media_type": media_type,
@@ -169,12 +183,7 @@ class DirectorPreviewManager:
 
     def _work(self) -> None:
         while True:
-            try:
-                job = self.queue.get(timeout=30)
-            except queue.Empty:
-                # A generation exception may bypass normal close(); do not
-                # leave an idle per-run daemon around indefinitely.
-                return
+            job = self.queue.get()
             try:
                 if job is None:
                     return

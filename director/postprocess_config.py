@@ -83,7 +83,8 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
     },
     "save": {
         "auto_save": False,
-        "filename_prefix": "video/MiniMaxH3_Director",
+        "output_path": "",
+        "filename_prefix": "MiniMaxH3_Director",
         "format": "auto",
         "codec": "auto",
         "encoding": "auto",
@@ -233,12 +234,50 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
 
     s = result["save"]
     s["auto_save"] = _bool(s_raw.get("auto_save"), False)
-    prefix = str(s_raw.get("filename_prefix") or "video/MiniMaxH3_Director").strip()
-    s["filename_prefix"] = prefix[:512] or "video/MiniMaxH3_Director"
-    s["format"] = str(s_raw.get("format") or "auto").strip().lower()[:32] or "auto"
-    s["codec"] = str(s_raw.get("codec") or "auto").strip().lower()[:64] or "auto"
-    s["encoding"] = _choice(s_raw.get("encoding"), {"auto", "re-encode"}, "auto")
-    s["crf"] = _int(s_raw.get("crf"), 23, 0, 51)
+
+    s["output_path"] = str(
+        s_raw.get("output_path") or ""
+    ).strip()[:2048]
+
+    prefix = str(
+        s_raw.get("filename_prefix")
+        or "MiniMaxH3_Director"
+    ).strip()
+
+    if prefix.replace("\\", "/") == "video/MiniMaxH3_Director":
+        prefix = "MiniMaxH3_Director"
+
+    s["filename_prefix"] = (
+        prefix[:255]
+        or "MiniMaxH3_Director"
+    )
+
+    s["format"] = (
+        str(s_raw.get("format") or "auto")
+        .strip()
+        .lower()[:32]
+        or "auto"
+    )
+
+    s["codec"] = (
+        str(s_raw.get("codec") or "auto")
+        .strip()
+        .lower()[:64]
+        or "auto"
+    )
+
+    s["encoding"] = _choice(
+        s_raw.get("encoding"),
+        {"auto", "re-encode"},
+        "auto",
+    )
+
+    s["crf"] = _int(
+        s_raw.get("crf"),
+        23,
+        0,
+        51,
+    )
     return result
 
 

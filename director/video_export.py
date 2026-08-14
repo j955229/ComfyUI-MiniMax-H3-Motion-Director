@@ -9,7 +9,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from fractions import Fraction
-from pathlib import PurePosixPath
+from pathlib import Path
 from typing import Any, Callable
 
 import torch
@@ -32,17 +32,53 @@ def normalize_save_config(raw: Any) -> dict[str, Any]:
 
 
 def _safe_filename_prefix(value: str) -> str:
-    prefix = str(value or "").strip().replace("\\", "/")
+    prefix = str(value or "").strip()
+
     if not prefix:
         raise ValueError("filename_prefix cannot be empty")
-    if re.match(r"^[A-Za-z]:", prefix) or prefix.startswith("/"):
-        raise ValueError("filename_prefix must be relative to the ComfyUI output directory")
+
     if any(ord(char) < 32 for char in prefix):
         raise ValueError("filename_prefix contains control characters")
-    parts = PurePosixPath(prefix).parts
-    if ".." in parts:
-        raise ValueError("filename_prefix cannot leave the ComfyUI output directory")
+
+    if "/" in prefix or "\\" in prefix or ":" in prefix:
+        raise ValueError(
+            "filename_prefix must be a file name, not a path"
+        )
+
+    if prefix in {".", ".."}:
+        raise ValueError("invalid filename_prefix")
+
     return prefix
+    
+    
+def _resolve_output_path(value: str) -> Path:
+    import folder_paths
+
+    raw = os.path.expandvars(
+        os.path.expanduser(
+            str(value or "").strip()
+        )
+    )
+
+    if raw:
+        folder = Path(raw)
+    else:
+        folder = (
+            Path(folder_paths.get_output_directory())
+            / "video"
+        )
+
+    folder.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    if not folder.is_dir():
+        raise ValueError(
+            f"Video output path is not a directory: {folder}"
+        )
+
+    return folder.resolve()    
 
 
 def _combine_images(images: Any) -> torch.Tensor:
@@ -132,10 +168,23 @@ def save_final_video(record: FinalVideoRecord, raw_config: Any) -> dict[str, Any
         raise ValueError(f"Unsupported video format: {config['format']}")
     if config["codec"] not in capabilities["codecs"]:
         raise ValueError(f"Unsupported video codec: {config['codec']}")
-    prefix = _safe_filename_prefix(config["filename_prefix"])
+    prefix = _safe_filename_prefix(
+        config["filename_prefix"]
+    )
+
+    output_folder = _resolve_output_path(
+        config.get("output_path", "")
+    )
+
     width, height = record.video.get_dimensions()
-    full_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
-        prefix, folder_paths.get_output_directory(), width, height
+
+    full_folder, filename, counter, subfolder, _ = (
+        folder_paths.get_save_image_path(
+            prefix,
+            str(output_folder),
+            width,
+            height,
+        )
     )
     extension = Types.VideoContainer.get_extension(config["format"])
     file = f"{filename}_{counter:05}_.{extension}"
@@ -171,7 +220,7 @@ def save_final_video(record: FinalVideoRecord, raw_config: Any) -> dict[str, Any
         "filename": file,
         "subfolder": subfolder,
         "type": "output",
-        "path": os.path.join(subfolder, file).replace("\\", "/"),
+        "path": os.path.normpath(full_path),
     }
 
 
