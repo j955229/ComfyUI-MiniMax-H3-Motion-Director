@@ -20,6 +20,12 @@ from aiohttp import web
 from server import PromptServer
 
 from .material_library_routes import register_material_library_routes
+from .video_export import (
+    FINAL_VIDEO_REGISTRY,
+    FinalVideoUnavailable,
+    StaleFinalVideoRun,
+    video_save_capabilities,
+)
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director")
 
@@ -253,7 +259,42 @@ async def minimax_postprocess_capabilities(_request):
             "insightface": importlib.util.find_spec("insightface") is not None,
             "sam": importlib.util.find_spec("ultralytics") is not None,
         },
+        "video_save": video_save_capabilities(),
     })
+
+
+async def minimax_save_final_video(request):
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return web.json_response({"ok": False, "error": f"Invalid JSON: {exc}"}, status=400)
+    node_id = str(body.get("node_id") or "").strip()
+    run_id = str(body.get("run_id") or "").strip()
+    if not node_id or not run_id:
+        return web.json_response({"ok": False, "error": "Missing node_id or run_id"}, status=400)
+    try:
+        result = FINAL_VIDEO_REGISTRY.save(node_id, run_id, body.get("save") or body)
+        return web.json_response(result)
+    except StaleFinalVideoRun as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=409)
+    except FinalVideoUnavailable as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=404)
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+    except Exception as exc:
+        log.exception("MiniMax H3 Motion Director Final Result save failed")
+        return web.json_response({"ok": False, "error": str(exc)}, status=500)
+
+
+async def minimax_release_final_video(request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    node_id = str(body.get("node_id") or "").strip()
+    if node_id:
+        FINAL_VIDEO_REGISTRY.release(node_id)
+    return web.json_response({"ok": True})
 
 
 def register_routes() -> bool:
@@ -273,6 +314,8 @@ def register_routes() -> bool:
     _register_route(routes, "GET", "/minimax/motion-director/probe_video", minimax_probe_video)
     _register_route(routes, "POST", "/minimax/motion-director/detect_shots", minimax_detect_shots)
     _register_route(routes, "GET", "/minimax/motion-director/postprocess_capabilities", minimax_postprocess_capabilities)
+    _register_route(routes, "POST", "/minimax/motion-director/save_video", minimax_save_final_video)
+    _register_route(routes, "POST", "/minimax/motion-director/release_video", minimax_release_final_video)
     register_material_library_routes(routes)
     _ROUTES_REGISTERED = True
     log.info("MiniMax H3 Motion Director HTTP routes registered")

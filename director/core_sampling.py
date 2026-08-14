@@ -17,7 +17,73 @@ import torch
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.core_sampling")
 
 PhaseCallback = Callable[[str, float], None]
-StepPreviewCallback = Callable[[int, int, Any], None]
+StepPreviewCallback = Callable[[int, int, Any, Any], None]
+
+
+class _DirectorPreviewOuterSample:
+    """Observe packed sampler x0 together with ComfyUI's authoritative shapes."""
+
+    def __init__(self, callback: StepPreviewCallback, every: int):
+        self.callback = callback
+        self.every = max(1, int(every))
+
+    def __call__(
+        self,
+        executor,
+        noise,
+        latent_image,
+        sampler,
+        sigmas,
+        denoise_mask,
+        callback,
+        disable_pbar,
+        seed,
+        latent_shapes,
+    ):
+        original_callback = callback
+
+        def observed(step, x0, x, total_steps):
+            try:
+                if step % self.every == 0 or step >= max(0, int(total_steps) - 1):
+                    # x0 is observation-only.  Never rebind, reshape in-place, or
+                    # mutate it: ComfyUI reuses this packed tensor downstream.
+                    self.callback(int(step), int(total_steps), x0, latent_shapes)
+            except Exception as exc:
+                log.warning("Director step preview skipped; sampling continues: %s", exc)
+            if original_callback is not None:
+                original_callback(step, x0, x, total_steps)
+
+        return executor(
+            noise,
+            latent_image,
+            sampler,
+            sigmas,
+            denoise_mask,
+            observed,
+            disable_pbar,
+            seed,
+            latent_shapes=latent_shapes,
+        )
+
+
+def _install_preview_outer_wrapper(model, callback, every: int):
+    if callback is None:
+        return model, False
+    try:
+        import comfy.patcher_extension
+
+        observed_model = model.clone()
+        observed_model.add_wrapper_with_key(
+            comfy.patcher_extension.WrappersMP.OUTER_SAMPLE,
+            "minimax_motion_director_preview",
+            _DirectorPreviewOuterSample(callback, every),
+        )
+        return observed_model, True
+    except Exception as exc:
+        # Older ComfyUI can still use the callback fallback, but current packed
+        # H3 builds require OUTER_SAMPLE to expose latent_shapes.
+        log.warning("Director OUTER_SAMPLE preview hook unavailable; using callback fallback: %s", exc)
+        return model, False
 
 
 def _unpack_node_output(out):
@@ -183,12 +249,15 @@ def sample_single_stage(
     noise_mask = latent.get("noise_mask", None)
 
     every = max(1, int(preview_every))
+    model_for_sampling, preview_wrapped = _install_preview_outer_wrapper(
+        model_for_sampling, on_step_preview, every
+    )
 
     def callback(step, x0, x, total_steps):
-        if on_step_preview is not None:
+        if on_step_preview is not None and not preview_wrapped:
             try:
                 if step % every == 0 or step >= max(0, int(total_steps) - 1):
-                    on_step_preview(int(step), int(total_steps), x0)
+                    on_step_preview(int(step), int(total_steps), x0, None)
             except Exception as exc:
                 log.debug("Step preview callback skipped: %s", exc)
         # Intentionally do not install ComfyUI's latent preview callback here.

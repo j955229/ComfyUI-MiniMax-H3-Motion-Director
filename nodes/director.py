@@ -12,7 +12,13 @@ from __future__ import annotations
 import comfy.samplers
 
 from ..director.executor_core import execute_director_plan_core
-from ..director.progress import report_director_audio_preview, report_director_report
+from ..director.postprocess_config import normalize_postprocess_config
+from ..director.progress import (
+    report_director_audio_preview,
+    report_director_final_ready,
+    report_director_report,
+)
+from ..director.video_export import FINAL_VIDEO_REGISTRY
 from .director_common import (
     finalize_director_outputs,
     prepare_director_plan,
@@ -238,7 +244,11 @@ class MiniMaxH3MotionDirector:
                     },
                 ),
             },
-            "hidden": {"unique_id": "UNIQUE_ID"},
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
         }
 
     @classmethod
@@ -307,9 +317,13 @@ class MiniMaxH3MotionDirector:
         export_source_images=False,
         pin_renorm_enabled=False,
         postprocess_config="",
+        prompt=None,
+        extra_pnginfo=None,
         **kwargs,
     ):
         del kwargs
+
+        final_run_id = FINAL_VIDEO_REGISTRY.begin_run(unique_id) if unique_id is not None else None
 
         plan = prepare_director_plan(
             timeline_data=timeline_data,
@@ -360,6 +374,46 @@ class MiniMaxH3MotionDirector:
             export_source_images=export_source_images,
             segment_audios=segment_audios,
         )
+        if final_run_id is not None:
+            try:
+                save_config = normalize_postprocess_config(postprocess_config)["save"]
+                record, auto_result = FINAL_VIDEO_REGISTRY.register_final(
+                    unique_id,
+                    final_run_id,
+                    images=outputs[0],
+                    audio=outputs[1],
+                    fps=outputs[2],
+                    frame_count=outputs[3],
+                    save_config=save_config,
+                    prompt=prompt,
+                    extra_pnginfo=extra_pnginfo,
+                )
+                final_payload = record.info()
+                if auto_result is not None:
+                    final_payload["auto_save"] = auto_result
+                    if auto_result.get("ok", False):
+                        outputs = (*outputs[:-1], outputs[-1] + (
+                            "\n\n[Save Video]\nStatus: AUTO_SAVED"
+                            f"\nPath: {auto_result.get('path') or auto_result.get('filename') or ''}"
+                        ))
+                    else:
+                        outputs = (*outputs[:-1], outputs[-1] + (
+                            "\n\n[Save Video]\nStatus: FAILED (generation result preserved)"
+                            f"\nError: {auto_result.get('error') or 'Unknown save error'}"
+                        ))
+                report_director_final_ready(unique_id, final_payload)
+            except Exception as exc:
+                # Internal VIDEO construction and saving are side channels.  A
+                # completed H3 result must remain usable even if export setup fails.
+                outputs = (*outputs[:-1], outputs[-1] + (
+                    "\n\n[Save Video]\nStatus: FAILED (generation result preserved)"
+                    f"\nError: {exc}"
+                ))
+                report_director_final_ready(unique_id, {
+                    "run_id": final_run_id,
+                    "ready": False,
+                    "error": str(exc),
+                })
         report_director_report(unique_id, outputs[-1])
         report_director_audio_preview(unique_id, outputs[1])
         return outputs

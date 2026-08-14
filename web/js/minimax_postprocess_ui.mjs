@@ -1,5 +1,5 @@
 const DEFAULT_CONFIG = Object.freeze({
-    version: 1,
+    version: 2,
     global_refine: {
         enabled: false, mode: "refine", denoise: 0.25, steps: 0,
         seed_mode: "inherit", seed_offset: 1, skip_fl2v: false,
@@ -21,6 +21,10 @@ const DEFAULT_CONFIG = Object.freeze({
         sam_model: "", sam_threshold: 0.5, sam_dilation: 0.04, sam_temporal_smooth: 5,
     },
     preview: { enabled: true, preview_frames: 8, preview_fps: 12, max_resolution: 1024, jpeg_quality: 80, preview_every: 1 },
+    save: {
+        auto_save: false, filename_prefix: "video/MiniMaxH3_Director",
+        format: "auto", codec: "auto", encoding: "auto", crf: 23,
+    },
 });
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -100,7 +104,7 @@ export function normalizePostprocessConfig(raw) {
     }
     raw = raw && typeof raw === "object" ? raw : {};
     const result = clone(DEFAULT_CONFIG);
-    for (const key of ["global_refine", "face_refine", "preview"]) {
+    for (const key of ["global_refine", "face_refine", "preview", "save"]) {
         const legacy = key === "global_refine" ? raw.globalRefine : key === "face_refine" ? raw.faceRefine : null;
         Object.assign(result[key], legacy || {}, raw[key] || {});
     }
@@ -108,6 +112,12 @@ export function normalizePostprocessConfig(raw) {
     result.global_refine.enabled = !!result.global_refine.enabled;
     result.face_refine.enabled = !!result.face_refine.enabled;
     result.preview.enabled = result.preview.enabled !== false;
+    result.save.auto_save = !!result.save.auto_save;
+    result.save.filename_prefix = String(result.save.filename_prefix || "video/MiniMaxH3_Director").trim().slice(0, 512) || "video/MiniMaxH3_Director";
+    result.save.format = String(result.save.format || "auto").trim().toLowerCase().slice(0, 32) || "auto";
+    result.save.codec = String(result.save.codec || "auto").trim().toLowerCase().slice(0, 64) || "auto";
+    result.save.encoding = result.save.encoding === "re-encode" ? "re-encode" : "auto";
+    result.save.crf = Math.max(0, Math.min(51, Math.round(Number(result.save.crf) || 23)));
     return result;
 }
 

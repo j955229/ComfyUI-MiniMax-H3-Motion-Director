@@ -14,6 +14,14 @@ test("old workflows migrate with both postprocess stages off", () => {
     assert.equal(config.global_refine.enabled, false);
     assert.equal(config.face_refine.enabled, false);
     assert.equal(config.preview.enabled, true);
+    assert.deepEqual(config.save, {
+        auto_save: false,
+        filename_prefix: "video/MiniMaxH3_Director",
+        format: "auto",
+        codec: "auto",
+        encoding: "auto",
+        crf: 23,
+    });
 });
 
 test("node and modal share the same serialized widget store", () => {

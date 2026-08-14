@@ -10,7 +10,6 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable
 
-import torch
 from PIL import Image
 
 from .progress import report_director_segment_preview
@@ -25,20 +24,7 @@ class PreviewJob:
     stage: str
     step: int
     total_steps: int
-    x0: Any
-
-
-def _freeze(value: Any) -> Any:
-    if isinstance(value, torch.Tensor):
-        return value.detach().clone()
-    if isinstance(value, (tuple, list)):
-        return tuple(_freeze(item) for item in value)
-    if not isinstance(value, torch.Tensor) and hasattr(value, "unbind"):
-        try:
-            return tuple(_freeze(item) for item in value.unbind())
-        except Exception:
-            return value
-    return value
+    frames: tuple[Image.Image, ...]
 
 
 def _encode_jpeg(frame: Image.Image, quality: int) -> tuple[str, str]:
@@ -90,11 +76,7 @@ def _encode_animated_webp(frames: list[Image.Image], fps: int, quality: int) -> 
 
 
 def encode_preview_job(job: PreviewJob, config: dict[str, Any]) -> dict[str, Any] | None:
-    frames = x0_to_preview_pils(
-        job.x0,
-        max_side=int(config.get("max_resolution") or 1024),
-        frame_count=int(config.get("preview_frames") or 8),
-    )
+    frames = list(job.frames)
     if not frames:
         return None
     quality = int(config.get("jpeg_quality") or 80)
@@ -125,11 +107,13 @@ class DirectorPreviewManager:
         config: dict[str, Any],
         *,
         queue_size: int = 2,
+        decoder: Callable[..., list[Image.Image]] = x0_to_preview_pils,
         encoder: Callable[[PreviewJob, dict[str, Any]], dict[str, Any] | None] = encode_preview_job,
         sender: Callable[..., None] = report_director_segment_preview,
     ):
         self.node_id = node_id
         self.config = dict(config)
+        self.decoder = decoder
         self.encoder = encoder
         self.sender = sender
         self.queue: queue.Queue[PreviewJob | None] = queue.Queue(maxsize=max(1, int(queue_size)))
@@ -139,22 +123,48 @@ class DirectorPreviewManager:
         self._thread = threading.Thread(target=self._work, name=f"mmx-preview-{node_id}", daemon=True)
         self._thread.start()
 
-    def submit(self, *, segment_index: int, stage: str, step: int, total_steps: int, x0: Any) -> bool:
+    def submit(
+        self,
+        *,
+        segment_index: int,
+        stage: str,
+        step: int,
+        total_steps: int,
+        x0: Any,
+        latent_shapes: Any = None,
+    ) -> bool:
         if self._closed or not self.node_id or not self.config.get("enabled", True):
             return False
+        # Check before decode: when the bounded encoder is behind, drop this
+        # side-channel update without adding work to the sampling callback.
         if self.queue.full():
             self.dropped += 1
             return False
         try:
-            frozen = _freeze(x0)
-            self.queue.put_nowait(PreviewJob(segment_index, stage, step, total_steps, frozen))
+            frames = self.decoder(
+                x0,
+                max_side=int(self.config.get("max_resolution") or 1024),
+                frame_count=int(self.config.get("preview_frames") or 8),
+                latent_shapes=latent_shapes,
+            )
+            if not frames:
+                return False
+            # Only small CPU/PIL frames enter the async encoder queue.  Never
+            # detach/clone the full sampler latent: H3 AV latents are large and
+            # the sampler may reuse their storage after this callback returns.
+            cpu_frames = tuple(frame.copy() for frame in frames if isinstance(frame, Image.Image))
+            if not cpu_frames:
+                return False
+            self.queue.put_nowait(
+                PreviewJob(segment_index, stage, step, total_steps, cpu_frames)
+            )
             return True
         except queue.Full:
             self.dropped += 1
             return False
         except Exception as exc:
             self.failed += 1
-            log.debug("Preview snapshot skipped: %s", exc)
+            log.warning("Director preview decode skipped; generation continues: %s", exc)
             return False
 
     def _work(self) -> None:

@@ -1049,13 +1049,16 @@ def execute_director_plan_core(
                 phase=phase, phase_value=value, phase_max=1, **meta,
             )
 
-        def _report_step_preview(step: int, total_steps: int, x0, *, stage: str = "Generation") -> None:
+        def _report_step_preview(
+            step: int, total_steps: int, x0, latent_shapes=None, *, stage: str = "Generation"
+        ) -> None:
             preview_manager.submit(
                 segment_index=ui_idx,
                 stage=stage,
                 step=step + 1,
                 total_steps=total_steps,
                 x0=x0,
+                latent_shapes=latent_shapes,
             )
 
         try:
@@ -1135,8 +1138,8 @@ def execute_director_plan_core(
             repin=_repin_refined_context if context_entry is not None else None,
             on_phase=_report_sample_phase,
             on_step_preview=(
-                (lambda step, total, x0: _report_step_preview(
-                    step, total, x0, stage="Global Refine"
+                (lambda step, total, x0, latent_shapes: _report_step_preview(
+                    step, total, x0, latent_shapes, stage="Global Refine"
                 )) if live_tae_preview else None
             ),
             preview_every=int(preview_config["preview_every"]),
@@ -1807,12 +1810,13 @@ def execute_director_plan_core(
             director_height=bridge_height,
             on_phase=None,
             on_step_preview=(
-                (lambda step, total, x0: preview_manager.submit(
+                (lambda step, total, x0, latent_shapes: preview_manager.submit(
                     segment_index=int(right.timeline_index),
                     stage="Global Refine · Source Bridge",
                     step=step + 1,
                     total_steps=total,
                     x0=x0,
+                    latent_shapes=latent_shapes,
                 )) if live_tae_preview else None
             ),
             preview_every=int(preview_config["preview_every"]),
@@ -1977,12 +1981,13 @@ def execute_director_plan_core(
         chunk_lengths=[int(chunk.shape[0]) for chunk in export_chunks],
         on_phase=_report_face_phase,
         on_step_preview=(
-            (lambda step, total, x0: preview_manager.submit(
+            (lambda step, total, x0, latent_shapes: preview_manager.submit(
                 segment_index=max(0, len(export_chunks) - 1),
                 stage="Face Refine",
                 step=step + 1,
                 total_steps=total,
                 x0=x0,
+                latent_shapes=latent_shapes,
             )) if live_tae_preview else None
         ),
         preview_every=int(preview_config["preview_every"]),

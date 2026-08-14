@@ -191,6 +191,23 @@ def report_director_report(node_id: str | None, report: str) -> None:
         log.debug("Director report send skipped: %s", exc)
 
 
+def report_director_final_ready(node_id: str | None, payload: dict) -> None:
+    if not node_id:
+        return
+    try:
+        from server import PromptServer
+
+        srv = PromptServer.instance
+        if srv:
+            srv.send_sync(
+                "minimax_motion_director_final_ready",
+                {"node_id": str(node_id), **dict(payload or {})},
+                srv.client_id,
+            )
+    except Exception as exc:
+        log.debug("Director final-ready send skipped: %s", exc)
+
+
 def report_director_audio_preview(node_id: str | None, audio_outputs) -> None:
     """Send CPU WAV side-channel data for Output volume/playback controls."""
     if not node_id:

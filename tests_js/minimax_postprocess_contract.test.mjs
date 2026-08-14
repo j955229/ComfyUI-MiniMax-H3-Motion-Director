@@ -45,7 +45,7 @@ test("only requested modes swap existing output and source-control rows", () => 
 
 test("new pages and node summaries use the launcher's single locale source", () => {
     assert.match(source, /mountPostprocessUI[\s\S]*locale: getLocale/);
-    assert.match(source, /mountOutputUI[\s\S]*\{ locale: getLocale \}/);
+    assert.match(source, /mountOutputUI[\s\S]*locale: getLocale[\s\S]*fetchApi:/);
     assert.match(source, /postprocessUi\?\.updateLocale\?\.\(getLocale\(\)\)/);
     assert.match(source, /outputUi\?\.updateLocale\?\.\(getLocale\(\)\)/);
     assert.match(source, /globalRefineSummary\([\s\S]*getLocale\(\)/);

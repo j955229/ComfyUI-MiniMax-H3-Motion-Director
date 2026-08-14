@@ -26,6 +26,13 @@ It is a derivative work containing and modifying code from:
    were adapted from commit 79a97ce under the MIT License. The original license
    text is retained at LICENSES/MIT-H3-FaceRefine.txt.
 
+4. ComfyUI-KJNodes
+   Copyright Kijai and contributors
+   https://github.com/kijai/ComfyUI-KJNodes
+   Packed-latent preview normalization and temporal TAEHV decoder behavior were
+   adapted from commit 3f20054214fec9f9234fd3841ae6f1e4287948f6 under GNU GPL
+   version 3.0. The GPL license text is retained at LICENSES/GPL-3.0.txt.
+
 This project substantially modifies and integrates both upstream projects into
 a standalone MiniMax H3 multi-segment Director with Motion/Audio Context
 continuity. It is not the original ComfyUI-H3-Motion-Context or AIMixer Director

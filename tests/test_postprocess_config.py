@@ -12,6 +12,37 @@ def test_old_workflow_defaults_keep_postprocessing_disabled():
     assert config["global_refine"]["enabled"] is False
     assert config["face_refine"]["enabled"] is False
     assert config["preview"]["enabled"] is True
+    assert config["save"] == {
+        "auto_save": False,
+        "filename_prefix": "video/MiniMaxH3_Director",
+        "format": "auto",
+        "codec": "auto",
+        "encoding": "auto",
+        "crf": 23,
+    }
+
+
+def test_save_config_is_normalized_without_affecting_existing_sections():
+    config = normalize_postprocess_config({
+        "global_refine": {"enabled": True},
+        "save": {
+            "auto_save": "yes",
+            "filename_prefix": "  video/My_Director  ",
+            "format": "MP4",
+            "codec": "H264",
+            "encoding": "re-encode",
+            "crf": 999,
+        },
+    })
+    assert config["global_refine"]["enabled"] is True
+    assert config["save"] == {
+        "auto_save": True,
+        "filename_prefix": "video/My_Director",
+        "format": "mp4",
+        "codec": "h264",
+        "encoding": "re-encode",
+        "crf": 51,
+    }
 
 
 def test_config_round_trip_and_legacy_live_preview_migration():

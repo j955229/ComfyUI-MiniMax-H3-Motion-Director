@@ -134,7 +134,7 @@ def apply_face_refine(
     shift_audio: float,
     chunk_lengths: list[int] | None = None,
     on_phase: Callable[[str, float], None] | None = None,
-    on_step_preview: Callable[[int, int, Any], None] | None = None,
+    on_step_preview: Callable[[int, int, Any, Any], None] | None = None,
     preview_every: int = 1,
 ) -> FaceRefineOutcome:
     """Track once across the assembled video, then H3-regenerate crop chunks."""

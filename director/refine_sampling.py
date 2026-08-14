@@ -184,7 +184,7 @@ def apply_global_refine(
     director_height: int,
     repin: Callable[[Any, dict], Any] | None = None,
     on_phase: Callable[[str, float], None] | None = None,
-    on_step_preview: Callable[[int, int, Any], None] | None = None,
+    on_step_preview: Callable[[int, int, Any, Any], None] | None = None,
     preview_every: int = 1,
     preserve_noise_mask: bool = False,
 ) -> GlobalRefineOutcome:

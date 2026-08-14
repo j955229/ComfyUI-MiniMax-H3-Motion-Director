@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 
-POSTPROCESS_CONFIG_VERSION = 1
+POSTPROCESS_CONFIG_VERSION = 2
 CANVAS_MULTIPLE = 32
 
 DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
@@ -81,6 +81,14 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "jpeg_quality": 80,
         "preview_every": 1,
     },
+    "save": {
+        "auto_save": False,
+        "filename_prefix": "video/MiniMaxH3_Director",
+        "format": "auto",
+        "codec": "auto",
+        "encoding": "auto",
+        "crf": 23,
+    },
 }
 
 
@@ -137,12 +145,15 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g_raw = raw.get("global_refine") or raw.get("globalRefine") or {}
     f_raw = raw.get("face_refine") or raw.get("faceRefine") or {}
     p_raw = raw.get("preview") or raw.get("director_preview") or {}
+    s_raw = raw.get("save") or raw.get("video_save") or {}
     if not isinstance(g_raw, dict):
         g_raw = {}
     if not isinstance(f_raw, dict):
         f_raw = {}
     if not isinstance(p_raw, dict):
         p_raw = {}
+    if not isinstance(s_raw, dict):
+        s_raw = {}
 
     g = result["global_refine"]
     g["enabled"] = _bool(g_raw.get("enabled"), False)
@@ -219,6 +230,15 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     p["max_resolution"] = _int(p_raw.get("max_resolution"), 1024, 128, 4096)
     p["jpeg_quality"] = _int(p_raw.get("jpeg_quality"), 80, 20, 100)
     p["preview_every"] = _int(p_raw.get("preview_every"), 1, 1, 100)
+
+    s = result["save"]
+    s["auto_save"] = _bool(s_raw.get("auto_save"), False)
+    prefix = str(s_raw.get("filename_prefix") or "video/MiniMaxH3_Director").strip()
+    s["filename_prefix"] = prefix[:512] or "video/MiniMaxH3_Director"
+    s["format"] = str(s_raw.get("format") or "auto").strip().lower()[:32] or "auto"
+    s["codec"] = str(s_raw.get("codec") or "auto").strip().lower()[:64] or "auto"
+    s["encoding"] = _choice(s_raw.get("encoding"), {"auto", "re-encode"}, "auto")
+    s["crf"] = _int(s_raw.get("crf"), 23, 0, 51)
     return result
 
 

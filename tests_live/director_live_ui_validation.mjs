@@ -315,6 +315,18 @@ const threePages = await evaluate(`(() => {
         resultSeek: !!modal.pages.output.querySelector('[data-result-seek]'),
         runStatus: !!modal.pages.output.querySelector('[data-r="run-status"]'),
         report: !!modal.pages.output.querySelector('[data-report]'),
+        previewCard: !!modal.pages.output.querySelector('[data-preview-settings-card]'),
+        saveCard: !!modal.pages.output.querySelector('[data-save-video-card]'),
+    };
+    editor.outputUi.setTab('live');
+    output.liveVisibility = {
+        previewHidden: modal.pages.output.querySelector('[data-preview-settings-card]').hidden,
+        saveHidden: modal.pages.output.querySelector('[data-save-video-card]').hidden,
+    };
+    editor.outputUi.setTab('final');
+    output.finalVisibility = {
+        previewHidden: modal.pages.output.querySelector('[data-preview-settings-card]').hidden,
+        saveHidden: modal.pages.output.querySelector('[data-save-video-card]').hidden,
     };
     modal.setPage('generation');
     return { pages, sourceControls, afterNext, afterNextAgain, afterWrap, afterPreviousWrap, postprocess, output };
@@ -325,7 +337,12 @@ assert.equal(threePages.afterNextAgain, "output");
 assert.equal(threePages.afterWrap, "generation");
 assert.equal(threePages.afterPreviousWrap, "output");
 assert.deepEqual(threePages.postprocess, { columns: 2, global: true, face: true });
-assert.deepEqual(threePages.output, { tabs: 4, resultSeek: true, runStatus: true, report: true });
+assert.deepEqual(threePages.output, {
+    tabs: 4, resultSeek: true, runStatus: true, report: true,
+    previewCard: true, saveCard: true,
+    liveVisibility: { previewHidden: false, saveHidden: true },
+    finalVisibility: { previewHidden: true, saveHidden: false },
+});
 
 const postprocessSync = await evaluate(`(() => {
     const node = globalThis.__mmxLiveNode;

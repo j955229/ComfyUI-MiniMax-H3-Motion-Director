@@ -13,6 +13,18 @@ test("Output is the unique generated-result and run-progress center", () => {
     assert.match(output, /\.mmx-result-viewer \[hidden\]\{display:none!important\}/);
     assert.match(output, /\.mmx-result-controls>label\{display:grid/);
     assert.match(output, /input\[type=checkbox\].*justify-self:start/);
+    assert.match(output, /data-preview-settings-card/);
+    assert.match(output, /data-save-video-card/);
+    assert.match(output, /previewCard\.hidden\s*=\s*tab\s*!==\s*"live"/);
+    assert.match(output, /saveCard\.hidden\s*=\s*tab\s*!==\s*"final"/);
+    assert.doesNotMatch(output, /setInterval\s*\(/);
+    assert.match(output, /requestAnimationFrame|ResultPlaybackController/);
+    assert.match(output, /const setTab = \(tab\) => \{\s*stop\(\)/);
+    assert.match(output, /segmentSelect\.addEventListener\("change", \(\) => \{ stop\(\)/);
+    assert.match(output, /const clear = \(\) => \{\s*stop\(\)/);
+    assert.match(output, /destroy\(\) \{\s*playback\.destroy\(\)/);
+    assert.match(output, /fetchApi\("\/minimax\/motion-director\/save_video"/);
+    assert.doesNotMatch(output, /queuePrompt|sample_single_stage/);
 });
 
 test("Generation keeps source player seek and frame navigation", () => {
@@ -26,4 +38,5 @@ test("node-scoped backend preview and report events route only into Output", () 
     assert.match(timeline, /addEventListener\("minimax_motion_director_preview"[\s\S]*outputUi\?\.consumePreview/);
     assert.match(timeline, /addEventListener\("minimax_motion_director_report"[\s\S]*outputUi\?\.setReport/);
     assert.match(timeline, /addEventListener\("minimax_motion_director_audio"[\s\S]*outputUi\?\.setAudio/);
+    assert.match(timeline, /addEventListener\("minimax_motion_director_final_ready"[\s\S]*outputUi\?\.setFinalRecord/);
 });

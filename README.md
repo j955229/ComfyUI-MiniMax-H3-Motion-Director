@@ -524,13 +524,19 @@ Motion Director 仍然只有一个节点、一个 Director 弹窗。打开 Direc
 `SUCCESS_WITH_WARNING`，而不是让整条 Queue 报废。
 
 Output 是唯一的模型成果中心，包含「实时 / 分段 / 多段 / 最终结果」四个视图、成果播放器、两条
-独立的运行进度条、Preview Settings 和 report。Generation 中的原片 seek bar 是编辑工具；Output
-中的 result seek bar 才是生成成果播放器。Director 采样期间始终抑制 ComfyUI 默认 sampler
-preview：Director Preview 开启时只显示 Output 的有界异步预览，关闭时不显示采样画面，但正常
-ComfyUI 执行与进度仍然工作。
+独立的运行进度条和 report。Preview Settings 只显示在「实时」；「最终结果」改为显示原生 VIDEO
+保存卡片，可手动保存，也可按每个 run 自动保存一次。保存直接复用 ComfyUI `VIDEO` 与文件计数器，
+包含最终音频，不会重新执行 H3。Generation 中的原片 seek bar 是编辑工具；Output 中的 result seek
+bar 才是生成成果播放器。播放时音频是画面主时钟，拖动 seek 会同时跳动画面与音频；无音频时使用
+monotonic RAF 时钟，避免独立 timer 造成漂移。
 
-所有设置保存在追加于旧 widget 序列末尾的一份内部 JSON 中。旧 workflow 打开时两项后期处理默认
-关闭，Generation 行为和旧 `widgets_values` 索引保持不变。正式输出仍然只有
+Director 采样期间始终抑制 ComfyUI 默认 sampler preview。实时预览通过 sampling wrapper 取得
+`latent_shapes`，还原 packed H3 video latent，并优先使用 temporal `taeh3` / TAEHV 解码；失败才回退
+Latent2RGB。异步编码 queue 只保留小型 CPU/PIL 预览帧，不复制完整 H3 latent。Director Preview
+关闭时不显示采样画面，但正常 ComfyUI 执行与进度仍然工作。
+
+所有设置（含预览与保存选项）保存在追加于旧 widget 序列末尾的一份内部 JSON 中。旧 workflow
+打开时两项后期处理和自动保存默认关闭，Generation 行为和旧 `widgets_values` 索引保持不变。正式输出仍然只有
 `images / audio / fps / frame_count / source_images / report`，不会额外输出或长期保留多份中间
 IMAGE batch。
 

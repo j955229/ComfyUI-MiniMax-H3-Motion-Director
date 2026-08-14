@@ -12,8 +12,8 @@ import {
     faceRefineSummary,
     globalRefineSummary,
     mountPostprocessUI,
-} from "./minimax_postprocess_ui.mjs?boot=postprocess_output_v4";
-import { mountOutputUI } from "./minimax_output_ui.mjs?boot=postprocess_output_v4";
+} from "./minimax_postprocess_ui.mjs?boot=postprocess_output_v5";
+import { mountOutputUI } from "./minimax_output_ui.mjs?boot=postprocess_output_v5";
 import { resolveExternalGroupTerminal } from "./minimax_external_groups.mjs";
 import {
     CUSTOM_ASPECT_RATIO,
@@ -109,7 +109,7 @@ import {
 import {
     mountR2vCommonToggle,
     syncR2vCommonToggleForTask,
-} from "./minimax_r2v_common_ui.mjs?boot=postprocess_output_v4";
+} from "./minimax_r2v_common_ui.mjs?boot=postprocess_output_v5";
 import {
     commitRunSelectionMutation as commitRunSelectionMutationNow,
     ensureRunSelectionSerialized,
@@ -2234,7 +2234,11 @@ class MiniMaxH3MotionDirectorEditor {
         this.outputUi = initPhase("Output page", () => mountOutputUI(
             this._directorModalController.pages.output,
             this.postprocessStore,
-            { locale: getLocale },
+            {
+                locale: getLocale,
+                fetchApi: (path, options) => api.fetchApi(path, options),
+                nodeId: () => String(this.node?.id ?? ""),
+            },
         ));
         this.runStatusEl = this.outputUi.runStatusEl;
         this.runTitleEl = this.outputUi.runTitleEl;
@@ -10248,6 +10252,10 @@ app.registerExtension({
 
         api.addEventListener("minimax_motion_director_audio", ({ detail }) => {
             findDirectorNode(detail?.node_id)?._minimaxEditor?.outputUi?.setAudio?.(detail);
+        });
+
+        api.addEventListener("minimax_motion_director_final_ready", ({ detail }) => {
+            findDirectorNode(detail?.node_id)?._minimaxEditor?.outputUi?.setFinalRecord?.(detail);
         });
 
         api.addEventListener("executing", ({ detail }) => {
