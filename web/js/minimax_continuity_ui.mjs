@@ -185,9 +185,9 @@ export function applyVideoStrategyToWidgets({
 export function migrateColorReanchorWidgetValues(serializedNode, currentWidgets = []) {
     const values = serializedNode?.widgets_values;
     if (!Array.isArray(values) || !Array.isArray(currentWidgets)) return false;
-    const serializable = currentWidgets.filter((widget) => (
-        widget?.serialize !== false && widget?.options?.serialize !== false
-    ));
+    const serializable = currentWidgets.filter(
+        (widget) => widget?.serialize !== false,
+    );
     const colorIndex = serializable.findIndex(
         (widget) => widget?.name === "color_reanchor_enabled",
     );

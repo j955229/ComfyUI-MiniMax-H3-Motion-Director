@@ -909,6 +909,79 @@ function detachDirectorTransientWidgets(node) {
     }
 }
 
+
+function migrateReorderedDirectorTail(serializedNode, currentWidgets = []) {
+    const values = serializedNode?.widgets_values;
+
+    if (!Array.isArray(values) || !Array.isArray(currentWidgets)) {
+        return false;
+    }
+
+    const serializable = currentWidgets.filter(
+        (widget) => widget?.serialize !== false,
+    );
+
+    const widgetIndex = (name) => (
+        serializable.findIndex(
+            (widget) => widget?.name === name,
+        )
+    );
+
+    const perfIndex = widgetIndex("bd_grp_perf");
+    const clearVramIndex = widgetIndex("clear_vram_between_segments");
+    const exportSourceIndex = widgetIndex("export_source_images");
+    const experimentalIndex = widgetIndex("bd_grp_experimental");
+    const pinRenormIndex = widgetIndex("pin_renorm_enabled");
+    const postprocessIndex = widgetIndex("postprocess_config");
+
+    const indices = [
+        perfIndex,
+        clearVramIndex,
+        exportSourceIndex,
+        experimentalIndex,
+        pinRenormIndex,
+        postprocessIndex,
+    ];
+
+    if (
+        indices.some(
+            (index) => index < 0 || index >= values.length,
+        )
+    ) {
+        return false;
+    }
+
+    const oldValues = values.slice();
+
+    const looksLikeReorderedLayout = (
+        typeof oldValues[perfIndex] === "string"
+        && typeof oldValues[clearVramIndex] === "boolean"
+        && typeof oldValues[exportSourceIndex] === "string"
+        && typeof oldValues[experimentalIndex] === "string"
+        && typeof oldValues[pinRenormIndex] === "boolean"
+        && typeof oldValues[postprocessIndex] === "boolean"
+    );
+
+    if (!looksLikeReorderedLayout) {
+        return false;
+    }
+
+    values[perfIndex] = oldValues[experimentalIndex];
+    values[clearVramIndex] = oldValues[pinRenormIndex];
+    values[exportSourceIndex] = oldValues[postprocessIndex];
+
+    values[experimentalIndex] = oldValues[perfIndex];
+    values[pinRenormIndex] = oldValues[clearVramIndex];
+    values[postprocessIndex] = oldValues[exportSourceIndex];
+
+    console.warn(
+        "[MiniMax H3 Motion Director] migrated legacy reordered Director widget values",
+    );
+
+    return true;
+}
+
+
 function repairInvalidDirectorSamplingState(node) {
     const widget = (name) => node?.widgets?.find((item) => item.name === name);
     const steps = widget("steps");
@@ -1836,7 +1909,6 @@ function moveDirectorPerfWidgetsBeforeTimeline(node) {
 
 function finalizeDirectorWidgetOrder(node) {
     installDirectorPostprocessUi(node);
-    moveDirectorPerfWidgetsBeforeTimeline(node);
     moveDirectorDomWidgetToEnd(node);
 }
 
@@ -10454,8 +10526,21 @@ app.registerExtension({
             // LiteGraph applies widgets_values by widget order.  Transient
             // visual facades must never exist while native deserialization runs.
             detachDirectorTransientWidgets(this);
-            migrateLegacySamplingControlNode(arguments[0]);
-            migrateColorReanchorWidgetValues(arguments[0], this.widgets || []);
+
+            migrateLegacySamplingControlNode(
+                arguments[0],
+            );
+
+            migrateColorReanchorWidgetValues(
+                arguments[0],
+                this.widgets || [],
+            );
+
+            migrateReorderedDirectorTail(
+                arguments[0],
+                this.widgets || [],
+            );
+
             normalizeDirectorOutputs(this);
             this._mmxContinuityConfiguring = true;
             let out;
