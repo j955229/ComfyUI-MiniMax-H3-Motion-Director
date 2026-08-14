@@ -76,25 +76,203 @@ def _resize_lanczos(images: torch.Tensor, width: int, height: int) -> torch.Tens
     ).movedim(1, -1)
 
 
-def _upscale_model_exact(images: torch.Tensor, model_name: str) -> torch.Tensor:
+def _upscale_model_exact(
+    images: torch.Tensor,
+    model_name: str,
+    *,
+    width: int,
+    height: int,
+    on_progress: Callable[[float], None] | None = None,
+) -> torch.Tensor:
     if not model_name:
-        raise ValueError("Upscale Model was selected but no internal model was selected.")
-    import folder_paths
-    from comfy_extras.nodes_upscale_model import ImageUpscaleWithModel, UpscaleModelLoader
+        raise ValueError(
+            "Upscale Model was selected but no internal model was selected."
+        )
 
-    # get_full_path_or_raise is intentionally used when available: a missing
-    # model is a failed chosen method, never permission to switch algorithms.
-    resolver = getattr(folder_paths, "get_full_path_or_raise", None)
+    import folder_paths
+    import comfy.model_management as model_management
+    import comfy.utils
+    from comfy_extras.nodes_upscale_model import UpscaleModelLoader
+
+    resolver = getattr(
+        folder_paths,
+        "get_full_path_or_raise",
+        None,
+    )
+
     if resolver is not None:
-        resolver("upscale_models", model_name)
-    elif not getattr(folder_paths, "get_full_path", lambda *_: None)("upscale_models", model_name):
-        raise FileNotFoundError(f"Upscale model not found: {model_name}")
-    model = _unpack(UpscaleModelLoader().load_model(model_name))[0]
-    node = ImageUpscaleWithModel()
-    parts = []
-    for index in range(0, int(images.shape[0]), 4):
-        parts.append(_unpack(node.upscale(model, images[index : index + 4]))[0])
-    return torch.cat(parts, dim=0)
+        resolver(
+            "upscale_models",
+            model_name,
+        )
+    elif not getattr(
+        folder_paths,
+        "get_full_path",
+        lambda *_: None,
+    )(
+        "upscale_models",
+        model_name,
+    ):
+        raise FileNotFoundError(
+            f"Upscale model not found: {model_name}"
+        )
+
+    model = _unpack(
+        UpscaleModelLoader().load_model(
+            model_name
+        )
+    )[0]
+
+    device = model.patcher.load_device
+    output_device = model_management.intermediate_device()
+
+    total_frames = int(images.shape[0])
+    batch_size = 4
+
+    probe = images[
+        : min(batch_size, total_frames)
+    ]
+
+    memory_required = (
+        (512 * 512 * 3)
+        * probe.element_size()
+        * max(model.scale, 1.0)
+        * 384.0
+    )
+
+    memory_required += (
+        probe.nelement()
+        * probe.element_size()
+    )
+
+    model_management.load_models_gpu(
+        [model.patcher],
+        memory_required=memory_required,
+        force_full_load=True,
+    )
+
+    output = None
+
+    for index in range(
+        0,
+        total_frames,
+        batch_size,
+    ):
+        model_management.throw_exception_if_processing_interrupted()
+
+        end = min(
+            index + batch_size,
+            total_frames,
+        )
+
+        chunk = images[index:end]
+
+        in_img = (
+            chunk[..., :3]
+            .movedim(-1, -3)
+            .to(device)
+        )
+
+        tile = 512
+        overlap = 32
+
+        while True:
+            try:
+                steps = (
+                    in_img.shape[0]
+                    * comfy.utils.get_tiled_scale_steps(
+                        in_img.shape[3],
+                        in_img.shape[2],
+                        tile_x=tile,
+                        tile_y=tile,
+                        overlap=overlap,
+                    )
+                )
+
+                pbar = comfy.utils.ProgressBar(
+                    steps
+                )
+
+                upscaled = comfy.utils.tiled_scale(
+                    in_img,
+                    lambda tensor: model(
+                        tensor.float()
+                    ),
+                    tile_x=tile,
+                    tile_y=tile,
+                    overlap=overlap,
+                    upscale_amount=model.scale,
+                    pbar=pbar,
+                    output_device=output_device,
+                )
+
+                break
+
+            except Exception as exc:
+                model_management.raise_non_oom(
+                    exc
+                )
+
+                tile //= 2
+
+                if tile < 128:
+                    raise
+
+        upscaled = torch.clamp(
+            upscaled.movedim(-3, -1),
+            min=0,
+            max=1.0,
+        ).to(
+            model_management.intermediate_dtype()
+        )
+
+        if (
+            int(upscaled.shape[2]) != int(width)
+            or int(upscaled.shape[1]) != int(height)
+        ):
+            upscaled = _resize_lanczos(
+                upscaled,
+                int(width),
+                int(height),
+            )
+
+        upscaled = upscaled.cpu()
+
+        if output is None:
+            output = torch.empty(
+                (
+                    total_frames,
+                    int(height),
+                    int(width),
+                    int(upscaled.shape[-1]),
+                ),
+                dtype=upscaled.dtype,
+                device="cpu",
+            )
+
+        output[index:end].copy_(
+            upscaled
+        )
+
+        del in_img
+        del upscaled
+
+        if on_progress is not None:
+            on_progress(
+                end / max(
+                    1,
+                    total_frames,
+                )
+            )
+
+        model_management.throw_exception_if_processing_interrupted()
+
+    if output is None:
+        raise RuntimeError(
+            "Upscale Model produced no frames."
+        )
+
+    return output
 
 
 def _upscale_rtx_vsr_exact(images: torch.Tensor, width: int, height: int) -> torch.Tensor:
@@ -130,13 +308,20 @@ def upscale_image_batch_strict(
     height: int,
     method: str,
     model_name: str = "",
+    on_progress: Callable[[float], None] | None = None,
 ) -> torch.Tensor:
     """Run exactly the selected method; errors propagate to the stage fallback."""
     selected = str(method or "lanczos").strip().lower()
     if selected == "lanczos":
         result = _resize_lanczos(images, width, height)
     elif selected == "upscale_model":
-        result = _upscale_model_exact(images, model_name)
+        result = _upscale_model_exact(
+            images,
+            model_name,
+            width=width,
+            height=height,
+            on_progress=on_progress,
+        )
     elif selected == "nvidia_rtx_vsr":
         result = _upscale_rtx_vsr_exact(images, width, height)
     else:
@@ -218,6 +403,16 @@ def apply_global_refine(
                 height=height,
                 method=config.get("upscale_method") or "lanczos",
                 model_name=config.get("upscale_model") or "",
+                on_progress=(
+                    (
+                        lambda value: on_phase(
+                            "global_upscale",
+                            value,
+                        )
+                    )
+                    if on_phase is not None
+                    else None
+                ),
             )
             work = _join_av(_encode_video(vae, upscaled), audio_latent, work)
             if repin is not None:

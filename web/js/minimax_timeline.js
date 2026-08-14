@@ -910,6 +910,93 @@ function detachDirectorTransientWidgets(node) {
 }
 
 
+
+function cloneDirectorWidgetValue(value) {
+    if (value == null || typeof value !== "object") {
+        return value ?? null;
+    }
+
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch {
+        return null;
+    }
+}
+
+function captureDirectorWidgetState(node) {
+    const state = {};
+
+    for (const widget of node?.widgets || []) {
+        if (!widget?.name) continue;
+        if (widget.serialize === false) continue;
+        if (DIRECTOR_TRANSIENT_WIDGETS.has(widget.name)) continue;
+
+        state[widget.name] = cloneDirectorWidgetValue(
+            widget.value,
+        );
+    }
+
+    return state;
+}
+
+function restoreDirectorWidgetState(node, serializedNode) {
+    if (!node || !serializedNode) {
+        return false;
+    }
+
+    const namedValues = serializedNode.widgets_values_named;
+
+    const savedProperties =
+        serializedNode.properties?.mmx_director_widget_state;
+
+    let source = null;
+
+    if (
+        namedValues
+        && typeof namedValues === "object"
+        && !Array.isArray(namedValues)
+        && Object.keys(namedValues).length > 0
+    ) {
+        source = namedValues;
+    } else if (
+        savedProperties
+        && typeof savedProperties === "object"
+        && !Array.isArray(savedProperties)
+    ) {
+        source = savedProperties;
+    }
+
+    if (!source) {
+        return false;
+    }
+
+    let restored = 0;
+
+    for (const widget of node.widgets || []) {
+        if (!widget?.name) continue;
+        if (widget.serialize === false) continue;
+        if (DIRECTOR_TRANSIENT_WIDGETS.has(widget.name)) continue;
+
+        if (
+            !Object.prototype.hasOwnProperty.call(
+                source,
+                widget.name,
+            )
+        ) {
+            continue;
+        }
+
+        widget.value = cloneDirectorWidgetValue(
+            source[widget.name],
+        );
+
+        restored += 1;
+    }
+
+    return restored > 0;
+}
+
+
 function migrateReorderedDirectorTail(serializedNode, currentWidgets = []) {
     const values = serializedNode?.widgets_values;
 
@@ -10521,6 +10608,18 @@ app.registerExtension({
             return onRemoved?.apply(this, arguments);
         };
 
+        const onSerialize = nodeType.prototype.onSerialize;
+
+        nodeType.prototype.onSerialize = function (serializedNode) {
+            onSerialize?.apply(this, arguments);
+
+            serializedNode.properties =
+                serializedNode.properties || {};
+
+            serializedNode.properties.mmx_director_widget_state =
+                captureDirectorWidgetState(this);
+        };
+
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
             // LiteGraph applies widgets_values by widget order.  Transient
@@ -10543,15 +10642,30 @@ app.registerExtension({
 
             normalizeDirectorOutputs(this);
             this._mmxContinuityConfiguring = true;
+
             let out;
+
             try {
-                out = onConfigure?.apply(this, arguments);
+                out = onConfigure?.apply(
+                    this,
+                    arguments,
+                );
+
+                restoreDirectorWidgetState(
+                    this,
+                    arguments[0],
+                );
             } finally {
                 this._mmxContinuityConfiguring = false;
-                repairInvalidDirectorSamplingState(this);
+
+                repairInvalidDirectorSamplingState(
+                    this,
+                );
+
                 for (const widget of this.widgets || []) {
                     if (widget?._mmxContinuityDisabled) {
-                        widget._mmxContinuityStoredValue = widget.value;
+                        widget._mmxContinuityStoredValue =
+                            widget.value;
                     }
                 }
             }
