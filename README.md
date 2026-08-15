@@ -49,42 +49,6 @@ Motion Director 的目标就是把这些工作放回一个统一的生产界面�
 
 ---
 
-## 安装
-
-进入 ComfyUI 的 `custom_nodes`：
-
-```bash
-cd ComfyUI/custom_nodes
-git clone https://github.com/j955229/ComfyUI-MiniMax-H3-Motion-Director.git
-cd ComfyUI-MiniMax-H3-Motion-Director
-python -m pip install -r requirements.txt
-```
-
-如果你使用 Windows 便携版，请把上面的 `python` 换成该 ComfyUI 实际使用的内置 Python 可执行文件。
-
-然后完整重启 ComfyUI。
-
-### 更新
-
-```bash
-cd ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-Motion-Director
-git pull
-```
-
-更新包含前端文件时，建议重启 ComfyUI 后再对浏览器执行一次强制刷新。
-
-### 依赖
-
-`requirements.txt` 当前包含：
-
-- `opencv-python-headless`：V2V / 时间线源视频解码。
-- `imageio-ffmpeg`：V2V / RV2V 源音频提取。
-- `scenedetect`：智能分割。
-
-> 不建议同时加载独立版 `ComfyUI-H3-Motion-Context`。本项目已经集成并修改了相关 H3 runtime patch，同时加载两套实现可能发生冲突。
-
----
-
 ## 快速开始
 
 1. 放置 `MiniMax H3 Motion Director`。
@@ -406,6 +370,42 @@ V2V / RV2V 的核心问题与纯生成模式不同：它们还有 Source Video �
 ### 原视频 + 角色身份参考
 
 `RV2V` + Source Video + 参考图片 / 音频。适合以原视频动作作为基础，再替换或强化主体身份和声音参考。
+
+---
+
+## 安装
+
+进入 ComfyUI 的 `custom_nodes`：
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/j955229/ComfyUI-MiniMax-H3-Motion-Director.git
+cd ComfyUI-MiniMax-H3-Motion-Director
+python -m pip install -r requirements.txt
+```
+
+如果你使用 Windows 便携版，请把上面的 `python` 换成该 ComfyUI 实际使用的内置 Python 可执行文件。
+
+然后完整重启 ComfyUI。
+
+### 更新
+
+```bash
+cd ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-Motion-Director
+git pull
+```
+
+更新包含前端文件时，建议重启 ComfyUI 后再对浏览器执行一次强制刷新。
+
+### 依赖
+
+`requirements.txt` 当前包含：
+
+- `opencv-python-headless`：V2V / 时间线源视频解码。
+- `imageio-ffmpeg`：V2V / RV2V 源音频提取。
+- `scenedetect`：智能分割。
+
+> 不建议同时加载独立版 `ComfyUI-H3-Motion-Context`。本项目已经集成并修改了相关 H3 runtime patch，同时加载两套实现可能发生冲突。
 
 ---
 
