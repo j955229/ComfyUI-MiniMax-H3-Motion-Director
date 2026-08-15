@@ -10,6 +10,20 @@ Supported modes: `T2V / I2V / FL2V / R2V / V2V / RV2V`.
 
 ![MiniMax H3 Motion Director](docs/images/director-node.webp)
 
+# Credits / License
+
+This project is distributed as a whole under **GNU GPL v3.0**. See [`NOTICE`](NOTICE), [`LICENSE`](LICENSE), and [`LICENSES`](LICENSES) for third-party attribution and derivative-work details.
+
+This project contains or modifies code / algorithms from:
+
+- [AIMixer / ComfyUI_MiniMaxH3_Director](https://github.com/AIMixer/ComfyUI_MiniMaxH3_Director) — Apache-2.0
+- [NikoDemon80 / ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) — GPL-3.0
+- [Carasibana / ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine) — MIT
+- [Kijai / ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) — GPL-3.0; portions of packed-latent preview / TAEHV behavior were informed by its implementation.
+
+Thanks to all upstream projects and contributors.
+
+
 ## Why use Director?
 
 A normal H3 workflow is great for generating a single clip. Once a project grows to 30 seconds, one minute, or longer, the workflow quickly becomes harder to manage:
@@ -405,17 +419,3 @@ When an update contains frontend files, restart ComfyUI and hard-refresh the bro
 - If the interface still shows an older frontend after an update, restart ComfyUI completely and hard-refresh the browser cache.
 - Do not load the standalone `ComfyUI-H3-Motion-Context` alongside this project.
 
----
-
-# Credits / License
-
-This project is distributed as a whole under **GNU GPL v3.0**. See [`NOTICE`](NOTICE), [`LICENSE`](LICENSE), and [`LICENSES`](LICENSES) for third-party attribution and derivative-work details.
-
-This project contains or modifies code / algorithms from:
-
-- [AIMixer / ComfyUI_MiniMaxH3_Director](https://github.com/AIMixer/ComfyUI_MiniMaxH3_Director) — Apache-2.0
-- [NikoDemon80 / ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) — GPL-3.0
-- [Carasibana / ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine) — MIT
-- [Kijai / ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) — GPL-3.0; portions of packed-latent preview / TAEHV behavior were informed by its implementation.
-
-Thanks to all upstream projects and contributors.
