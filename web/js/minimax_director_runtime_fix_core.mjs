@@ -106,3 +106,15 @@ export function releaseTimelineShortcutListener(editor, windowTarget) {
     editor._mmxRuntimeShortcutScoped = false;
     return changed;
 }
+
+export function syncDirectorModalAriaState(controller) {
+    const shell = controller?.shell;
+    if (!shell?.setAttribute) return false;
+
+    const desired = controller.isOpen === true ? "true" : "false";
+    const current = shell.getAttribute?.("aria-modal");
+    if (current === desired) return false;
+
+    shell.setAttribute("aria-modal", desired);
+    return true;
+}
