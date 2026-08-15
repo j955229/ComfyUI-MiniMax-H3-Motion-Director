@@ -2327,16 +2327,31 @@ class MiniMaxH3MotionDirectorEditor {
                 this._resetLayoutStyles();
                 this.applyZoomWidth();
                 this.syncExternalGroupsTimeline?.();
+
+                this.outputUi?.setPageVisibility?.(
+                    this._directorModalController?.currentPage || "generation",
+                );
+
                 refreshDirectorContinuityUi(this.node, this);
                 this.scheduleSettleRender();
             },
             onClose: () => {
                 if (this.isPlaying) this._stopPlay();
+
+                this.outputUi?.setPageVisibility?.(
+                    "closed",
+                );
+
                 this._r2vCommonPopover?.close?.();
                 this._directorModalOpen = false;
                 refreshDirectorContinuityUi(this.node, this);
             },
             onResize: () => this.onDirectorModalResize(),
+            onPageChange: (page) => {
+                this.outputUi?.setPageVisibility?.(
+                    page,
+                );
+            },
         });
         this._directorModalOverlay = this._directorModalController.overlay;
         this._directorModalShell = this._directorModalController.shell;
@@ -2390,8 +2405,11 @@ class MiniMaxH3MotionDirectorEditor {
                 locale: getLocale,
             },
         ));
-        this.outputUi = initPhase("Output page", () => mountOutputUI(
-            this._directorModalController.pages.output,
+        this.outputUi = initPhase("Live Preview / Results pages", () => mountOutputUI(
+            {
+                live: this._directorModalController.pages.live,
+                results: this._directorModalController.pages.results,
+            },
             this.postprocessStore,
             {
                 locale: getLocale,
@@ -2399,6 +2417,10 @@ class MiniMaxH3MotionDirectorEditor {
                 nodeId: () => String(this.node?.id ?? ""),
             },
         ));
+
+        this.outputUi.setPageVisibility(
+            this._directorModalController.currentPage,
+        );
         this.runStatusEl = this.outputUi.runStatusEl;
         this.runTitleEl = this.outputUi.runTitleEl;
         this.runDetailEl = this.outputUi.runDetailEl;

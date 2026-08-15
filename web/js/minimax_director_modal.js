@@ -8,7 +8,12 @@ const directorModalByHost = new WeakMap();
 
 const EDITABLE_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 const EDITING_COMMAND_KEYS = new Set(["a", "c", "v", "x", "y", "z"]);
-export const DIRECTOR_PAGES = ["generation", "postprocess", "output"];
+export const DIRECTOR_PAGES = [
+    "generation",
+    "postprocess",
+    "live",
+    "results",
+];
 
 export function isDirectorEditableTarget(target, overlay) {
     let current = target?.nodeType === 3 ? target.parentElement : target;
@@ -89,6 +94,7 @@ export function createDirectorModal({
     onOpen,
     onClose,
     onResize,
+    onPageChange,
 }) {
     if (!launcherHost) throw new Error("Director launcher host is required");
     directorModalByHost.get(launcherHost)?.destroy?.();
@@ -195,7 +201,8 @@ export function createDirectorModal({
         const labels = {
             generation: translate("modal.page.generation"),
             postprocess: translate("modal.page.postprocess"),
-            output: translate("modal.page.output"),
+            live: translate("modal.page.live"),
+            results: translate("modal.page.results"),
         };
         pageTabs.forEach((button) => { button.textContent = labels[button.dataset.page]; });
         previousButton.title = translate("modal.page.previous");
@@ -242,6 +249,8 @@ export function createDirectorModal({
                 button.classList.toggle?.("active", active);
                 button.setAttribute("aria-selected", String(active));
             });
+
+            onPageChange?.(page);
             scheduleResize();
             return true;
         },
