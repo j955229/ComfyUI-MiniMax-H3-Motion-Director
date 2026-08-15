@@ -13,9 +13,21 @@ import {
 } from "./minimax_director_sections_core.mjs?boot=director_sections_v1";
 import {
     generatedAudioContinuationShouldBeInteractive,
-} from "./minimax_director_runtime_fix_core.mjs?boot=continuity_runtime_fix_v1";
+    keepSamplingSourceHidden,
+    releaseTimelineShortcutListener,
+    restoreContinuityWidgetRenderer,
+    scopeTimelineShortcutListener,
+} from "./minimax_director_runtime_fix_core.mjs?boot=continuity_runtime_fix_v2";
 
 const DIRECTOR_CLASS = "MiniMaxH3MotionDirector";
+
+const INTERNAL_SAMPLING_SOURCES = Object.freeze([
+    "steps",
+    "sampler_name",
+    "scheduler",
+    "shift_video",
+    "shift_audio",
+]);
 
 const LABEL_SOURCE_BY_WIDGET = Object.freeze({
     seed: "seed",
@@ -37,14 +49,11 @@ const LABEL_SOURCE_BY_WIDGET = Object.freeze({
 });
 
 function widgetByName(node, name) {
-    return node?.widgets?.find(
-        (widget) => widget?.name === name,
-    ) || null;
+    return node?.widgets?.find((widget) => widget?.name === name) || null;
 }
 
 function setWidgetLabel(widget, label) {
     if (!widget || !label) return false;
-
     let changed = false;
 
     if (widget.label !== label) {
@@ -53,7 +62,6 @@ function setWidgetLabel(widget, label) {
     }
 
     widget.options = widget.options || {};
-
     if (widget.options.label !== label) {
         widget.options.label = label;
         changed = true;
@@ -64,31 +72,16 @@ function setWidgetLabel(widget, label) {
 
 function setHeaderLabel(widget, label) {
     if (!widget || !label) return false;
+    let changed = setWidgetLabel(widget, label);
 
-    let changed = setWidgetLabel(
-        widget,
-        label,
-    );
-
-    if (widget._mmxSamplingStatusText !== label) {
-        widget._mmxSamplingStatusText = label;
-        changed = true;
+    for (const key of ["_mmxSamplingStatusText", "_bdGroupLabel", "value"]) {
+        if (widget[key] !== label) {
+            widget[key] = label;
+            changed = true;
+        }
     }
 
-    if (widget._bdGroupLabel !== label) {
-        widget._bdGroupLabel = label;
-        changed = true;
-    }
-
-    if (widget.value !== label) {
-        widget.value = label;
-        changed = true;
-    }
-
-    if (
-        widget.element
-        && widget.element.textContent !== label
-    ) {
+    if (widget.element && widget.element.textContent !== label) {
         widget.element.textContent = label;
         changed = true;
     }
@@ -97,99 +90,84 @@ function setHeaderLabel(widget, label) {
 }
 
 function currentTaskKey(node) {
-    const editorTask =
-        node?._minimaxEditor?.getTaskKey?.();
-
-    const widgetTask =
-        widgetByName(node, "task_type")?.value;
-
-    return resolveDirectorTaskKey(
-        editorTask || widgetTask,
-    );
+    const editorTask = node?._minimaxEditor?.getTaskKey?.();
+    const widgetTask = widgetByName(node, "task_type")?.value;
+    return resolveDirectorTaskKey(editorTask || widgetTask);
 }
 
 function currentTimeline(node) {
-    const live =
-        node?._minimaxEditor?.timeline;
-
-    if (
-        live
-        && typeof live === "object"
-    ) {
-        return live;
-    }
-
-    return parseDirectorTimeline(
-        widgetByName(
-            node,
-            "timeline_data",
-        )?.value,
-    );
+    const live = node?._minimaxEditor?.timeline;
+    if (live && typeof live === "object") return live;
+    return parseDirectorTimeline(widgetByName(node, "timeline_data")?.value);
 }
 
 function syncGeneratedAudioContinuation(node) {
     const taskKey = currentTaskKey(node);
     const timeline = currentTimeline(node);
-    const groupCount = directorGroupCount(
-        timeline,
-        taskKey,
-    );
+    const groupCount = directorGroupCount(timeline, taskKey);
 
-    if (
-        !generatedAudioContinuationShouldBeInteractive(
-            taskKey,
-            groupCount,
-        )
-    ) {
+    if (!generatedAudioContinuationShouldBeInteractive(taskKey, groupCount)) {
         return false;
     }
 
-    const widget = widgetByName(
-        node,
-        "audio_context_enabled",
-    );
-
+    const widget = widgetByName(node, "audio_context_enabled");
     if (!widget) return false;
 
-    let changed = false;
+    let changed = restoreContinuityWidgetRenderer(widget);
 
-    // T2V / I2V / R2V / FL2V always use generated audio for this control.
-    // A stale hidden source/mute audioMode from V2V/RV2V must not disable it.
     if (widget._mmxContinuityDisabled === true) {
         widget._mmxContinuityDisabled = false;
         changed = true;
     }
-
     if (widget.disabled === true) {
         widget.disabled = false;
+        changed = true;
+    }
+    widget.options = widget.options || {};
+    if (widget.options.disabled === true) {
+        widget.options.disabled = false;
         changed = true;
     }
 
     return changed;
 }
 
+function syncSamplingSourceOwnership(node) {
+    let changed = false;
+    for (const name of INTERNAL_SAMPLING_SOURCES) {
+        changed = keepSamplingSourceHidden(widgetByName(node, name)) || changed;
+    }
+    return changed;
+}
+
+function wrapEditorDestroy(editor) {
+    if (!editor || editor._mmxRuntimeDestroyWrapped) return false;
+    editor._mmxRuntimeDestroyWrapped = true;
+    const originalDestroy = editor.destroy;
+
+    editor.destroy = function (...args) {
+        releaseTimelineShortcutListener(this, window);
+        return originalDestroy?.apply(this, args);
+    };
+    return true;
+}
+
+function syncTimelineShortcutScope(node) {
+    const editor = node?._minimaxEditor;
+    if (!editor) return false;
+    const scoped = scopeTimelineShortcutListener(editor, window);
+    const wrapped = wrapEditorDestroy(editor);
+    return scoped || wrapped;
+}
+
 function syncLocalizedLabels(node) {
-    const locale =
-        getLocale() === "en"
-            ? "en"
-            : "zh";
-
-    const samplingState =
-        getSamplingConnectionState(
-            node?.inputs || [],
-        );
-
+    const locale = getLocale() === "en" ? "en" : "zh";
+    const samplingState = getSamplingConnectionState(node?.inputs || []);
     let changed = false;
 
     changed = setHeaderLabel(
-        widgetByName(
-            node,
-            "bd_grp_sample",
-        ),
-        samplingHeaderText(
-            locale,
-            samplingState,
-        ),
+        widgetByName(node, "bd_grp_sample"),
+        samplingHeaderText(locale, samplingState),
     ) || changed;
 
     for (const sectionId of [
@@ -198,64 +176,25 @@ function syncLocalizedLabels(node) {
         "bd_grp_perf",
     ]) {
         changed = setHeaderLabel(
-            widgetByName(
-                node,
-                sectionId,
-            ),
-            sectionTitle(
-                locale,
-                sectionId,
-            ),
+            widgetByName(node, sectionId),
+            sectionTitle(locale, sectionId),
         ) || changed;
     }
 
-    for (
-        const [widgetName, sourceName]
-        of Object.entries(
-            LABEL_SOURCE_BY_WIDGET,
-        )
-    ) {
+    for (const [widgetName, sourceName] of Object.entries(LABEL_SOURCE_BY_WIDGET)) {
         changed = setWidgetLabel(
-            widgetByName(
-                node,
-                widgetName,
-            ),
-            localizedWidgetLabel(
-                locale,
-                sourceName,
-            ),
+            widgetByName(node, widgetName),
+            localizedWidgetLabel(locale, sourceName),
         ) || changed;
     }
 
-    const seed = widgetByName(
-        node,
-        "seed",
-    );
-
-    for (
-        const linked
-        of seed?.linkedWidgets || []
-    ) {
-        const raw = String(
-            linked?.name
-            || linked?.label
-            || "",
-        ).toLowerCase();
-
-        if (
-            !/control[_\s]?after[_\s]?generate|生成后定制/.test(
-                raw,
-            )
-        ) {
-            continue;
-        }
-
+    const seed = widgetByName(node, "seed");
+    for (const linked of seed?.linkedWidgets || []) {
+        const raw = String(linked?.name || linked?.label || "").toLowerCase();
+        if (!/control[_\s]?after[_\s]?generate|生成后定制/.test(raw)) continue;
         changed = setWidgetLabel(
             linked,
-            localizedWidgetLabel(
-                locale,
-                "control_after_generate",
-            ),
+            localizedWidgetLabel(locale, "control_after_generate"),
         ) || changed;
     }
 
@@ -263,142 +202,97 @@ function syncLocalizedLabels(node) {
 }
 
 function syncRuntimeFix(node) {
-    if (
-        !node
-        || !Array.isArray(node.widgets)
-    ) {
-        return;
-    }
+    if (!node || !Array.isArray(node.widgets)) return false;
 
-    const audioChanged =
-        syncGeneratedAudioContinuation(node);
+    const changed = [
+        syncSamplingSourceOwnership(node),
+        syncGeneratedAudioContinuation(node),
+        syncTimelineShortcutScope(node),
+        syncLocalizedLabels(node),
+    ].some(Boolean);
 
-    const labelsChanged =
-        syncLocalizedLabels(node);
+    if (changed) node.setDirtyCanvas?.(true, true);
+    return changed;
+}
 
-    const changed =
-        audioChanged || labelsChanged;
-
-    if (changed) {
-        node.setDirtyCanvas?.(
-            true,
-            true,
-        );
+function scheduleRetrySync(node) {
+    if (!node) return;
+    node._mmxRuntimeFixTimers = node._mmxRuntimeFixTimers || new Set();
+    for (const delay of [0, 80, 250, 800]) {
+        const timer = setTimeout(() => {
+            node._mmxRuntimeFixTimers?.delete(timer);
+            syncRuntimeFix(node);
+        }, delay);
+        node._mmxRuntimeFixTimers.add(timer);
     }
 }
 
 function syncBeforePaint(node) {
     syncRuntimeFix(node);
-
-    if (
-        typeof queueMicrotask === "function"
-    ) {
-        queueMicrotask(
-            () => syncRuntimeFix(node),
-        );
+    if (typeof queueMicrotask === "function") {
+        queueMicrotask(() => syncRuntimeFix(node));
     }
-
-    if (
-        typeof requestAnimationFrame
-        === "function"
-    ) {
-        requestAnimationFrame(
-            () => syncRuntimeFix(node),
-        );
+    if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => syncRuntimeFix(node));
     }
 }
 
 function wrapDirector(nodeType) {
-    const onNodeCreated =
-        nodeType.prototype.onNodeCreated;
-
+    const onNodeCreated = nodeType.prototype.onNodeCreated;
     nodeType.prototype.onNodeCreated = function () {
-        const result =
-            onNodeCreated?.apply(
-                this,
-                arguments,
-            );
-
+        const result = onNodeCreated?.apply(this, arguments);
         syncBeforePaint(this);
+        scheduleRetrySync(this);
         return result;
     };
 
-    const onConfigure =
-        nodeType.prototype.onConfigure;
-
+    const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function () {
-        const result =
-            onConfigure?.apply(
-                this,
-                arguments,
-            );
-
+        const result = onConfigure?.apply(this, arguments);
         syncBeforePaint(this);
+        scheduleRetrySync(this);
         return result;
     };
 
-    const onConnectionsChange =
-        nodeType.prototype.onConnectionsChange;
-
+    const onConnectionsChange = nodeType.prototype.onConnectionsChange;
     nodeType.prototype.onConnectionsChange = function () {
-        const result =
-            onConnectionsChange?.apply(
-                this,
-                arguments,
-            );
-
+        const result = onConnectionsChange?.apply(this, arguments);
         syncBeforePaint(this);
         return result;
     };
 
-    const onWidgetChanged =
-        nodeType.prototype.onWidgetChanged;
-
+    const onWidgetChanged = nodeType.prototype.onWidgetChanged;
     nodeType.prototype.onWidgetChanged = function () {
-        const result =
-            onWidgetChanged?.apply(
-                this,
-                arguments,
-            );
-
-        // Old continuity refreshes can temporarily restore backend English labels
-        // and can re-disable generated-audio continuation. Correct both before paint.
+        const result = onWidgetChanged?.apply(this, arguments);
         syncBeforePaint(this);
         return result;
     };
 
-    const onDrawBackground =
-        nodeType.prototype.onDrawBackground;
-
-    nodeType.prototype.onDrawBackground = function () {
-        const result =
-            onDrawBackground?.apply(
-                this,
-                arguments,
-            );
-
-        // LiteGraph draws widgets after onDrawBackground. Reassert the locale and
-        // generated-audio availability here so no stale state reaches the screen.
+    const onDrawBackground = nodeType.prototype.onDrawBackground;
+    nodeType.prototype.onDrawBackground = function (ctx) {
+        // Locale refresh and legacy sampling visibility run outside this extension.
+        // Reassert ownership before LiteGraph paints any widget so neither the
+        // old sampling rows nor old-language labels can reach a visible frame.
+        syncRuntimeFix(this);
+        const result = onDrawBackground?.apply(this, arguments);
         syncRuntimeFix(this);
         return result;
+    };
+
+    const onRemoved = nodeType.prototype.onRemoved;
+    nodeType.prototype.onRemoved = function () {
+        releaseTimelineShortcutListener(this?._minimaxEditor, window);
+        for (const timer of this._mmxRuntimeFixTimers || []) clearTimeout(timer);
+        this._mmxRuntimeFixTimers?.clear?.();
+        return onRemoved?.apply(this, arguments);
     };
 }
 
 app.registerExtension({
-    name:
-        "MiniMaxH3.MotionDirector.RuntimeContinuityFix",
+    name: "MiniMaxH3.MotionDirector.RuntimeContinuityFix",
 
-    beforeRegisterNodeDef(
-        nodeType,
-        nodeData,
-    ) {
-        if (
-            nodeData?.name
-            !== DIRECTOR_CLASS
-        ) {
-            return;
-        }
-
+    beforeRegisterNodeDef(nodeType, nodeData) {
+        if (nodeData?.name !== DIRECTOR_CLASS) return;
         wrapDirector(nodeType);
     },
 });
