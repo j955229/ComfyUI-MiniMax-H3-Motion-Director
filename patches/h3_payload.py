@@ -1,33 +1,17 @@
 # Portions derived from ComfyUI-H3-Motion-Context
 # Copyright (C) 2026 NikoDemon80 and contributors
-# Modified for MiniMax H3 Motion Director, 2026-08-09
+# Modified for MiniMax H3 Motion Director, 2026-08-16
 # Licensed under GNU GPL v3.0. See LICENSE and NOTICE.
 
-"""Let keyframes and refs coexist.
+"""Keep MiniMax H3 guide/reference payload rows aligned across ComfyUI versions.
 
-`MiniMaxH3.extra_conds` in comfy/model_base.py fills the payload from two
-independent `if` blocks. The keyframe block sets `cond_video_latents`, then
-the refs block **overwrites** it:
+Older ComfyUI builds overwrite keyframe conditioning latents when reference
+blocks are also present. Current builds already concatenate keyframe and
+reference video/audio latents correctly. The wrapper below is intentionally
+idempotent on current ComfyUI and repairs the old behavior on legacy builds.
 
-    if keyframes is not None:
-        payload["cond_video_latents"] = [kf["latent"] for kf in keyframes]
-    if refs is not None:
-        payload["cond_video_latents"] = [r["latent"] for r in refs if "latent" in r]
-        payload["cond_audio_latents"] = [r["audio_latent"] for r in refs ...]
-
-So attaching an audio-only ref alongside keyframes wipes the keyframe video
-content: an audio-only block has no "latent" key, the list comes back empty,
-and the cond rows the layout built have nothing to fill them.
-
-The layout itself handles the combination fine. Keyframe cond rows are
-emitted first, ref rows second, target rows last, which is exactly the order
-the forward pass expects when it writes rows into the never-denoised slots.
-Only this payload assignment is in the way.
-
-This wrapper re-runs the same logic and concatenates instead, keeping
-keyframe latents first to match the row order. Graphs using only one
-mechanism are unaffected: with no refs the ref list is empty, with no
-keyframes the keyframe list is.
+Payload order must match PackedLayout row order: keyframe video/audio guides
+first, then reference video/audio blocks.
 """
 
 import inspect
@@ -43,17 +27,36 @@ _failure_reason = None
 
 
 def merge_payload_latents(payload, keyframes, refs, frame_count=None):
-    """Keep row payload order identical to PackedLayout: keyframes, then refs."""
+    """Keep conditioning payload order identical to PackedLayout."""
     if not isinstance(payload, dict):
         raise TypeError("MiniMax H3 payload must be a dictionary")
-    kf_video = [kf["latent"] for kf in keyframes if "latent" in kf]
-    ref_video = [ref["latent"] for ref in refs if "latent" in ref]
-    payload["cond_video_latents"] = kf_video + ref_video
-    payload["cond_audio_latents"] = [
+
+    kf_video = [
+        kf["latent"]
+        for kf in keyframes
+        if kf.get("latent") is not None
+    ]
+    ref_video = [
+        ref["latent"]
+        for ref in refs
+        if ref.get("latent") is not None
+    ]
+    kf_audio = [
+        kf["audio_latent"]
+        for kf in keyframes
+        if kf.get("audio_latent") is not None
+    ]
+    ref_audio = [
         ref["audio_latent"]
         for ref in refs
         if ref.get("audio_latent") is not None
     ]
+
+    payload["cond_video_latents"] = kf_video + ref_video
+    payload["cond_audio_latents"] = kf_audio + ref_audio
+
+    # Legacy H3 PackedLayout consumes frame_count. Current H3 ignores this
+    # extra payload field, so retaining it keeps old workflows compatible.
     if frame_count is not None:
         payload["frame_count"] = frame_count
     return payload
@@ -65,7 +68,7 @@ def _patched_extra_conds(self, **kwargs):
     keyframes = kwargs.get("minimax_keyframes", None)
     refs = kwargs.get("minimax_refs", None)
     if not keyframes or not refs:
-        return out  # only one mechanism in play, stock behaviour is correct
+        return out
 
     cond = out.get("minimax_payload", None)
     payload = getattr(cond, "cond", None) if cond is not None else None
@@ -88,13 +91,17 @@ def apply_patch():
     cls = getattr(model_base, "MiniMaxH3", None)
     if cls is None or not hasattr(cls, "extra_conds"):
         _failure_reason = "MiniMaxH3.extra_conds was not found"
-        _LOG.warning("h3_motion_context: %s; keyframes and refs cannot be combined",
-                     _failure_reason)
+        _LOG.warning(
+            "h3_motion_context: %s; keyframes and refs cannot be combined",
+            _failure_reason,
+        )
         return False
     try:
         sig = inspect.signature(cls.extra_conds)
-        if not any(p.kind is inspect.Parameter.VAR_KEYWORD
-                   for p in sig.parameters.values()):
+        if not any(
+            p.kind is inspect.Parameter.VAR_KEYWORD
+            for p in sig.parameters.values()
+        ):
             raise RuntimeError("MiniMaxH3.extra_conds no longer accepts **kwargs")
         source = inspect.getsource(cls.extra_conds)
         required = (
@@ -111,14 +118,18 @@ def apply_patch():
             )
     except Exception as exc:
         _failure_reason = str(exc)
-        _LOG.warning("h3_motion_context: payload compatibility self-test failed "
-                     "(%s), patch not applied", exc)
+        _LOG.warning(
+            "h3_motion_context: payload compatibility self-test failed "
+            "(%s), patch not applied",
+            exc,
+        )
         return False
+
     _orig_extra_conds = cls.extra_conds
     cls.extra_conds = _patched_extra_conds
     _applied = True
     _failure_reason = None
-    _LOG.info("h3_motion_context: keyframe/ref coexistence enabled")
+    _LOG.info("h3_motion_context: keyframe/ref payload compatibility enabled")
     return True
 
 
