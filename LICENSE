@@ -15,7 +15,7 @@ to take away your freedom to share and change the works.  By contrast,
 the GNU General Public License is intended to guarantee your freedom to
 share and change all versions of a program--to make sure it remains free
 software for all its users.  We, the Free Software Foundation, use the
-GNU GPL for most of our software; it applies also to
+GNU General Public License for most of our software; it applies also to
 any other work released this way by its authors.  You can apply it to
 your programs, too.
 
@@ -165,7 +165,7 @@ rights of fair use or other equivalent, as provided by copyright law.
 convey, without conditions so long as your license otherwise remains
 in force.  You may convey covered works to others for the sole purpose
 of having them make modifications exclusively for you, or provide you
-with facilities for running those works, provided that you comply with
+with facilities for running them, provided that you comply with
 the terms of this License in conveying all material for which you do
 not control copyright.  Those thus making or running the covered works
 for you must do so exclusively on your behalf, under your direction
@@ -173,7 +173,7 @@ and control, on terms that prohibit them from making any copies of
 your copyrighted material outside their relationship with you.
 
   Conveying under any other circumstances is permitted solely under
-the conditions stated below.  Sublicensing is not allowed; section 10
+the conditions below.  Sublicensing is not allowed; section 10
 makes it unnecessary.
 
   3. Protecting Users' Legal Rights From Anti-Circumvention Law.
