@@ -5,6 +5,7 @@ from __future__ import annotations
 from ..director.director_inputs import (
     MMX_MOTION_DIR_ASSETS,
     MMX_MOTION_DIR_INPUTS,
+    DynamicDirectorAssetTypes,
     DynamicDirectorInputTypes,
     apply_director_inputs_to_plan,
     pack_assets_payload,
@@ -31,48 +32,13 @@ _INPUT_CATEGORY = "MiniMaxH3/Director"
 
 
 class MiniMaxH3MotionDirectorAssets:
-    """Pack one Director group's complete external media bundle."""
+    """Pack one Director group's mode-specific external media bundle."""
 
     @classmethod
     def INPUT_TYPES(cls):
-        optional = {}
-
-        for index in range(1, 10):
-            optional[f"image_{index}"] = (
-                "IMAGE",
-                {
-                    "tooltip": (
-                        f"Group reference image {index}. R2V/RV2V maps this to "
-                        f"<Picture {index}>. I2V uses image_1. FL2V uses image_1/2 "
-                        "as first/last frame."
-                    ),
-                },
-            )
-
-        for index in range(1, 4):
-            optional[f"video_{index}"] = (
-                "IMAGE",
-                {
-                    "tooltip": (
-                        f"Group reference video {index} as an IMAGE frame batch. "
-                        f"R2V maps this to <Video {index}>."
-                    ),
-                },
-            )
-
-        for index in range(1, 4):
-            optional[f"audio_{index}"] = (
-                "AUDIO",
-                {
-                    "tooltip": (
-                        f"Group standalone reference audio {index}; maps to <Audio {index}>."
-                    ),
-                },
-            )
-
         return {
             "required": {},
-            "optional": optional,
+            "optional": DynamicDirectorAssetTypes(),
         }
 
     RETURN_TYPES = (MMX_MOTION_DIR_ASSETS,)
@@ -80,8 +46,9 @@ class MiniMaxH3MotionDirectorAssets:
     FUNCTION = "pack"
     CATEGORY = _INPUT_CATEGORY
     DESCRIPTION = (
-        "One complete external media bundle for one Director group. "
-        "Slots are one-based: image_1..9, video_1..3, audio_1..3."
+        "Mode-specific media bundle controlled by the connected Director Inputs socket. "
+        "FL2V exposes first/last image only; R2V exposes Picture 1-9, Video 1-3 and Audio 1-3; "
+        "RV2V exposes Picture 1-9 and Audio 1-3."
     )
 
     def pack(self, **kwargs):
@@ -104,7 +71,8 @@ class MiniMaxH3MotionDirectorInputs:
     CATEGORY = _INPUT_CATEGORY
     DESCRIPTION = (
         "Connect this node to MiniMax H3 Motion Director.director_inputs. "
-        "The connected Director controls the mode and number of group sockets."
+        "The Director controls mode and group count: T2V prompt-only, I2V prompt + direct IMAGE, "
+        "FL2V/R2V/RV2V prompt + mode-specific Director Assets."
     )
 
     def pack(self, **kwargs):

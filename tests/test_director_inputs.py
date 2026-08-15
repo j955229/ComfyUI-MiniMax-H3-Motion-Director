@@ -84,6 +84,7 @@ def test_parse_dynamic_input_name_is_one_based_and_mode_specific():
     m = load_module()
     assert m.parse_dynamic_input_name("ref_prompt_1") == ("r2v", "prompt", 1)
     assert m.parse_dynamic_input_name("rv_assets_12") == ("rv2v", "assets", 12)
+    assert m.parse_dynamic_input_name("image_2") == ("i2v", "image", 2)
     assert m.parse_dynamic_input_name("text_prompt_0") is None
     assert m.parse_dynamic_input_name("ref_assets_0") is None
     assert m.parse_dynamic_input_name("text_assets_1") is None
@@ -115,18 +116,25 @@ def test_asset_bundle_uses_one_based_slots():
     assert sorted(bundle["audios"]) == [3]
 
 
-def test_validate_i2v_assets_accepts_only_image_1():
+def test_i2v_does_not_accept_assets_bundle_anymore():
     m = load_module()
-    good = m.pack_assets_payload(image_1=image())
-    m.validate_assets_for_mode("i2v", 1, good)
-
-    bad = m.pack_assets_payload(image_2=image())
+    bundle = m.pack_assets_payload(image_1=image())
     try:
-        m.validate_assets_for_mode("i2v", 1, bad)
+        m.validate_assets_for_mode("i2v", 1, bundle)
     except ValueError as exc:
-        assert "image_1" in str(exc)
+        assert "direct image" in str(exc).lower()
     else:
-        raise AssertionError("i2v image_2 must fail")
+        raise AssertionError("i2v must use the direct image_N socket")
+
+
+def test_fl2v_assets_accept_semantic_first_last_image_names():
+    m = load_module()
+    bundle = m.pack_assets_payload(
+        first_image=image(0.1),
+        last_image=image(0.9),
+    )
+    assert sorted(bundle["images"]) == [1, 2]
+    m.validate_assets_for_mode("fl2v", 1, bundle)
 
 
 def test_validate_rv2v_rejects_extra_reference_video():
@@ -167,7 +175,7 @@ def test_prepare_timeline_rejects_internal_external_media_collision():
         raise AssertionError("internal/external media collision must fail")
 
 
-def test_prepare_i2v_injects_external_image_for_preplan_validation():
+def test_prepare_i2v_injects_direct_external_image_for_preplan_validation():
     m = load_module()
     timeline = {
         "editMode": "segment",
@@ -175,7 +183,7 @@ def test_prepare_i2v_injects_external_image_for_preplan_validation():
     }
     payload = m.pack_director_inputs_payload(
         image_prompt_1="external prompt",
-        image_assets_1=m.pack_assets_payload(image_1=image(0.6)),
+        image_1=image(0.6),
     )
     effective, parsed = m.prepare_timeline_for_director_inputs(
         json.dumps(timeline),
@@ -186,7 +194,8 @@ def test_prepare_i2v_injects_external_image_for_preplan_validation():
     data = json.loads(effective)
     assert data["segments"][0]["prompt"] == "external prompt"
     assert data["segments"][0]["genImage"]["imageB64"].startswith("data:image/png;base64,")
-    assert parsed["groups"][1]["assets_connected"] is True
+    assert parsed["groups"][1]["image_connected"] is True
+    assert parsed["groups"][1]["assets_connected"] is False
 
 
 def test_apply_r2v_assets_maps_one_based_bundle_to_h3_zero_based_refs():
@@ -221,7 +230,7 @@ def test_apply_r2v_assets_maps_one_based_bundle_to_h3_zero_based_refs():
     assert plan.raw["directorExternalInputs"]["mode"] == "r2v"
 
 
-def test_apply_fl2v_assets_maps_image_1_and_2_to_first_last_refs():
+def test_apply_fl2v_assets_maps_first_last_images_to_h3_refs():
     m = load_module()
     seg = types.SimpleNamespace(
         prompt="",
@@ -234,8 +243,8 @@ def test_apply_fl2v_assets_maps_image_1_and_2_to_first_last_refs():
     plan = types.SimpleNamespace(global_task_key="fl2v", segments=[seg], raw={})
     payload = m.pack_director_inputs_payload(
         fl_assets_1=m.pack_assets_payload(
-            image_1=image(0.15),
-            image_2=image(0.85),
+            first_image=image(0.15),
+            last_image=image(0.85),
         )
     )
 
@@ -243,7 +252,7 @@ def test_apply_fl2v_assets_maps_image_1_and_2_to_first_last_refs():
     assert [ref.index for ref in seg.refs] == [0, 1]
 
 
-def test_prompt_only_external_input_does_not_trigger_media_conflict():
+def test_external_prompt_rejects_existing_internal_prompt_instead_of_silent_override():
     m = load_module()
     timeline = {
         "segments": [
@@ -254,6 +263,33 @@ def test_prompt_only_external_input_does_not_trigger_media_conflict():
         ]
     }
     payload = m.pack_director_inputs_payload(ref_prompt_1="outside")
+    try:
+        m.prepare_timeline_for_director_inputs(
+            json.dumps(timeline),
+            task_type="r2v",
+            director_inputs=payload,
+            motion_context_enabled=True,
+        )
+    except ValueError as exc:
+        assert "prompt" in str(exc).lower()
+        assert "group 1" in str(exc).lower()
+    else:
+        raise AssertionError("internal/external prompt collision must fail")
+
+
+def test_external_assets_can_use_internal_prompt_when_external_prompt_is_not_connected():
+    m = load_module()
+    timeline = {
+        "segments": [
+            {
+                "prompt": "inside prompt",
+                "refs": [],
+            }
+        ]
+    }
+    payload = m.pack_director_inputs_payload(
+        ref_assets_1=m.pack_assets_payload(image_1=image())
+    )
     effective, parsed = m.prepare_timeline_for_director_inputs(
         json.dumps(timeline),
         task_type="r2v",
@@ -261,5 +297,5 @@ def test_prompt_only_external_input_does_not_trigger_media_conflict():
         motion_context_enabled=True,
     )
     data = json.loads(effective)
-    assert data["segments"][0]["prompt"] == "outside"
-    assert parsed["groups"][1]["assets_connected"] is False
+    assert data["segments"][0]["prompt"] == "inside prompt"
+    assert parsed["groups"][1]["prompt_connected"] is False

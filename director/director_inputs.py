@@ -42,13 +42,19 @@ _MODE_PREFIX = {
 }
 
 _PREFIX_FOR_MODE = {value: key for key, value in _MODE_PREFIX.items()}
-_ASSET_MODES = frozenset({"i2v", "fl2v", "r2v", "rv2v"})
+_ASSET_MODES = frozenset({"fl2v", "r2v", "rv2v"})
 _DYNAMIC_RE = re.compile(r"^(text|image|fl|ref|video|rv)_(prompt|assets)_([1-9][0-9]*)$")
+_I2V_IMAGE_RE = re.compile(r"^image_([1-9][0-9]*)$")
 _ASSET_RE = re.compile(r"^(image|video|audio)_([1-9][0-9]*)$")
 
 
 def parse_dynamic_input_name(name: str) -> tuple[str, str, int] | None:
-    match = _DYNAMIC_RE.fullmatch(str(name or ""))
+    text = str(name or "")
+    image_match = _I2V_IMAGE_RE.fullmatch(text)
+    if image_match:
+        return "i2v", "image", int(image_match.group(1))
+
+    match = _DYNAMIC_RE.fullmatch(text)
     if not match:
         return None
     prefix, kind, raw_index = match.groups()
@@ -65,7 +71,27 @@ def dynamic_input_spec(name: str):
     _mode, kind, _index = parsed
     if kind == "prompt":
         return ("STRING", {"forceInput": True})
+    if kind == "image":
+        return ("IMAGE",)
     return (MMX_MOTION_DIR_ASSETS,)
+
+
+def dynamic_asset_input_spec(name: str):
+    text = str(name or "")
+    if text in {"first_image", "last_image"}:
+        return ("IMAGE",)
+    match = _ASSET_RE.fullmatch(text)
+    if not match:
+        return None
+    kind, raw_index = match.groups()
+    index = int(raw_index)
+    if kind == "image" and index <= 9:
+        return ("IMAGE",)
+    if kind == "video" and index <= 3:
+        return ("IMAGE",)
+    if kind == "audio" and index <= 3:
+        return ("AUDIO",)
+    return None
 
 
 def _as_image_batch(value: Any, *, label: str) -> torch.Tensor:
@@ -98,9 +124,22 @@ def pack_assets_payload(**kwargs) -> dict[str, Any]:
     videos: dict[int, torch.Tensor] = {}
     audios: dict[int, dict] = {}
 
+    semantic_images = {
+        "first_image": 1,
+        "last_image": 2,
+    }
+
     for name, value in kwargs.items():
         if value is None:
             continue
+
+        if name in semantic_images:
+            index = semantic_images[name]
+            if index in images:
+                raise ValueError(f"Director Assets received duplicate image slot {index}.")
+            images[index] = _as_image_batch(value, label=name)[:1]
+            continue
+
         match = _ASSET_RE.fullmatch(str(name))
         if not match:
             continue
@@ -109,6 +148,8 @@ def pack_assets_payload(**kwargs) -> dict[str, Any]:
         if kind == "image":
             if index > 9:
                 raise ValueError("Director Assets supports image_1 through image_9 only.")
+            if index in images:
+                raise ValueError(f"Director Assets received duplicate image slot {index}.")
             images[index] = _as_image_batch(value, label=name)[:1]
         elif kind == "video":
             if index > 3:
@@ -167,6 +208,8 @@ def pack_director_inputs_payload(**kwargs) -> dict[str, Any]:
             {
                 "prompt_connected": False,
                 "prompt": "",
+                "image_connected": False,
+                "image": None,
                 "assets_connected": False,
                 "assets": None,
             },
@@ -174,6 +217,9 @@ def pack_director_inputs_payload(**kwargs) -> dict[str, Any]:
         if kind == "prompt":
             group["prompt_connected"] = True
             group["prompt"] = "" if value is None else str(value)
+        elif kind == "image":
+            group["image_connected"] = True
+            group["image"] = _as_image_batch(value, label=name)[:1]
         else:
             group["assets_connected"] = True
             group["assets"] = _normalize_assets_payload(value)
@@ -206,11 +252,10 @@ def validate_assets_for_mode(mode: str, group_index: int, bundle: dict[str, Any]
         raise ValueError(f"Group {group_index}: {mode} does not accept an external Assets bundle.")
 
     if mode == "i2v":
-        if images != [1] or videos or audios:
-            raise ValueError(
-                f"Group {group_index}: i2v external Assets accepts image_1 only."
-            )
-        return
+        raise ValueError(
+            f"Group {group_index}: i2v does not use Director Assets; "
+            "connect the direct image_N socket on Director Inputs."
+        )
 
     if mode == "fl2v":
         if any(index not in {1, 2} for index in images) or videos or audios:
@@ -314,6 +359,25 @@ def _raw_group_has_media(timeline: dict, group_index: int, mode: str) -> bool:
     return False
 
 
+def _raw_group_has_prompt(timeline: dict, group_index: int, mode: str) -> bool:
+    index = group_index - 1
+    mode = resolve_task_key(mode)
+    segments = list(timeline.get("segments") or [])
+    shots = list(timeline.get("shots") or [])
+
+    if mode == "fl2v" and 0 <= index < len(shots):
+        shot = shots[index]
+        if isinstance(shot, dict) and str(shot.get("prompt") or "").strip():
+            return True
+
+    if 0 <= index < len(segments):
+        raw = segments[index]
+        if isinstance(raw, dict) and str(raw.get("prompt") or "").strip():
+            return True
+
+    return False
+
+
 def tensor_to_png_data_url(tensor: torch.Tensor) -> tuple[str, int, int]:
     frame = _as_image_batch(tensor, label="external image")[:1][0]
     array = (
@@ -351,9 +415,16 @@ def _normalize_director_inputs(value: Any) -> dict[str, Any]:
         group = {
             "prompt_connected": bool(raw_group.get("prompt_connected")),
             "prompt": str(raw_group.get("prompt") or ""),
+            "image_connected": bool(raw_group.get("image_connected")),
+            "image": raw_group.get("image"),
             "assets_connected": bool(raw_group.get("assets_connected")),
             "assets": None,
         }
+        if group["image_connected"]:
+            group["image"] = _as_image_batch(
+                group["image"],
+                label=f"Group {index} external image",
+            )[:1]
         if group["assets_connected"]:
             group["assets"] = _normalize_assets_payload(raw_group.get("assets"))
         groups[index] = group
@@ -403,29 +474,33 @@ def prepare_timeline_for_director_inputs(
             raise ValueError(f"Director Group {group_index} timeline entry is invalid.")
 
         if group["prompt_connected"]:
+            if _raw_group_has_prompt(timeline, group_index, mode):
+                raise ValueError(
+                    f"Group {group_index}: Director internal prompt already exists. "
+                    "Clear the internal prompt before connecting an external prompt."
+                )
             raw["prompt"] = group["prompt"]
+            if mode == "fl2v":
+                shots = timeline.get("shots") or []
+                if 0 <= group_index - 1 < len(shots) and isinstance(shots[group_index - 1], dict):
+                    shots[group_index - 1]["prompt"] = group["prompt"]
 
-        if not group["assets_connected"]:
-            continue
-        bundle = group["assets"] or {"images": {}, "videos": {}, "audios": {}}
-        validate_assets_for_mode(mode, group_index, bundle)
-        if _raw_group_has_media(timeline, group_index, mode):
+        if group["image_connected"] and group["assets_connected"]:
             raise ValueError(
-                f"Group {group_index}: Director internal media already exists. "
-                "Remove the internal image/video/audio before connecting external Assets."
+                f"Group {group_index}: connect either the direct image input or Assets, not both."
             )
 
-        # I2V plan construction requires its starting image before a DirectorPlan
-        # exists.  Inject only a transient in-memory PNG into the execution copy
-        # of timeline_data; workflow serialization remains untouched.
-        if mode == "i2v":
-            image = bundle["images"].get(1)
-            if image is None:
-                if group_index == 1 or not motion_context_enabled:
-                    raise ValueError(
-                        f"Group {group_index}: i2v external Assets requires image_1."
-                    )
-                continue
+        if group["image_connected"]:
+            if mode != "i2v":
+                raise ValueError(
+                    f"Group {group_index}: direct image_N input is only valid for i2v."
+                )
+            if _raw_group_has_media(timeline, group_index, mode):
+                raise ValueError(
+                    f"Group {group_index}: Director internal media already exists. "
+                    "Remove the internal image before connecting the external image."
+                )
+            image = group["image"]
             data_url, width, height = tensor_to_png_data_url(image)
             raw["genImage"] = {
                 "imageB64": data_url,
@@ -434,6 +509,15 @@ def prepare_timeline_for_director_inputs(
                 "height": height,
             }
             raw["imageFile"] = ""
+
+        if group["assets_connected"]:
+            bundle = group["assets"] or {"images": {}, "videos": {}, "audios": {}}
+            validate_assets_for_mode(mode, group_index, bundle)
+            if _raw_group_has_media(timeline, group_index, mode):
+                raise ValueError(
+                    f"Group {group_index}: Director internal media already exists. "
+                    "Remove the internal image/video/audio before connecting external Assets."
+                )
 
     return json.dumps(timeline, ensure_ascii=False), payload
 
@@ -488,8 +572,21 @@ def apply_director_inputs_to_plan(plan, director_inputs: Any):
         group_fp: dict[str, Any] = {
             "prompt_connected": bool(group["prompt_connected"]),
             "prompt": group["prompt"] if group["prompt_connected"] else None,
+            "image_connected": bool(group["image_connected"]),
             "assets_connected": bool(group["assets_connected"]),
         }
+
+        if group["image_connected"]:
+            if mode != "i2v":
+                raise ValueError(
+                    f"Group {group_index}: direct image_N input is only valid for i2v."
+                )
+            image = _as_image_batch(
+                group["image"],
+                label=f"Group {group_index} external image",
+            )[:1]
+            seg.source_clip = image
+            group_fp["image"] = tensor_fingerprint(image)
 
         if group["assets_connected"]:
             bundle = group["assets"] or {"images": {}, "videos": {}, "audios": {}}
@@ -498,9 +595,7 @@ def apply_director_inputs_to_plan(plan, director_inputs: Any):
             videos = bundle.get("videos") or {}
             audios = bundle.get("audios") or {}
 
-            if mode == "i2v":
-                seg.source_clip = _as_image_batch(images[1], label=f"Group {group_index} image_1")[:1]
-            elif mode == "fl2v":
+            if mode == "fl2v":
                 refs = []
                 if 1 in images:
                     refs.append(SegmentRef(index=0, tensor=images[1][:1], asset_id=f"external-g{group_index}-first"))
@@ -596,6 +691,32 @@ class DynamicDirectorInputTypes(dict):
 
     def get(self, key, default=None):
         spec = dynamic_input_spec(str(key))
+        return default if spec is None else spec
+
+    def __iter__(self):
+        return iter(())
+
+    def keys(self):
+        return ().__iter__()
+
+    def items(self):
+        return ().__iter__()
+
+
+class DynamicDirectorAssetTypes(dict):
+    """Mapping accepted by ComfyUI for frontend-created Assets socket names."""
+
+    def __contains__(self, key):
+        return dynamic_asset_input_spec(str(key)) is not None
+
+    def __getitem__(self, key):
+        spec = dynamic_asset_input_spec(str(key))
+        if spec is None:
+            raise KeyError(key)
+        return spec
+
+    def get(self, key, default=None):
+        spec = dynamic_asset_input_spec(str(key))
         return default if spec is None else spec
 
     def __iter__(self):

@@ -67,7 +67,11 @@ def load_module():
     class DynamicDirectorInputTypes(dict):
         pass
 
+    class DynamicDirectorAssetTypes(dict):
+        pass
+
     helper.DynamicDirectorInputTypes = DynamicDirectorInputTypes
+    helper.DynamicDirectorAssetTypes = DynamicDirectorAssetTypes
     helper.pack_assets_payload = lambda **kwargs: kwargs
     helper.pack_director_inputs_payload = lambda **kwargs: kwargs
     helper.prepare_timeline_for_director_inputs = lambda timeline_data, **kwargs: (timeline_data, kwargs.get("director_inputs"))
@@ -118,23 +122,14 @@ def test_director_schema_replaces_old_group_inputs_and_appends_new_socket_last()
     assert optional["director_inputs"][0] == "MMX_MOTION_DIR_INPUTS"
 
 
-def test_assets_node_has_fixed_one_based_9_3_3_slots():
+def test_assets_node_uses_dynamic_optional_mapping():
     m = load_module()
     schema = m.MiniMaxH3MotionDirectorAssets.INPUT_TYPES()
-    optional = schema["optional"]
 
-    assert [name for name in optional if name.startswith("image_")] == [
-        f"image_{i}" for i in range(1, 10)
-    ]
-    assert [name for name in optional if name.startswith("video_")] == [
-        f"video_{i}" for i in range(1, 4)
-    ]
-    assert [name for name in optional if name.startswith("audio_")] == [
-        f"audio_{i}" for i in range(1, 4)
-    ]
-    assert "image_0" not in optional
-    assert "video_0" not in optional
-    assert "audio_0" not in optional
+    assert schema["required"] == {}
+    assert isinstance(schema["optional"], m.DynamicDirectorAssetTypes)
+    assert m.MiniMaxH3MotionDirectorAssets.RETURN_TYPES == ("MMX_MOTION_DIR_ASSETS",)
+    assert m.MiniMaxH3MotionDirectorAssets.RETURN_NAMES == ("assets",)
 
 
 def test_inputs_node_exposes_dynamic_optional_mapping_and_single_bundle_output():

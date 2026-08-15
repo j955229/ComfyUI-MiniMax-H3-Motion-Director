@@ -1,6 +1,8 @@
 export const DIRECTOR_INPUTS_TYPE = "MMX_MOTION_DIR_INPUTS";
 export const DIRECTOR_ASSETS_TYPE = "MMX_MOTION_DIR_ASSETS";
 export const DIRECTOR_ASSETS_BLOCKED_TYPE = "MMX_MOTION_DIR_ASSETS_BLOCKED";
+export const DIRECTOR_IMAGE_BLOCKED_TYPE = "MMX_MOTION_DIR_IMAGE_BLOCKED";
+export const DIRECTOR_PROMPT_BLOCKED_TYPE = "MMX_MOTION_DIR_PROMPT_BLOCKED";
 
 const MODE_PREFIX = Object.freeze({
     t2v: "text",
@@ -10,8 +12,6 @@ const MODE_PREFIX = Object.freeze({
     v2v: "video",
     rv2v: "rv",
 });
-
-const MODES_WITH_ASSETS = new Set(["i2v", "fl2v", "r2v", "rv2v"]);
 
 export function resolveDirectorTaskKey(value) {
     const text = String(value || "").trim().toLowerCase();
@@ -58,7 +58,15 @@ export function desiredDirectorInputSockets(mode, groupCount) {
             group,
             type: "STRING",
         });
-        if (MODES_WITH_ASSETS.has(task)) {
+
+        if (task === "i2v") {
+            out.push({
+                name: `image_${group}`,
+                kind: "image",
+                group,
+                type: "IMAGE",
+            });
+        } else if (["fl2v", "r2v", "rv2v"].includes(task)) {
             out.push({
                 name: `${prefix}_assets_${group}`,
                 kind: "assets",
@@ -68,6 +76,33 @@ export function desiredDirectorInputSockets(mode, groupCount) {
         }
     }
     return out;
+}
+
+export function desiredAssetSockets(mode) {
+    const task = resolveDirectorTaskKey(mode);
+    if (task === "fl2v") {
+        return [
+            { name: "first_image", type: "IMAGE" },
+            { name: "last_image", type: "IMAGE" },
+        ];
+    }
+
+    if (task === "r2v") {
+        return [
+            ...Array.from({ length: 9 }, (_, index) => ({ name: `image_${index + 1}`, type: "IMAGE" })),
+            ...Array.from({ length: 3 }, (_, index) => ({ name: `video_${index + 1}`, type: "IMAGE" })),
+            ...Array.from({ length: 3 }, (_, index) => ({ name: `audio_${index + 1}`, type: "AUDIO" })),
+        ];
+    }
+
+    if (task === "rv2v") {
+        return [
+            ...Array.from({ length: 9 }, (_, index) => ({ name: `image_${index + 1}`, type: "IMAGE" })),
+            ...Array.from({ length: 3 }, (_, index) => ({ name: `audio_${index + 1}`, type: "AUDIO" })),
+        ];
+    }
+
+    return [];
 }
 
 function nonEmpty(value) {
@@ -132,11 +167,37 @@ export function timelineGroupHasInternalMedia(timeline, groupNumber, mode) {
     return false;
 }
 
-export function externalAssetGroupsFromInputs(inputs = []) {
+export function timelineGroupHasInternalPrompt(timeline, groupNumber, mode) {
+    const data = parseDirectorTimeline(timeline);
+    const task = resolveDirectorTaskKey(mode);
+    const index = Math.max(0, (Number.parseInt(groupNumber, 10) || 1) - 1);
+
+    if (task === "fl2v") {
+        const shot = Array.isArray(data.shots) ? (data.shots[index] || {}) : {};
+        if (nonEmpty(shot.prompt)) return true;
+    }
+
+    const segment = Array.isArray(data.segments) ? (data.segments[index] || {}) : {};
+    return nonEmpty(segment.prompt);
+}
+
+export function externalMediaGroupsFromInputs(inputs = []) {
     const groups = new Set();
     for (const input of inputs || []) {
         if (input?.link == null) continue;
-        const match = String(input.name || "").match(/_(?:assets)_([1-9][0-9]*)$/);
+        const name = String(input.name || "");
+        let match = name.match(/_assets_([1-9][0-9]*)$/);
+        if (!match) match = name.match(/^image_([1-9][0-9]*)$/);
+        if (match) groups.add(Number.parseInt(match[1], 10));
+    }
+    return groups;
+}
+
+export function externalPromptGroupsFromInputs(inputs = []) {
+    const groups = new Set();
+    for (const input of inputs || []) {
+        if (input?.link == null) continue;
+        const match = String(input.name || "").match(/_prompt_([1-9][0-9]*)$/);
         if (match) groups.add(Number.parseInt(match[1], 10));
     }
     return groups;

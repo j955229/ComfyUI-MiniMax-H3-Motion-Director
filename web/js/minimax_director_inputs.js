@@ -2,30 +2,40 @@ import { app } from "../../scripts/app.js";
 import {
     DIRECTOR_ASSETS_BLOCKED_TYPE,
     DIRECTOR_ASSETS_TYPE,
+    DIRECTOR_IMAGE_BLOCKED_TYPE,
+    DIRECTOR_PROMPT_BLOCKED_TYPE,
+    desiredAssetSockets,
     desiredDirectorInputSockets,
     directorGroupCount,
-    externalAssetGroupsFromInputs,
+    externalMediaGroupsFromInputs,
+    externalPromptGroupsFromInputs,
     parseDirectorTimeline,
     resolveDirectorTaskKey,
     timelineGroupHasInternalMedia,
-} from "./minimax_director_inputs_core.mjs?boot=unified_inputs_v1";
+    timelineGroupHasInternalPrompt,
+} from "./minimax_director_inputs_core.mjs?boot=unified_inputs_v2";
 
 const DIRECTOR_CLASS = "MiniMaxH3MotionDirector";
 const INPUTS_CLASS = "MiniMaxH3MotionDirectorInputs";
+const ASSETS_CLASS = "MiniMaxH3MotionDirectorAssets";
 const STYLE_ID = "mmx-unified-director-inputs-style";
 const SYNC_MS = 250;
+const LEGACY_DIRECTOR_INPUTS = new Set(["i2v_groups", "r2v_groups"]);
 
 function ensureStyles() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
-.mmx-external-assets-locked{position:relative!important;box-shadow:inset 0 0 0 1px rgba(79,255,143,.38)!important}
-.mmx-external-assets-badge{position:absolute;right:8px;top:8px;z-index:40;pointer-events:none;padding:3px 7px;border:1px solid #4b765b;border-radius:999px;background:rgba(20,50,31,.94);color:#7dffa8;font:10px/1.2 ui-sans-serif,system-ui,sans-serif;white-space:nowrap}
-.mmx-external-assets-locked .bd-ref,
-.mmx-external-assets-locked .bd-ref-audio,
-.mmx-external-assets-locked .bd-r2v-thumb,
-.mmx-external-assets-locked .bd-fl2v-slot{filter:saturate(.45);opacity:.58}
+.mmx-external-media-locked{position:relative!important;box-shadow:inset 0 0 0 1px rgba(79,255,143,.38)!important}
+.mmx-external-prompt-locked{position:relative!important}
+.mmx-external-lock-badge{position:absolute;right:8px;top:8px;z-index:40;pointer-events:none;padding:3px 7px;border:1px solid #4b765b;border-radius:999px;background:rgba(20,50,31,.94);color:#7dffa8;font:10px/1.2 ui-sans-serif,system-ui,sans-serif;white-space:nowrap}
+.mmx-external-prompt-badge{top:31px;border-color:#536b8a;background:rgba(25,39,58,.94);color:#9dcbff}
+.mmx-external-media-locked .bd-ref,
+.mmx-external-media-locked .bd-ref-audio,
+.mmx-external-media-locked .bd-r2v-thumb,
+.mmx-external-media-locked .bd-fl2v-slot{filter:saturate(.45);opacity:.58}
+.mmx-external-prompt-locked .bd-batch-prompts textarea{opacity:.48;cursor:not-allowed}
 `;
     document.head.appendChild(style);
 }
@@ -61,18 +71,15 @@ function isPassthroughNode(node) {
     return false;
 }
 
-function downstreamDirectors(inputsNode) {
-    const graph = inputsNode?.graph || app.graph || app.canvas?.graph;
+function walkDownstream(startNode, accept) {
+    const graph = startNode?.graph || app.graph || app.canvas?.graph;
     if (!graph) return [];
-
     const queue = [];
-    for (const output of inputsNode.outputs || []) {
+    for (const output of startNode.outputs || []) {
         for (const linkId of output?.links || []) queue.push(linkId);
     }
-
     const visitedLinks = new Set();
-    const directors = new Map();
-
+    const found = [];
     while (queue.length) {
         const linkId = queue.shift();
         if (linkId == null || visitedLinks.has(linkId)) continue;
@@ -81,20 +88,37 @@ function downstreamDirectors(inputsNode) {
         if (!record) continue;
         const target = graph.getNodeById?.(record.targetId);
         if (!target) continue;
-
-        if (nodeClass(target) === DIRECTOR_CLASS) {
-            const input = target.inputs?.[record.targetSlot];
-            if (input?.name === "director_inputs") directors.set(target.id, target);
+        const accepted = accept(target, record);
+        if (accepted) {
+            found.push(accepted);
             continue;
         }
-
         if (!isPassthroughNode(target)) continue;
         for (const output of target.outputs || []) {
             for (const nextLink of output?.links || []) queue.push(nextLink);
         }
     }
+    return found;
+}
 
-    return [...directors.values()];
+function downstreamDirectors(inputsNode) {
+    return walkDownstream(inputsNode, (target, record) => {
+        if (nodeClass(target) !== DIRECTOR_CLASS) return null;
+        const input = target.inputs?.[record.targetSlot];
+        return input?.name === "director_inputs" ? target : null;
+    });
+}
+
+function downstreamAssetTargets(assetNode) {
+    return walkDownstream(assetNode, (target, record) => {
+        if (nodeClass(target) !== INPUTS_CLASS) return null;
+        const input = target.inputs?.[record.targetSlot];
+        const name = String(input?.name || "");
+        const match = name.match(/^(fl|ref|rv)_assets_([1-9][0-9]*)$/);
+        if (!match) return null;
+        const mode = { fl: "fl2v", ref: "r2v", rv: "rv2v" }[match[1]];
+        return { inputsNode: target, inputName: name, mode, group: Number(match[2]) };
+    });
 }
 
 function directorWidgetValue(director, name) {
@@ -112,6 +136,19 @@ function directorTimeline(director) {
     return parseDirectorTimeline(directorWidgetValue(director, "timeline_data"));
 }
 
+function stripLegacyDirectorInputs(node) {
+    if (!node?.inputs?.length) return false;
+    let changed = false;
+    for (let index = node.inputs.length - 1; index >= 0; index -= 1) {
+        if (!LEGACY_DIRECTOR_INPUTS.has(String(node.inputs[index]?.name || ""))) continue;
+        if (node.inputs[index]?.link != null) node.disconnectInput?.(index);
+        node.removeInput?.(index);
+        changed = true;
+    }
+    if (changed) node.setDirtyCanvas?.(true, true);
+    return changed;
+}
+
 function desiredShapeMatches(node, desired) {
     const inputs = node?.inputs || [];
     if (inputs.length !== desired.length) return false;
@@ -127,128 +164,176 @@ function disconnectAndRemoveAllInputs(node) {
 }
 
 function syncInputShape(node, desired) {
-    if (!desiredShapeMatches(node, desired)) {
-        const existingNames = (node.inputs || []).map((input) => input?.name);
-        const desiredNames = desired.map((spec) => spec.name);
+    if (desiredShapeMatches(node, desired)) return;
+    const existingNames = (node.inputs || []).map((input) => input?.name);
+    const desiredNames = desired.map((spec) => spec.name);
+    const common = Math.min(existingNames.length, desiredNames.length);
+    const sharedPrefix = Array.from({ length: common }, (_, index) => index)
+        .every((index) => existingNames[index] === desiredNames[index]);
 
-        // Group-count changes append/remove sockets and should preserve existing
-        // links.  A mode change renames the whole contract, so disconnect the
-        // old mode rather than silently reinterpreting a cable as another type.
-        const common = Math.min(existingNames.length, desiredNames.length);
-        const sharedPrefix = Array.from({ length: common }, (_, index) => index)
-            .every((index) => existingNames[index] === desiredNames[index]);
-
-        if (!sharedPrefix) {
-            disconnectAndRemoveAllInputs(node);
-        } else {
-            while ((node.inputs?.length || 0) > desired.length) {
-                const index = node.inputs.length - 1;
-                if (node.inputs[index]?.link != null) node.disconnectInput?.(index);
-                node.removeInput?.(index);
-            }
+    if (!sharedPrefix) {
+        disconnectAndRemoveAllInputs(node);
+    } else {
+        while ((node.inputs?.length || 0) > desired.length) {
+            const index = node.inputs.length - 1;
+            if (node.inputs[index]?.link != null) node.disconnectInput?.(index);
+            node.removeInput?.(index);
         }
+    }
 
-        while ((node.inputs?.length || 0) < desired.length) {
-            const spec = desired[node.inputs.length];
-            node.addInput?.(spec.name, spec.type);
-        }
+    while ((node.inputs?.length || 0) < desired.length) {
+        const spec = desired[node.inputs.length];
+        node.addInput?.(spec.name, spec.type);
     }
 }
 
-function resizeInputsNode(node) {
+function resizeNode(node, minWidth = 330) {
     const computed = node.computeSize?.();
     if (!computed) return;
     node.setSize?.([
-        Math.max(330, Number(node.size?.[0]) || Number(computed[0]) || 330),
+        Math.max(minWidth, Number(node.size?.[0]) || Number(computed[0]) || minWidth),
         Number(computed[1]) || Number(node.size?.[1]) || 100,
     ]);
     node.setDirtyCanvas?.(true, true);
 }
 
-function clearLockBadges(root) {
-    root?.querySelectorAll?.(".mmx-external-assets-locked")?.forEach((card) => {
-        card.classList.remove("mmx-external-assets-locked");
-        card.querySelector?.(":scope > .mmx-external-assets-badge")?.remove?.();
-    });
+function restorePromptElement(element) {
+    if (!element || element.dataset?.mmxExternalPromptDisabled !== "1") return;
+    element.disabled = false;
+    delete element.dataset.mmxExternalPromptDisabled;
 }
 
-function addLockBadge(card) {
-    if (!card || card.querySelector?.(":scope > .mmx-external-assets-badge")) return;
+function disablePromptElement(element) {
+    if (!element) return;
+    element.disabled = true;
+    element.dataset.mmxExternalPromptDisabled = "1";
+}
+
+function clearDirectorLocks(director) {
+    const editor = director?._minimaxEditor;
+    const root = editor?.container || editor?.root;
+    root?.querySelectorAll?.(".mmx-external-media-locked, .mmx-external-prompt-locked")?.forEach((card) => {
+        card.classList.remove("mmx-external-media-locked", "mmx-external-prompt-locked");
+        card.querySelectorAll?.(":scope > .mmx-external-lock-badge")?.forEach((badge) => badge.remove?.());
+        card.querySelectorAll?.("textarea[data-mmx-external-prompt-disabled='1']")?.forEach(restorePromptElement);
+    });
+    restorePromptElement(editor?.fl2vUi?.prompt);
+}
+
+function addBadge(card, text, extraClass = "") {
+    if (!card) return;
     const badge = document.createElement("div");
-    badge.className = "mmx-external-assets-badge";
-    badge.textContent = "External Assets · 外部素材";
+    badge.className = `mmx-external-lock-badge ${extraClass}`.trim();
+    badge.textContent = text;
     card.appendChild(badge);
 }
 
-function applyExternalAssetLocks(director, oneBasedGroups) {
-    const groups = new Set([...oneBasedGroups].map((value) => Number(value)).filter((value) => value > 0));
-    director._mmxExternalAssetLocks = groups;
+function applyExternalLocks(director, mediaGroups, promptGroups, mode) {
+    const media = new Set([...mediaGroups].map(Number).filter((value) => value > 0));
+    const prompts = new Set([...promptGroups].map(Number).filter((value) => value > 0));
+    director._mmxExternalMediaLocks = media;
+    director._mmxExternalPromptLocks = prompts;
 
     const editor = director?._minimaxEditor;
     const root = editor?.container || editor?.root;
     if (!root?.querySelectorAll) return;
 
-    clearLockBadges(root);
+    clearDirectorLocks(director);
 
     for (const card of root.querySelectorAll(".bd-batch-card[data-segment-index]")) {
         const group = Number(card.dataset.segmentIndex) + 1;
-        if (!groups.has(group)) continue;
-        card.classList.add("mmx-external-assets-locked");
-        addLockBadge(card);
+        if (media.has(group)) {
+            card.classList.add("mmx-external-media-locked");
+            addBadge(card, "External Media · 外部素材");
+        }
+        if (prompts.has(group)) {
+            card.classList.add("mmx-external-prompt-locked");
+            addBadge(card, "External Prompt · 外部提示词", "mmx-external-prompt-badge");
+            card.querySelectorAll?.(".bd-batch-prompts textarea")?.forEach(disablePromptElement);
+        }
     }
 
     for (const card of root.querySelectorAll(".bd-fl2v-shot[data-shot-index]")) {
         const group = Number(card.dataset.shotIndex) + 1;
-        if (!groups.has(group)) continue;
-        card.classList.add("mmx-external-assets-locked");
-        addLockBadge(card);
+        if (media.has(group)) {
+            card.classList.add("mmx-external-media-locked");
+            addBadge(card, "External Media · 外部素材");
+        }
+        if (prompts.has(group)) {
+            card.classList.add("mmx-external-prompt-locked");
+            addBadge(card, "External Prompt · 外部提示词", "mmx-external-prompt-badge");
+        }
+    }
+
+    if (resolveDirectorTaskKey(mode) === "fl2v") {
+        const selectedGroup = Number(editor?.selectedIndex ?? -1) + 1;
+        if (prompts.has(selectedGroup)) disablePromptElement(editor?.fl2vUi?.prompt);
     }
 }
 
-function syncBlockedAssetSockets(node, director, desired, timeline, mode) {
+function syncBlockedSockets(node, director, desired, timeline, mode) {
     for (let index = 0; index < desired.length; index += 1) {
         const spec = desired[index];
         const input = node.inputs?.[index];
         if (!input) continue;
-
         input.name = spec.name;
         input.label = spec.name;
 
-        if (spec.kind !== "assets") {
-            input.type = spec.type;
+        if (spec.kind === "prompt") {
+            const internalPrompt = timelineGroupHasInternalPrompt(timeline, spec.group, mode);
+            if (internalPrompt && input.link != null) {
+                console.warn(`[MiniMax H3 Motion Director] Group ${spec.group}: external prompt disconnected because Director internal prompt already exists.`);
+                node.disconnectInput?.(index);
+            }
+            input.type = internalPrompt ? DIRECTOR_PROMPT_BLOCKED_TYPE : "STRING";
+            if (internalPrompt) input.label = `${spec.name}  [Director 内已有提示词]`;
             continue;
         }
 
         const internalMedia = timelineGroupHasInternalMedia(timeline, spec.group, mode);
         if (internalMedia && input.link != null) {
-            console.warn(
-                `[MiniMax H3 Motion Director] Group ${spec.group}: external Assets disconnected because Director internal media already exists.`,
-            );
+            console.warn(`[MiniMax H3 Motion Director] Group ${spec.group}: external media disconnected because Director internal media already exists.`);
             node.disconnectInput?.(index);
         }
 
-        if (internalMedia) {
-            input.type = DIRECTOR_ASSETS_BLOCKED_TYPE;
-            input.label = `${spec.name}  [Director 内已有素材]`;
+        if (spec.kind === "image") {
+            input.type = internalMedia ? DIRECTOR_IMAGE_BLOCKED_TYPE : "IMAGE";
+            if (internalMedia) input.label = `${spec.name}  [Director 内已有图片]`;
         } else {
-            input.type = DIRECTOR_ASSETS_TYPE;
+            input.type = internalMedia ? DIRECTOR_ASSETS_BLOCKED_TYPE : DIRECTOR_ASSETS_TYPE;
+            if (internalMedia) input.label = `${spec.name}  [Director 内已有素材]`;
         }
     }
 
-    const externalGroups = externalAssetGroupsFromInputs(node.inputs || []);
-    applyExternalAssetLocks(director, externalGroups);
+    applyExternalLocks(
+        director,
+        externalMediaGroupsFromInputs(node.inputs || []),
+        externalPromptGroupsFromInputs(node.inputs || []),
+        mode,
+    );
+}
+
+function boundDirector(node) {
+    const graph = node?.graph || app.graph || app.canvas?.graph;
+    return node?._mmxBoundDirectorId != null
+        ? graph?.getNodeById?.(node._mmxBoundDirectorId)
+        : null;
+}
+
+function cleanupInputsNode(node) {
+    const director = boundDirector(node);
+    if (director) clearDirectorLocks(director);
+    node._mmxBoundDirectorId = null;
 }
 
 function syncInputsNode(node) {
     const directors = downstreamDirectors(node);
-    if (!directors.length) return;
-
-    const director = directors[0];
-    if (directors.length > 1) {
-        console.warn(
-            "[MiniMax H3 Motion Director] One Director Inputs node is connected to multiple Directors; the first Director controls its dynamic sockets.",
-        );
+    if (!directors.length) {
+        cleanupInputsNode(node);
+        return;
     }
+    const director = directors[0];
+    stripLegacyDirectorInputs(director);
 
     const mode = directorMode(director);
     const timeline = directorTimeline(director);
@@ -256,27 +341,44 @@ function syncInputsNode(node) {
     const desired = desiredDirectorInputSockets(mode, count);
 
     syncInputShape(node, desired);
-    syncBlockedAssetSockets(node, director, desired, timeline, mode);
+    syncBlockedSockets(node, director, desired, timeline, mode);
 
     node._mmxBoundDirectorId = director.id;
     node._mmxDirectorMode = mode;
     node._mmxDirectorGroupCount = count;
-    resizeInputsNode(node);
+    resizeNode(node);
 }
 
-function scheduleSync(node, delay = 0) {
-    clearTimeout(node?._mmxInputsSyncTimeout);
+function syncAssetsNode(node) {
+    const targets = downstreamAssetTargets(node);
+    if (!targets.length) return;
+    const target = targets[0];
+    if (targets.length > 1) {
+        console.warn("[MiniMax H3 Motion Director] One Director Assets node is connected to multiple asset sockets; the first socket controls its profile.");
+    }
+    const mode = target.inputsNode?._mmxDirectorMode || target.mode;
+    if (node._mmxAssetMode && node._mmxAssetMode !== mode) {
+        disconnectAndRemoveAllInputs(node);
+    }
+    syncInputShape(node, desiredAssetSockets(mode));
+    node._mmxAssetMode = mode;
+    node._mmxAssetGroup = target.group;
+    resizeNode(node, 300);
+}
+
+function scheduleSync(node, fn, delay = 0) {
+    clearTimeout(node?._mmxUnifiedSyncTimeout);
     if (!node) return;
-    node._mmxInputsSyncTimeout = setTimeout(() => {
-        node._mmxInputsSyncTimeout = null;
-        syncInputsNode(node);
+    node._mmxUnifiedSyncTimeout = setTimeout(() => {
+        node._mmxUnifiedSyncTimeout = null;
+        fn(node);
     }, delay);
 }
 
 function targetInsideLockedMedia(target) {
     const element = target?.nodeType === 3 ? target.parentElement : target;
     if (!element?.closest) return false;
-    const card = element.closest(".mmx-external-assets-locked");
+    const card = element.closest(".mmx-external-media-locked");
     if (!card) return false;
 
     if (card.classList.contains("bd-fl2v-shot")) {
@@ -310,6 +412,59 @@ function installLockedMediaGuard() {
     }
 }
 
+function wrapDynamicNode(nodeType, syncFn, cleanupFn = null) {
+    const onNodeCreated = nodeType.prototype.onNodeCreated;
+    nodeType.prototype.onNodeCreated = function () {
+        const result = onNodeCreated?.apply(this, arguments);
+        this._mmxUnifiedPoll = setInterval(() => syncFn(this), SYNC_MS);
+        scheduleSync(this, syncFn, 0);
+        return result;
+    };
+
+    const onConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function () {
+        const result = onConfigure?.apply(this, arguments);
+        scheduleSync(this, syncFn, 80);
+        return result;
+    };
+
+    const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+    nodeType.prototype.onConnectionsChange = function () {
+        const result = onConnectionsChange?.apply(this, arguments);
+        scheduleSync(this, syncFn, 0);
+        return result;
+    };
+
+    const onRemoved = nodeType.prototype.onRemoved;
+    nodeType.prototype.onRemoved = function () {
+        clearInterval(this._mmxUnifiedPoll);
+        clearTimeout(this._mmxUnifiedSyncTimeout);
+        this._mmxUnifiedPoll = null;
+        this._mmxUnifiedSyncTimeout = null;
+        cleanupFn?.(this);
+        return onRemoved?.apply(this, arguments);
+    };
+}
+
+function wrapDirectorMigration(nodeType) {
+    const onNodeCreated = nodeType.prototype.onNodeCreated;
+    nodeType.prototype.onNodeCreated = function () {
+        const result = onNodeCreated?.apply(this, arguments);
+        setTimeout(() => stripLegacyDirectorInputs(this), 0);
+        setTimeout(() => stripLegacyDirectorInputs(this), 250);
+        return result;
+    };
+
+    const onConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function () {
+        const result = onConfigure?.apply(this, arguments);
+        stripLegacyDirectorInputs(this);
+        setTimeout(() => stripLegacyDirectorInputs(this), 0);
+        setTimeout(() => stripLegacyDirectorInputs(this), 250);
+        return result;
+    };
+}
+
 ensureStyles();
 installLockedMediaGuard();
 
@@ -317,37 +472,16 @@ app.registerExtension({
     name: "MiniMaxH3.MotionDirector.UnifiedInputs",
 
     beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData?.name !== INPUTS_CLASS) return;
-
-        const onNodeCreated = nodeType.prototype.onNodeCreated;
-        nodeType.prototype.onNodeCreated = function () {
-            const result = onNodeCreated?.apply(this, arguments);
-            this._mmxInputsPoll = setInterval(() => syncInputsNode(this), SYNC_MS);
-            scheduleSync(this, 0);
-            return result;
-        };
-
-        const onConfigure = nodeType.prototype.onConfigure;
-        nodeType.prototype.onConfigure = function () {
-            const result = onConfigure?.apply(this, arguments);
-            scheduleSync(this, 80);
-            return result;
-        };
-
-        const onConnectionsChange = nodeType.prototype.onConnectionsChange;
-        nodeType.prototype.onConnectionsChange = function () {
-            const result = onConnectionsChange?.apply(this, arguments);
-            scheduleSync(this, 0);
-            return result;
-        };
-
-        const onRemoved = nodeType.prototype.onRemoved;
-        nodeType.prototype.onRemoved = function () {
-            clearInterval(this._mmxInputsPoll);
-            clearTimeout(this._mmxInputsSyncTimeout);
-            this._mmxInputsPoll = null;
-            this._mmxInputsSyncTimeout = null;
-            return onRemoved?.apply(this, arguments);
-        };
+        if (nodeData?.name === DIRECTOR_CLASS) {
+            wrapDirectorMigration(nodeType);
+            return;
+        }
+        if (nodeData?.name === INPUTS_CLASS) {
+            wrapDynamicNode(nodeType, syncInputsNode, cleanupInputsNode);
+            return;
+        }
+        if (nodeData?.name === ASSETS_CLASS) {
+            wrapDynamicNode(nodeType, syncAssetsNode);
+        }
     },
 });
