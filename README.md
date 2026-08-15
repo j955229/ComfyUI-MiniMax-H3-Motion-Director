@@ -70,7 +70,12 @@ Motion Director 的目标就是把这些工作放回一个统一的生产界面�
 
 同一个 Director 可以直接切换六种 MiniMax H3 视频任务，不需要为每种模式维护一套完全不同的导演界面。
 
-![T2V I2V FL2V R2V V2V RV2V generation modes](docs/images/generation-modes.webp)
+<img width="1709" height="902" alt="螢幕擷取畫面 2026-08-16 014840" src="https://github.com/user-attachments/assets/89d1275a-fc5e-4d0e-aead-edfd82f8dae9" />
+<img width="1717" height="894" alt="螢幕擷取畫面 2026-08-16 014848" src="https://github.com/user-attachments/assets/c5eea561-fc53-460c-b010-36abe8a7d60f" />
+<img width="1718" height="913" alt="螢幕擷取畫面 2026-08-16 014855" src="https://github.com/user-attachments/assets/e3a12dc8-0b6d-4f0a-9a6a-5b3076cdc0ca" />
+<img width="1712" height="917" alt="螢幕擷取畫面 2026-08-16 014903" src="https://github.com/user-attachments/assets/5553a223-41a8-49a8-a797-fb184bbe7b75" />
+<img width="1719" height="900" alt="螢幕擷取畫面 2026-08-16 014910" src="https://github.com/user-attachments/assets/5b1f49db-09d3-42c3-952f-c056b01e6c74" />
+<img width="1721" height="907" alt="螢幕擷取畫面 2026-08-16 014917" src="https://github.com/user-attachments/assets/a28ea179-d9a1-40ca-b30b-570dd2bec188" />
 
 | 模式 | 主要输入 | 外接 Director Inputs | Director Assets | Source Video | 典型用途 |
 |---|---|---|---|---|---|
@@ -246,7 +251,9 @@ V2V   Source Video 由 Director 管理
 
 # Post Processing / Live Preview / Results
 
-![Post Processing Live Preview Results](docs/images/director-pages.webp)
+<img width="1713" height="893" alt="螢幕擷取畫面 2026-08-16 015003" src="https://github.com/user-attachments/assets/44c38e64-6efb-4bef-a348-40184af44eaf" />
+<img width="1723" height="894" alt="螢幕擷取畫面 2026-08-16 015012" src="https://github.com/user-attachments/assets/519b44c7-c1d6-4607-bed2-ef38e530f6b8" />
+<img width="1734" height="889" alt="螢幕擷取畫面 2026-08-16 015021" src="https://github.com/user-attachments/assets/631a6278-c490-4ada-9a7c-b43e97934edb" />
 
 ## Post Processing
 
@@ -305,9 +312,7 @@ Results 页面分为：
 `MiniMax H3 Motion Director` 同时是 `OUTPUT_NODE`：
 
 - 单独放在工作流里，不连接右侧输出，也能作为最终执行节点运行。
-- 如果你需要自己的 ComfyUI 后处理链，也可以继续把 `images / audio / fps` 接给其他节点。
-
-内部执行报告、最终保存注册信息等仍由 Director 自己管理，但不再把一堆内部数据暴露成主节点右侧插口。
+- 如果你需要自己的 ComfyUI 后处理链，也可以继续把 `images / audio / fps` 接给其他节点
 
 ---
 
