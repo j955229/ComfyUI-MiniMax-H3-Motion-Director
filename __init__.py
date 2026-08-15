@@ -36,8 +36,8 @@ else:
     if not _motion_patch_ready:
         _log.error("Motion Context disabled: %s", motion_context_patch_status()[1])
 
+    from .nodes.director_output import MiniMaxH3MotionDirector  # noqa: E402
     from .nodes.director_inputs import (  # noqa: E402
-        MiniMaxH3MotionDirector,
         MiniMaxH3MotionDirectorAssets,
         MiniMaxH3MotionDirectorInputs,
     )
