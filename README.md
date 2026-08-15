@@ -62,13 +62,11 @@ Motion Director 的目标就是把这些工作放回一个统一的生产界面�
 9. Queue 工作流。
 10. 在 Live Preview 和 Results 查看生成过程与最终结果。
 
-`sampler`、`sigmas` 和 `director_inputs` 都是可选的外部扩展入口，不是最基础工作流的必接项。
-
 ---
 
 # Generation：六种任务模式
 
-同一个 Director 可以直接切换六种 MiniMax H3 视频任务，不需要为每种模式维护一套完全不同的导演界面。
+同一个 Director 可以直接切换六种 MiniMax H3 视频任务。
 
 <img width="1709" height="902" alt="螢幕擷取畫面 2026-08-16 014840" src="https://github.com/user-attachments/assets/89d1275a-fc5e-4d0e-aead-edfd82f8dae9" />
 <img width="1717" height="894" alt="螢幕擷取畫面 2026-08-16 014848" src="https://github.com/user-attachments/assets/c5eea561-fc53-460c-b010-36abe8a7d60f" />
@@ -92,18 +90,11 @@ Motion Director 的目标就是把这些工作放回一个统一的生产界面�
 
 ## I2V
 
-每个提示词组可以提供自己的起始图片。外接时，图片直接进入 `MiniMax H3 Motion Director Inputs` 的 `image_N`，不需要经过 Assets 节点。
+每个提示词组可以提供自己的起始图片。
 
 ## FL2V
 
-每组可以使用首帧、尾帧或首尾两张图片。外接时使用 `MiniMax H3 Motion Director Assets`，该模式只暴露：
-
-```text
-first_image
-last_image
-```
-
-Director 仍然负责组数、Prompt 和时间线。
+每组可以使用首帧、尾帧或首尾两张图片。
 
 ## R2V
 
@@ -135,7 +126,7 @@ RV2V 以 Source Video 为主要运动/内容来源，同时可以加入参考图
 
 ## 公共素材
 
-当同一个角色、场景或声音需要跨多个片段反复出现时，可以把它放进公共素材，而不是在每段重复添加。
+当同一个角色、场景或声音需要跨多个片段反复出现时，可以把它放进公共素材，不用在每段重复添加。
 
 以 R2V 为例：
 
@@ -161,8 +152,6 @@ RV2V 以 Source Video 为主要运动/内容来源，同时可以加入参考图
 - Prompt
 
 图片默认可以按人物、场景、道具、其他等分类管理。素材库可以把素材分配给当前任务和目标片段，不需要每次重新从磁盘寻找文件。
-
-素材库会根据当前任务模式限制可用素材类型，例如 RV2V 不会把素材库视频当成 Source Video。
 
 ---
 
@@ -232,7 +221,7 @@ V2V   Source Video 由 Director 管理
 - 颜色重锚定
 - Source Bridge（适用模式）
 
-这些功能负责“下一段怎样知道上一段发生了什么”，而不是要求用户手工把上一段重新塞回模型。
+这些功能负责“下一段怎样知道上一段发生了什么”。
 
 ## 后期处理
 
@@ -295,7 +284,7 @@ Results 页面分为：
 最终结果
 ```
 
-最终结果区可以配置自动保存、保存路径、文件名前缀、格式、编码器和编码模式。Results 的播放器与 Live Preview 独立，不需要依赖节点图上的额外 Video Combine 才能查看 Director 结果。
+最终结果区可以配置自动保存、保存路径、文件名前缀、格式、编码器和编码模式。
 
 ---
 
