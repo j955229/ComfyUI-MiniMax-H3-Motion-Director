@@ -165,7 +165,7 @@ rights of fair use or other equivalent, as provided by copyright law.
 convey, without conditions so long as your license otherwise remains
 in force.  You may convey covered works to others for the sole purpose
 of having them make modifications exclusively for you, or provide you
-with facilities for running them, provided that you comply with
+with facilities for running those works, provided that you comply with
 the terms of this License in conveying all material for which you do
 not control copyright.  Those thus making or running the covered works
 for you must do so exclusively on your behalf, under your direction
@@ -173,7 +173,7 @@ and control, on terms that prohibit them from making any copies of
 your copyrighted material outside their relationship with you.
 
   Conveying under any other circumstances is permitted solely under
-the conditions below.  Sublicensing is not allowed; section 10
+the conditions stated below.  Sublicensing is not allowed; section 10
 makes it unnecessary.
 
   3. Protecting Users' Legal Rights From Anti-Circumvention Law.
@@ -189,7 +189,7 @@ circumvention of technological measures to the extent such circumvention
 is effected by exercising rights under this License with respect to
 the covered work, and you disclaim any intention to limit operation or
 modification of the work as a means of enforcing, against the work's
-users or your third parties' legal rights to forbid circumvention of
+users, your or third parties' legal rights to forbid circumvention of
 technological measures.
 
   4. Conveying Verbatim Copies.
@@ -628,8 +628,8 @@ free software which everyone can redistribute and change under these terms.
 
   To do so, attach the following notices to the program.  It is safest
 to attach them to the start of each source file to most effectively
-state the exclusion of warranty; and each file should have at least the
-"copyright" line and a pointer to where the full notice is found.
+state the exclusion of warranty; and each file should have at least
+the "copyright" line and a pointer to where the full notice is found.
 
     <one line to give the program's name and a brief idea of what it does.>
     Copyright (C) <year>  <name of author>
