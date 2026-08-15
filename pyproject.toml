@@ -1,14 +1,20 @@
 [project]
-name = "ComfyUI-MiniMax-H3-Motion-Director"
-description = "A MiniMax H3 Director integrating multi-segment generation with Motion and Audio Context continuity."
+name = "minimax-h3-motion-director"
+description = "Multi-segment MiniMax H3 video director for ComfyUI with continuity, selective reruns, asset management, post-processing, and live preview."
 version = "0.1.0"
+readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
+dependencies = [
+    "opencv-python-headless>=4.8",
+    "imageio-ffmpeg>=0.4",
+    "scenedetect>=0.6.4,<0.8",
+]
 
 [project.urls]
 Repository = "https://github.com/j955229/ComfyUI-MiniMax-H3-Motion-Director"
+Documentation = "https://github.com/j955229/ComfyUI-MiniMax-H3-Motion-Director#readme"
 
 [tool.comfy]
-PublisherId = ""
-DisplayName = "ComfyUI MiniMax H3 Motion Director"
-Icon = ""
+PublisherId = "j955229"
+DisplayName = "MiniMax H3 Motion Director"
