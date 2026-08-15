@@ -126,7 +126,7 @@ export function createDirectorModal({
     const shell = document.createElement("section");
     shell.className = "mmx-director-page-shell";
     shell.setAttribute("role", "dialog");
-    shell.setAttribute("aria-modal", "true");
+    shell.setAttribute("aria-modal", "false");
 
     const header = document.createElement("header");
     header.className = "mmx-director-page-header";
@@ -268,6 +268,7 @@ export function createDirectorModal({
             isOpen = true;
             overlay.hidden = false;
             overlay.setAttribute("aria-hidden", "false");
+            shell.setAttribute("aria-modal", "true");
             try {
                 onOpen?.();
             } catch (error) {
@@ -286,6 +287,7 @@ export function createDirectorModal({
             isOpen = false;
             overlay.hidden = true;
             overlay.setAttribute("aria-hidden", "true");
+            shell.setAttribute("aria-modal", "false");
             if (activeDirectorModal === api) activeDirectorModal = null;
             try {
                 onClose?.();
