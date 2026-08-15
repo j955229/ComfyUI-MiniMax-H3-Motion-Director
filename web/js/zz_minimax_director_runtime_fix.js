@@ -15,8 +15,7 @@ import {
     generatedAudioContinuationShouldBeInteractive,
     keepSamplingSourceHidden,
     restoreContinuityWidgetRenderer,
-    syncDirectorModalAriaState,
-} from "./minimax_director_runtime_fix_core.mjs?boot=continuity_runtime_fix_v3";
+} from "./minimax_director_runtime_fix_core.mjs?boot=continuity_runtime_fix_v4";
 
 const DIRECTOR_CLASS = "MiniMaxH3MotionDirector";
 
@@ -139,53 +138,6 @@ function syncSamplingSourceOwnership(node) {
     return changed;
 }
 
-function installDirectorModalStateSync(controller) {
-    if (!controller || controller._mmxRuntimeModalStateWrapped) return false;
-
-    const originalOpen = controller.open;
-    const originalClose = controller.close;
-    controller._mmxRuntimeModalStateWrapped = true;
-    controller._mmxRuntimeOriginalOpen = originalOpen;
-    controller._mmxRuntimeOriginalClose = originalClose;
-
-    controller.open = function (...args) {
-        const result = originalOpen?.apply(this, args);
-        syncDirectorModalAriaState(this);
-        return result;
-    };
-    controller.close = function (...args) {
-        const result = originalClose?.apply(this, args);
-        syncDirectorModalAriaState(this);
-        return result;
-    };
-
-    return true;
-}
-
-function cleanupDirectorModalStateSync(controller) {
-    if (!controller?._mmxRuntimeModalStateWrapped) return false;
-
-    if (controller._mmxRuntimeOriginalOpen) {
-        controller.open = controller._mmxRuntimeOriginalOpen;
-    }
-    if (controller._mmxRuntimeOriginalClose) {
-        controller.close = controller._mmxRuntimeOriginalClose;
-    }
-    controller._mmxRuntimeModalStateWrapped = false;
-    controller._mmxRuntimeOriginalOpen = null;
-    controller._mmxRuntimeOriginalClose = null;
-    return true;
-}
-
-function syncDirectorModalState(node) {
-    const controller = node?._minimaxEditor?._directorModalController;
-    if (!controller) return false;
-
-    const wrapped = installDirectorModalStateSync(controller);
-    const synced = syncDirectorModalAriaState(controller);
-    return wrapped || synced;
-}
-
 function syncLocalizedLabels(node) {
     const locale = getLocale() === "en" ? "en" : "zh";
     const samplingState = getSamplingConnectionState(node?.inputs || []);
@@ -233,7 +185,6 @@ function syncRuntimeFix(node) {
     const changed = [
         syncSamplingSourceOwnership(node),
         syncGeneratedAudioContinuation(node),
-        syncDirectorModalState(node),
         syncLocalizedLabels(node),
     ].some(Boolean);
 
@@ -295,7 +246,7 @@ function wrapDirector(nodeType) {
     };
 
     const onDrawBackground = nodeType.prototype.onDrawBackground;
-    nodeType.prototype.onDrawBackground = function (ctx) {
+    nodeType.prototype.onDrawBackground = function () {
         // Locale refresh and legacy sampling visibility run outside this extension.
         // Reassert ownership before LiteGraph paints any widget so neither the
         // old sampling rows nor old-language labels can reach a visible frame.
@@ -309,9 +260,6 @@ function wrapDirector(nodeType) {
     nodeType.prototype.onRemoved = function () {
         for (const timer of this._mmxRuntimeFixTimers || []) clearTimeout(timer);
         this._mmxRuntimeFixTimers?.clear?.();
-        cleanupDirectorModalStateSync(
-            this._minimaxEditor?._directorModalController,
-        );
         return onRemoved?.apply(this, arguments);
     };
 }
