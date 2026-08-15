@@ -2,15 +2,22 @@
 
 一个面向 **MiniMax H3 多段视频生产** 的 ComfyUI Director 节点。
 
-它不是单纯把 H3 包成另一个采样节点，而是把多段视频真正会用到的流程集中到一个导演台里：分段、Prompt、参考素材、跨段接续、选择重跑、后期处理、实时预览和最终导出。
+把多段视频真正会用到的流程集中到一个导演台里：分段、Prompt、参考素材、跨段接续、选择重跑、后期处理、实时预览和最终导出。
 
 支持：`T2V / I2V / FL2V / R2V / V2V / RV2V`。
 
-> 本项目是第三方实现，不是 MiniMax、ComfyUI、AIMixer、ComfyUI-H3-Motion-Context、ComfyUI-H3-FaceRefine 或 ComfyUI-KJNodes 的官方发行版。
+# Credits / License
 
-<p align="center">
-  <img src="docs/images/director-node.webp" alt="MiniMax H3 Motion Director node" width="380">
-</p>
+本项目整体以 **GNU GPL v3.0** 发布。详细第三方版权与派生说明见 [`NOTICE`](NOTICE) 和 [`LICENSES`](LICENSES)。
+
+本项目包含并修改了以下项目的代码或算法：
+
+- [AIMixer / ComfyUI_MiniMaxH3_Director](https://github.com/AIMixer/ComfyUI_MiniMaxH3_Director) — Apache-2.0
+- [NikoDemon80 / ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) — GPL-3.0
+- [Carasibana / ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine) — MIT
+- [Kijai / ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) — GPL-3.0，部分 packed-latent preview / TAEHV 行为参考其实现
+
+感谢所有上游项目和贡献者。
 
 ## 为什么用 Director
 
@@ -414,16 +421,3 @@ V2V / RV2V 的核心问题与纯生成模式不同：它们还有 Source Video �
 - 不建议与独立版 `ComfyUI-H3-Motion-Context` 同时加载。
 
 ---
-
-# Credits / License
-
-本项目整体以 **GNU GPL v3.0** 发布。详细第三方版权与派生说明见 [`NOTICE`](NOTICE) 和 [`LICENSES`](LICENSES)。
-
-本项目包含并修改了以下项目的代码或算法：
-
-- [AIMixer / ComfyUI_MiniMaxH3_Director](https://github.com/AIMixer/ComfyUI_MiniMaxH3_Director) — Apache-2.0
-- [NikoDemon80 / ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) — GPL-3.0
-- [Carasibana / ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine) — MIT
-- [Kijai / ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) — GPL-3.0，部分 packed-latent preview / TAEHV 行为参考其实现
-
-感谢所有上游项目和贡献者。
