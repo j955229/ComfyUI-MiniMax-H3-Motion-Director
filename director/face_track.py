@@ -213,8 +213,10 @@ def track_and_crop(
     detector = detector or create_detector(config)
     identity_choose = _create_identity_matcher(config, images)
     frame_count, source_h, source_w, _ = images.shape
-    cx = np.zeros(frame_count); cy = np.zeros(frame_count)
-    face_h = np.zeros(frame_count); face_w = np.zeros(frame_count)
+    cx = np.zeros(frame_count)
+    cy = np.zeros(frame_count)
+    face_h = np.zeros(frame_count)
+    face_w = np.zeros(frame_count)
     valid = np.zeros(frame_count, dtype=bool)
     last = None
     select = config.get("select") or "largest"
