@@ -8,6 +8,41 @@ function isDirectorNode(node) {
     return cls === "MiniMaxH3MotionDirector" || cls === "ComfyMiniMaxH3MotionDirector";
 }
 
+function bindMaterialLibraryModalState(controller) {
+    if (!controller?.layer || controller._mmxModalStateBound) return controller;
+
+    const layer = controller.layer;
+    const shell = layer.querySelector?.(".mmx-ml-shell");
+    if (!shell?.setAttribute) return controller;
+
+    const sync = () => {
+        const isOpen = layer.hidden !== true;
+        shell.setAttribute("aria-modal", isOpen ? "true" : "false");
+        layer.setAttribute("aria-hidden", isOpen ? "false" : "true");
+    };
+
+    controller._mmxModalStateBound = true;
+    sync();
+
+    if (typeof MutationObserver === "function") {
+        const observer = new MutationObserver(sync);
+        observer.observe(layer, {
+            attributes: true,
+            attributeFilter: ["hidden"],
+        });
+        controller._mmxModalStateObserver = observer;
+    }
+
+    const originalDestroy = controller.destroy?.bind(controller);
+    controller.destroy = function (...args) {
+        this._mmxModalStateObserver?.disconnect?.();
+        this._mmxModalStateObserver = null;
+        return originalDestroy?.(...args);
+    };
+
+    return controller;
+}
+
 function scheduleMount(node) {
     if (!isDirectorNode(node) || node._mmxMaterialLibraryMountPending) return;
     node._mmxMaterialLibraryMountPending = true;
@@ -16,7 +51,7 @@ function scheduleMount(node) {
         attempts += 1;
         const editor = node?._minimaxEditor;
         if (editor?.outputBarEl && editor?._directorModalController?.overlayLayer) {
-            mountMaterialLibrary(editor, node);
+            bindMaterialLibraryModalState(mountMaterialLibrary(editor, node));
             node._mmxMaterialLibraryMountPending = false;
             return;
         }
