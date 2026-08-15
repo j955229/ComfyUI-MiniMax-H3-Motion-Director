@@ -1,0 +1,33 @@
+name: Normalize GPL license once
+
+on:
+  push:
+    branches:
+      - promotion-registry-readme
+
+permissions:
+  contents: write
+
+jobs:
+  normalize-license:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: promotion-registry-readme
+
+      - name: Replace LICENSE with official GPL-3.0 text
+        run: curl --fail --silent --show-error --location https://www.gnu.org/licenses/gpl-3.0.txt --output LICENSE
+
+      - name: Commit normalized license
+        run: |
+          if git diff --quiet -- LICENSE; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- LICENSE
+          git commit -m "chore: normalize GPL-3.0 license from GNU"
+          git push origin HEAD:promotion-registry-readme
