@@ -38,7 +38,10 @@ def build_rect_masks(transform: dict[str, Any], config: dict[str, Any], device, 
             continue
         x, y, width, height = transform["face_rect"][index]
         dilation = dilation_ratio * max(width, height)
-        x -= dilation; y -= dilation; width += dilation * 2; height += dilation * 2
+        x -= dilation
+        y -= dilation
+        width += dilation * 2
+        height += dilation * 2
         if mode == "ellipse":
             yy = torch.arange(canvas_h, device=device).view(-1, 1)
             xx = torch.arange(canvas_w, device=device).view(1, -1)
