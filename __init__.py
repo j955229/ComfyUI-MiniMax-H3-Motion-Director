@@ -36,33 +36,22 @@ else:
     if not _motion_patch_ready:
         _log.error("Motion Context disabled: %s", motion_context_patch_status()[1])
 
-    from .nodes.conditioning import (  # noqa: E402
-        MiniMaxH3MotionDirectorConditioning,
-        MiniMaxH3MotionDirectorPlannerConditioning,
-    )
-    from .nodes.director import MiniMaxH3MotionDirector  # noqa: E402
-    from .nodes.director_groups import (  # noqa: E402
-        MiniMaxH3MotionDirectorGroupImageToVideo,
-        MiniMaxH3MotionDirectorGroupReferenceToVideo,
-        MiniMaxH3MotionDirectorGroupsCombine,
+    from .nodes.director_inputs import (  # noqa: E402
+        MiniMaxH3MotionDirector,
+        MiniMaxH3MotionDirectorAssets,
+        MiniMaxH3MotionDirectorInputs,
     )
 
     NODE_CLASS_MAPPINGS = {
         "MiniMaxH3MotionDirector": MiniMaxH3MotionDirector,
-        "MiniMaxH3MotionDirectorConditioning": MiniMaxH3MotionDirectorConditioning,
-        "MiniMaxH3MotionDirectorPlannerConditioning": MiniMaxH3MotionDirectorPlannerConditioning,
-        "MiniMaxH3MotionDirectorGroupImageToVideo": MiniMaxH3MotionDirectorGroupImageToVideo,
-        "MiniMaxH3MotionDirectorGroupReferenceToVideo": MiniMaxH3MotionDirectorGroupReferenceToVideo,
-        "MiniMaxH3MotionDirectorGroupsCombine": MiniMaxH3MotionDirectorGroupsCombine,
+        "MiniMaxH3MotionDirectorInputs": MiniMaxH3MotionDirectorInputs,
+        "MiniMaxH3MotionDirectorAssets": MiniMaxH3MotionDirectorAssets,
     }
 
     NODE_DISPLAY_NAME_MAPPINGS = {
         "MiniMaxH3MotionDirector": "MiniMax H3 Motion Director",
-        "MiniMaxH3MotionDirectorConditioning": "MiniMax H3 Motion Director Conditioning",
-        "MiniMaxH3MotionDirectorPlannerConditioning": "MiniMax H3 Motion Director Planner Conditioning",
-        "MiniMaxH3MotionDirectorGroupImageToVideo": "MiniMax H3 Motion Director Group (Image to Video)",
-        "MiniMaxH3MotionDirectorGroupReferenceToVideo": "MiniMax H3 Motion Director Group (Reference to Video)",
-        "MiniMaxH3MotionDirectorGroupsCombine": "MiniMax H3 Motion Director Groups Combine",
+        "MiniMaxH3MotionDirectorInputs": "MiniMax H3 Motion Director Inputs",
+        "MiniMaxH3MotionDirectorAssets": "MiniMax H3 Motion Director Assets",
     }
 
     WEB_DIRECTORY = "./web/js"
