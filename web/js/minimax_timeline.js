@@ -128,7 +128,7 @@ import {
     setWidgetVisibility,
     syncDisabledWidgetState,
     toggleBooleanWidgetValue,
-} from "./minimax_continuity_ui.mjs?boot=director_ui_v4";
+} from "./minimax_continuity_ui.mjs?boot=director_ui_v5";
 import {
     applyI18nDom,
     aspectDisplayLabel,
@@ -4174,23 +4174,72 @@ class MiniMaxH3MotionDirectorEditor {
 
     _applyMixedSharedControls() {
         const state = this._ensureMixedTimeline();
-        const output = state.output || {};
+        state.output = state.output || {};
+        const output = state.output;
+        const initialWidth = Math.max(32, Number(output.width ?? state.width ?? 864) || 864);
+        const initialHeight = Math.max(32, Number(output.height ?? state.height ?? 480) || 480);
+
+        output.mode = "fixed";
+        output.multiple = output.multiple ?? MINIMAX_CANVAS_MULTIPLE;
+        if (!output.aspectRatio) {
+            const match = RESOLUTION_ASPECTS.find(([, aw, ah]) => (
+                Math.abs(initialWidth / initialHeight - aw / ah) < 0.02
+            ));
+            output.aspectRatio = match ? match[0] : CUSTOM_ASPECT_RATIO;
+        } else {
+            output.aspectRatio = isCustomAspectRatio(output.aspectRatio)
+                ? CUSTOM_ASPECT_RATIO
+                : normalizeAspectRatioLabel(output.aspectRatio);
+        }
+        if (output.megapixels == null) {
+            const inferred = Math.round((initialWidth * initialHeight / (1024 * 1024)) * 10) / 10;
+            output.megapixels = clampMegapixels(inferred || DEFAULT_MEGAPIXELS);
+        } else {
+            output.megapixels = clampMegapixels(output.megapixels);
+        }
+
+        if (isCustomAspectRatio(output.aspectRatio)) {
+            output.width = snapResolutionDim(initialWidth, output.multiple);
+            output.height = snapResolutionDim(initialHeight, output.multiple);
+        } else {
+            const resolved = resolutionFromSelector(
+                output.aspectRatio,
+                output.megapixels,
+                output.multiple,
+            );
+            output.width = resolved?.width ?? snapResolutionDim(initialWidth, output.multiple);
+            output.height = resolved?.height ?? snapResolutionDim(initialHeight, output.multiple);
+            if (resolved) {
+                output.aspectRatio = resolved.aspectRatio;
+                output.megapixels = resolved.megapixels;
+                output.multiple = resolved.multiple;
+            }
+        }
+        output.longEdge = Math.max(output.width, output.height);
+        state.width = output.width;
+        state.height = output.height;
+        state.refMaxSize = output.longEdge;
+
         const setWidget = (name, value) => {
             const widget = this.widget?.(name) || this.node?.widgets?.find?.((item) => item?.name === name);
             if (widget && value != null) widget.value = value;
         };
         setWidget("frame_rate", state.frameRate ?? 24);
-        setWidget("width", output.width ?? state.width ?? 864);
-        setWidget("height", output.height ?? state.height ?? 480);
-        setWidget("ref_max_size", output.longEdge ?? state.refMaxSize ?? 864);
+        setWidget("width", output.width);
+        setWidget("height", output.height);
+        setWidget("ref_max_size", output.longEdge);
         if (this.fpsInput) this.fpsInput.value = String(state.frameRate ?? 24);
-        if (this.outW) this.outW.value = String(output.width ?? state.width ?? 864);
-        if (this.outH) this.outH.value = String(output.height ?? state.height ?? 480);
-        if (this.outLong) this.outLong.value = String(output.longEdge ?? state.refMaxSize ?? 864);
-        if (this.outMode && output.mode) this.outMode.value = output.mode;
+        if (this.outAspect) this.outAspect.value = output.aspectRatio;
+        if (this.outMp) this.outMp.value = String(output.megapixels);
+        if (this.outW) this.outW.value = String(output.width);
+        if (this.outH) this.outH.value = String(output.height);
+        if (this.outLong) this.outLong.value = String(output.longEdge);
+        if (this.outMode) this.outMode.value = "fixed";
         if (this.outExportMode && output.exportMode) this.outExportMode.value = output.exportMode;
         if (this.outMaxFrames) this.outMaxFrames.value = String(output.maxExportFrames ?? 0);
         if (this.outAudioMode) this.outAudioMode.value = "generate";
+        this.updateOutputModeUI?.();
+        this.updateOutputPreview?.();
     }
 
     _setMixedBodiesActive(active) {
@@ -6097,20 +6146,27 @@ class MiniMaxH3MotionDirectorEditor {
 
     updateOutputModeUI() {
         const taskKey = this.getTaskKey();
-        const useSelector = this.isImageBatch() || this.isGenMode() || this.isFl2vMode()
+        const mixedMode = this.isMixedMode();
+        const useSelector = mixedMode || this.isImageBatch() || this.isGenMode() || this.isFl2vMode()
             || NO_VIDEO_UPLOAD_TASKS.has(taskKey);
-        // Gen / batch / fl2v: aspect + megapixels, or Custom width/height.
-        // Video edit (v2v): long_edge / fixed — must toggle .hidden (CSS uses !important).
+        // Gen / batch / fl2v / Mixed: aspect + megapixels, or Custom width/height.
+        // Standalone source-video edit (v2v/rv2v): long_edge / fixed.
         if (this.outAspect) this.outAspect.classList.toggle("hidden", !useSelector);
         if (this.outMode) this.outMode.classList.toggle("hidden", useSelector);
         if (this.outLongWrap) this.outLongWrap.style.display = "";
         if (useSelector) {
-            const custom = isCustomAspectRatio(this.timeline.output?.aspectRatio ?? this.outAspect?.value);
+            const activeOutput = mixedMode
+                ? (this._ensureMixedTimeline().output || {})
+                : (this.timeline.output || {});
+            const custom = isCustomAspectRatio(activeOutput.aspectRatio ?? this.outAspect?.value);
             if (this.outMpWrap) this.outMpWrap.classList.toggle("hidden", custom);
             if (this.outLongWrap) this.outLongWrap.classList.add("hidden");
             if (this.outFixedWrap) this.outFixedWrap.classList.toggle("hidden", !custom);
-            if (custom) this.applyCustomResolution();
-            else this.applyResolutionSelector();
+            // Mixed has its own state object; never mutate standalone timeline.output here.
+            if (!mixedMode) {
+                if (custom) this.applyCustomResolution();
+                else this.applyResolutionSelector();
+            }
             return;
         }
         if (this.outMpWrap) this.outMpWrap.classList.add("hidden");
@@ -6138,8 +6194,10 @@ class MiniMaxH3MotionDirectorEditor {
             }
             return;
         }
-        if (this.isGenBlank() || this.isImageBatch() || this.isFl2vMode()) {
-            const out = this.timeline.output || {};
+        if (this.isGenBlank() || this.isImageBatch() || this.isFl2vMode() || this.isMixedMode()) {
+            const out = this.isMixedMode()
+                ? (this._ensureMixedTimeline().output || {})
+                : (this.timeline.output || {});
             if (isCustomAspectRatio(out.aspectRatio)) {
                 const w = snapResolutionDim(out.width ?? this.outW?.value ?? 864, out.multiple ?? MINIMAX_CANVAS_MULTIPLE);
                 const h = snapResolutionDim(out.height ?? this.outH?.value ?? 480, out.multiple ?? MINIMAX_CANVAS_MULTIPLE);
@@ -6183,7 +6241,10 @@ class MiniMaxH3MotionDirectorEditor {
 
     _exportPreviewSuffix() {
         const cap = this.getMaxExportFrames();
-        const exportMode = this.timeline.output?.exportMode === "segments"
+        const activeOutput = this.isMixedMode()
+            ? this._ensureMixedTimeline().output
+            : this.timeline.output;
+        const exportMode = activeOutput?.exportMode === "segments"
             ? t("output.preview.segmentExport")
             : "";
         const dur = this.getTimelineDurationSec().toFixed(2);
@@ -6202,21 +6263,64 @@ class MiniMaxH3MotionDirectorEditor {
         if (this.isMixedMode()) {
             const state = this._ensureMixedTimeline();
             state.output = state.output || {};
-            state.output[key] = key === "audioMode" ? "generate" : value;
-            if (key === "aspectRatio" || key === "megapixels") {
+            const out = state.output;
+            out.mode = "fixed";
+            out.multiple = out.multiple ?? MINIMAX_CANVAS_MULTIPLE;
+
+            const applySelector = () => {
+                if (isCustomAspectRatio(out.aspectRatio)) return;
+                out.aspectRatio = normalizeAspectRatioLabel(out.aspectRatio || DEFAULT_ASPECT_RATIO);
+                out.megapixels = clampMegapixels(out.megapixels ?? DEFAULT_MEGAPIXELS);
                 const resolved = resolutionFromSelector(
-                    state.output.aspectRatio || DEFAULT_ASPECT_RATIO,
-                    state.output.megapixels ?? DEFAULT_MEGAPIXELS,
+                    out.aspectRatio,
+                    out.megapixels,
+                    out.multiple,
                 );
-                if (resolved) {
-                    state.output.width = resolved.width;
-                    state.output.height = resolved.height;
+                if (!resolved) return;
+                out.aspectRatio = resolved.aspectRatio;
+                out.megapixels = resolved.megapixels;
+                out.multiple = resolved.multiple;
+                out.width = resolved.width;
+                out.height = resolved.height;
+                out.longEdge = Math.max(resolved.width, resolved.height);
+            };
+
+            if (key === "aspectRatio") {
+                if (isCustomAspectRatio(value)) {
+                    out.aspectRatio = CUSTOM_ASPECT_RATIO;
+                    out.width = snapResolutionDim(out.width ?? 864, out.multiple);
+                    out.height = snapResolutionDim(out.height ?? 480, out.multiple);
+                    out.longEdge = Math.max(out.width, out.height);
+                } else {
+                    out.aspectRatio = normalizeAspectRatioLabel(value || DEFAULT_ASPECT_RATIO);
+                    applySelector();
                 }
+            } else if (key === "megapixels") {
+                out.megapixels = clampMegapixels(value);
+                applySelector();
+            } else if (key === "width") {
+                out.aspectRatio = CUSTOM_ASPECT_RATIO;
+                out.width = snapResolutionDim(value || 864, out.multiple);
+                out.height = snapResolutionDim(out.height ?? 480, out.multiple);
+                out.longEdge = Math.max(out.width, out.height);
+            } else if (key === "height") {
+                out.aspectRatio = CUSTOM_ASPECT_RATIO;
+                out.width = snapResolutionDim(out.width ?? 864, out.multiple);
+                out.height = snapResolutionDim(value || 480, out.multiple);
+                out.longEdge = Math.max(out.width, out.height);
+            } else if (key === "maxExportFrames") {
+                const n = Number.parseInt(value, 10);
+                out.maxExportFrames = Number.isFinite(n) && n > 0 ? n : 0;
+            } else if (key === "exportMode") {
+                out.exportMode = value === "segments" ? "segments" : "all";
+            } else if (key === "longEdge") {
+                out.longEdge = Math.max(32, Number(value) || 32);
+            } else if (key !== "audioMode" && key !== "mode") {
+                out[key] = value;
             }
-            if (key === "width") state.output.width = Math.max(32, Number(value) || 32);
-            if (key === "height") state.output.height = Math.max(32, Number(value) || 32);
-            if (key === "longEdge") state.output.longEdge = Math.max(32, Number(value) || 32);
-            state.output.audioMode = "generate";
+
+            out.audioMode = "generate";
+            out.mode = "fixed";
             this.mixedTimeline = normalizeMixedTimeline(state);
             this._applyMixedSharedControls();
             this.scheduleTimelineSync();

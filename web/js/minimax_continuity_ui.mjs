@@ -231,13 +231,16 @@ export function resolveContinuityUiState({
     else if (bridgeTask) mode = "video_strategy";
 
     const generatedMotionUi = mode === "motion_context_task";
+    const mixedMotionUi = mode === "mixed";
     const videoMotionUi = mode === "video_strategy"
         && videoStrategy === VIDEO_CONTINUITY_STRATEGIES.MOTION_CONTEXT;
-    const motionActive = (generatedMotionUi && motionOn) || videoMotionUi;
+    const motionActive = mixedMotionUi
+        ? (multiSegment && motionOn)
+        : ((generatedMotionUi && motionOn) || videoMotionUi);
     const supportedVisualTask = VISUAL_MOTION_CONTEXT_TASKS.has(task);
     const showColorReanchor = multiSegment && (supportedVisualTask || mixedTask);
     const showContextFrames = generatedMotionUi || videoMotionUi || (mixedTask && multiSegment);
-    const showAudioContinuation = multiSegment && supportedVisualTask;
+    const showAudioContinuation = multiSegment && (supportedVisualTask || mixedTask);
     const audioContinuationActive = showAudioContinuation
         && String(audioMode || "generate").toLowerCase() === "generate";
 
@@ -249,19 +252,21 @@ export function resolveContinuityUiState({
         videoStrategy,
         sourceBridgeValue: normalizedBridge,
         showSingleSegmentMessage: mode === "single",
-        showMotionContext: generatedMotionUi,
+        showMotionContext: generatedMotionUi || mixedMotionUi,
         showContextFrames,
         showAudioContinuation,
         showVisualContinuitySelector: mode === "video_strategy",
         showBridgeLength: false,
         showColorReanchor,
-        motionContextControlEnabled: generatedMotionUi,
-        contextFramesControlEnabled: mixedTask ? multiSegment : motionActive,
+        motionContextControlEnabled: generatedMotionUi || mixedMotionUi,
+        contextFramesControlEnabled: mixedTask ? (multiSegment && motionOn) : motionActive,
         audioContextControlEnabled: audioContinuationActive,
-        colorReanchorControlEnabled: mixedTask ? multiSegment : (showColorReanchor && motionActive),
+        colorReanchorControlEnabled: mixedTask
+            ? (multiSegment && motionOn)
+            : (showColorReanchor && motionActive),
         colorReanchorEnabled: boolValue(colorReanchorEnabled),
         pinRenormControlEnabled: mixedTask
-            ? multiSegment
+            ? (multiSegment && motionOn)
             : (multiSegment && supportedVisualTask && motionActive),
     };
 }

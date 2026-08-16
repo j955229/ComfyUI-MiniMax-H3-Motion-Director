@@ -355,15 +355,9 @@ class MiniMaxH3MotionDirector:
         if bool(getattr(plan, "mixed_mode", False)):
             bind_mixed_runtime_node(plan, unique_id)
             source_overlap_frames = 0
-            # Mixed per-boundary toggles are authoritative. The legacy node-level
-            # masters are hidden in Mixed mode and must never silently gate a link.
-            links = [getattr(segment, "context_link", None) for segment in plan.segments]
-            motion_context_enabled = any(
-                bool(link and link.visual_enabled) for link in links
-            )
-            audio_context_enabled = any(
-                bool(link and link.audio_enabled) for link in links
-            )
+            # Mixed boundary toggles are per-link requests. The visible node-level
+            # Motion/Audio Context switches remain the user-controlled global masters;
+            # executor_core combines master AND ContextLink for the actual handoff.
 
         combined, segment_outputs, segment_audios, report = execute_director_plan_core(
             plan,
