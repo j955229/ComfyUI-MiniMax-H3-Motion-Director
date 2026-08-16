@@ -12,6 +12,7 @@ import {
 import { inputRelativePath, materializeMaterial } from "./minimax_material_library_api.mjs";
 import { pickMixedMaterial } from "./minimax_mixed_material_picker.mjs";
 import { mt, onMixedLocaleChange } from "./minimax_mixed_i18n.mjs";
+import { renderMixedNativeModeCard } from "./minimax_mixed_native_inputs.mjs?boot=native_inputs_v1";
 
 const STYLE_ID = "mmx-mixed-mode-integrated-styles";
 const CHUNK_BYTES = 8 * 1024 * 1024;
@@ -27,8 +28,8 @@ function ensureStyles() {
 .mmx-mixed-root{min-height:0;display:flex;flex-direction:column;gap:8px;padding:0;box-sizing:border-box;font-family:inherit;color:inherit}
 .mmx-mixed-timeline-panel{flex:0 0 auto;min-height:0;overflow:hidden}.mmx-mixed-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.mmx-mixed-toolbar .mmx-spacer{flex:1}
 .mmx-mixed-cards{display:flex;gap:7px;overflow-x:auto;overflow-y:hidden;min-height:0;padding:2px;align-items:stretch}.mmx-mixed-card{flex:1 0 190px;min-width:190px;min-height:112px;cursor:pointer;position:relative}.mmx-mixed-card.selected{outline:1px solid #4fff8f}.mmx-mixed-card.invalid{outline:1px solid #e46d6d}.mmx-mixed-card-head{display:flex;align-items:center;gap:6px}.mmx-mixed-card-head b{white-space:nowrap}.mmx-mixed-card-prompt{min-height:34px;max-height:38px;overflow:hidden;white-space:pre-wrap}.mmx-mixed-card-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:auto}.mmx-mixed-card-actions .bd-btn{padding:3px 6px;font-size:10px}
-.mmx-mixed-editor-grid{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:minmax(0,2fr) minmax(250px,1fr);gap:8px}.mmx-mixed-editor-panel,.mmx-mixed-continuity-panel{min-height:0;overflow:auto}.mmx-mixed-field{display:flex;flex-direction:column;gap:4px}.mmx-mixed-field-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.mmx-mixed-field-row>.grow{flex:1 1 180px;min-width:120px}.mmx-mixed-field input[type=number],.mmx-mixed-field input[type=text]{background:#181818;border:1px solid #333;border-radius:4px;color:#eee;padding:5px 7px;box-sizing:border-box}.mmx-mixed-field input[type=text]{width:100%}.mmx-mixed-media-block{display:flex;flex-direction:column;gap:6px;padding-top:7px;border-top:1px solid #333}.mmx-mixed-media-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.mmx-mixed-media-head b{margin-right:auto}.mmx-mixed-media-row{display:flex;align-items:center;gap:6px;min-width:0}.mmx-mixed-media-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmx-mixed-media-row .bd-select{max-width:180px}.mmx-mixed-source-preview{height:150px;background:#111;border:1px solid #333;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center}.mmx-mixed-source-preview video{width:100%;height:100%;object-fit:contain}.mmx-mixed-status{min-height:18px}.mmx-mixed-status.error{color:#ff9090}.mmx-mixed-status.ok{color:#72d99b}.mmx-mixed-warning{color:#f5b55f}.mmx-mixed-toggle{display:flex;align-items:center;gap:7px}.mmx-mixed-toggle input{accent-color:#4fff8f}.mmx-mixed-result-row{display:grid;grid-template-columns:minmax(130px,1fr) 110px auto;gap:6px;align-items:center}
-@media(max-width:768px){.mmx-mixed-editor-grid{grid-template-columns:1fr}.mmx-mixed-card{flex-basis:165px;min-width:165px}.mmx-mixed-result-row{grid-template-columns:1fr 90px auto}}
+.mmx-mixed-editor-grid{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px}.mmx-mixed-editor-panel{min-height:0;overflow:visible}.mmx-mixed-continuity-panel{min-height:28px;display:flex;align-items:center;justify-content:center;gap:8px;padding:4px 8px!important;overflow:visible}.mmx-mixed-continuity-panel>b{font-size:11px;color:#999;font-weight:500}.mmx-mixed-continuity-panel .mmx-mixed-toggle{border:1px solid #444;border-radius:999px;padding:5px 9px;background:#171717}.mmx-mixed-field{display:flex;flex-direction:column;gap:4px}.mmx-mixed-field-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.mmx-mixed-field-row>.grow{flex:1 1 180px;min-width:120px}.mmx-mixed-field input[type=number],.mmx-mixed-field input[type=text]{background:#181818;border:1px solid #333;border-radius:4px;color:#eee;padding:5px 7px;box-sizing:border-box}.mmx-mixed-field input[type=text]{width:100%}.mmx-mixed-media-block{display:flex;flex-direction:column;gap:6px;padding-top:7px;border-top:1px solid #333}.mmx-mixed-media-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.mmx-mixed-media-head b{margin-right:auto}.mmx-mixed-media-row{display:flex;align-items:center;gap:6px;min-width:0}.mmx-mixed-media-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmx-mixed-media-row .bd-select{max-width:180px}.mmx-mixed-source-preview{height:150px;background:#111;border:1px solid #333;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center}.mmx-mixed-source-preview video{width:100%;height:100%;object-fit:contain}.mmx-mixed-status{min-height:18px}.mmx-mixed-status.error{color:#ff9090}.mmx-mixed-status.ok{color:#72d99b}.mmx-mixed-warning{color:#f5b55f}.mmx-mixed-toggle{display:flex;align-items:center;gap:7px}.mmx-mixed-toggle input{accent-color:#4fff8f}.mmx-mixed-result-row,.mmx-mixed-native-result-row{display:grid;grid-template-columns:minmax(130px,1fr) 110px auto;gap:6px;align-items:center}.mmx-mixed-native-card{width:100%;box-sizing:border-box}.mmx-mixed-native-slot-actions,.mmx-mixed-native-section-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}.mmx-mixed-native-slot-actions .mmx-mixed-native-result-row{flex:1 1 320px}.mmx-mixed-source-range{margin-top:8px}.mmx-mixed-source-range input{width:70px}.mmx-mixed-editor-panel>.bd-seg-head{margin-bottom:6px}
+@media(max-width:768px){.mmx-mixed-card{flex-basis:165px;min-width:165px}.mmx-mixed-result-row,.mmx-mixed-native-result-row{grid-template-columns:1fr 90px auto}}
 `;
     document.head.appendChild(style);
 }
@@ -360,7 +361,7 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
         seg.inputs = seg.inputs || {};
         seg.inputs.resultRefs = seg.inputs.resultRefs || [];
         if (role !== "identity") removeResultRefs(seg, role);
-        seg.inputs.resultRefs.push({ role, origin: "earlier", segmentId: sourceId, frame: "last" });
+        seg.inputs.resultRefs.push({ role, origin: "segment", segmentId: sourceId, frame: "last" });
     }
 
     function appendActionButton(parent, key, action, handler, { primary = false, disabled = false } = {}) {
@@ -821,39 +822,22 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
         modeField.append(modeLabelEl, mode);
         panel.appendChild(modeField);
 
-        const promptField = document.createElement("div");
-        promptField.className = "mmx-mixed-field";
-        const promptLabel = document.createElement("span");
-        promptLabel.className = "bd-label";
-        setI18n(promptLabel, "mixed.prompt");
-        const prompt = document.createElement("textarea");
-        prompt.className = "bd-prompt";
-        prompt.value = seg.prompt || "";
-        prompt.oninput = () => {
-            seg.prompt = prompt.value;
-            onChange?.(clone(state));
-        };
-        prompt.onchange = () => notify();
-        promptField.append(promptLabel, prompt);
-        panel.appendChild(promptField);
-
-        if (seg.mode !== "source_video") {
-            const durationField = document.createElement("div");
-            durationField.className = "mmx-mixed-field-row";
-            const durationLabel = document.createElement("span");
-            durationLabel.className = "bd-label";
-            setI18n(durationLabel, "mixed.duration");
-            const duration = document.createElement("input");
-            duration.type = "number";
-            duration.min = "0.1";
-            duration.step = "0.1";
-            duration.value = String(seg.duration ?? 5);
-            duration.onchange = () => mutate(() => { seg.duration = Math.max(0.1, Number(duration.value) || 5); });
-            durationField.append(durationLabel, duration);
-            panel.appendChild(durationField);
-        }
-
-        renderModeInputs(panel, seg);
+        renderMixedNativeModeCard({
+            container: panel,
+            segment: seg,
+            segmentIndex: selectedIndex,
+            segments: state.segments,
+            mutate,
+            upload: uploadDescriptor,
+            probeVideo,
+            viewUrl,
+            status,
+            onPromptInput: (value) => {
+                seg.prompt = value;
+                onChange?.(clone(state));
+            },
+            tr: mt,
+        });
 
         const continuityTitle = document.createElement("b");
         setI18n(continuityTitle, "mixed.continuity");
@@ -902,7 +886,8 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
         const continuityPanel = document.createElement("section");
         continuityPanel.className = "bd-panel mmx-mixed-continuity-panel";
         renderEditor(editorPanel, continuityPanel);
-        grid.append(editorPanel, continuityPanel);
+        if (selectedIndex > 0) grid.appendChild(continuityPanel);
+        grid.appendChild(editorPanel);
         root.append(timeline, grid);
         const statusEl = document.createElement("div");
         statusEl.className = "bd-meta mmx-mixed-status";
@@ -925,6 +910,9 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
     const controller = {
         root,
         get state() { return state; },
+        get selectedIndex() { return selectedIndex; },
+        get selectedSegment() { return selectedSegment(); },
+        commitExternalMutation() { notify(); },
         setState(next) {
             state = normalizeMixedTimeline(next || createDefaultMixedTimeline(editor), { idFactory: uid });
             canonicalRunSelection(state);

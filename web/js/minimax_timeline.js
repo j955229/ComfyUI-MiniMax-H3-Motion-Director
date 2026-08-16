@@ -162,8 +162,8 @@ import {
     createDefaultMixedTimeline,
     mountMixedUI,
     syncMixedGlobalsFromWidgets,
-} from "./minimax_mixed_ui.mjs?boot=mixed_native_v2";
-import { normalizeMixedTimeline } from "./minimax_mixed_state.mjs?boot=mixed_native_v2";
+} from "./minimax_mixed_ui.mjs?boot=mixed_native_v3";
+import { normalizeMixedTimeline } from "./minimax_mixed_state.mjs?boot=mixed_native_v3";
 
 const RULER_H = 24;
 const SEG_LABEL_H = 20;
@@ -4194,6 +4194,13 @@ class MiniMaxH3MotionDirectorEditor {
 
     _setMixedBodiesActive(active) {
         const host = this._mixedPanelHost;
+        const parent = this.mainBody || this.root?.querySelector?.(".bd-main");
+        if (active && parent && this.outputBarEl?.parentElement === parent) {
+            // Keep exactly the same vertical hierarchy as standalone Director:
+            // mode toolbar -> output controls -> active mode body.
+            parent.insertBefore(this.outputBarEl, parent.firstChild);
+            if (host?.parentElement === parent) this.outputBarEl.after(host);
+        }
         for (const child of Array.from(this.mainBody?.children || [])) {
             if (child === host || child === this.outputBarEl) continue;
             child.classList?.toggle("hidden", !!active);
