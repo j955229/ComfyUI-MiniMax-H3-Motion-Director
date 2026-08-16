@@ -39,6 +39,8 @@ function writeState(editor, nextState, { render = false } = {}) {
     if (!editor?.timelineWidget) return;
     const normalized = normalizeMixedTimeline(stampNodeId(editor, clone(nextState)));
     syncMixedGlobalsFromWidgets(editor, normalized);
+    normalized.output = normalized.output || {};
+    normalized.output.audioMode = "generate";
     stampNodeId(editor, normalized);
     editor._mmxMixedWorkspace = clone(normalized);
     editor.timeline = normalized;
@@ -143,6 +145,9 @@ function prepareMixedChrome(editor) {
         const common = editor.root?.querySelector?.('[data-a="r2v-common-toggle"]');
         if (common) elements.add(common);
     }
+    const audioMode = editor.outAudioWrap
+        || editor.root?.querySelector?.('[data-r="out-audio-wrap"]');
+    if (audioMode) elements.add(audioMode);
 
     editor._mmxMixedChromeSnapshot = [...elements].map((element) => ({
         element,
@@ -199,9 +204,6 @@ function enterMixed(editor) {
     if (!editor?._directorModalController?.pages?.generation) return false;
     if (editor._mmxMixedController) return true;
 
-    // When the native task dropdown initiated the transition, onGlobalField is
-    // wrapped below and has already captured standalone state before mutating
-    // timeline.global.taskType. Other entry paths still need a snapshot here.
     if (!editor._mmxLegacyBeforeMixed && !timelineIsMixed(editor)) {
         saveLegacyWorkspace(editor);
     }
@@ -209,6 +211,8 @@ function enterMixed(editor) {
     const state = editor._mmxMixedWorkspace
         ? normalizeMixedTimeline(editor._mmxMixedWorkspace)
         : parseOrCreateMixedTimeline(editor);
+    state.output = state.output || {};
+    state.output.audioMode = "generate";
     stampNodeId(editor, state);
     editor._mmxMixedWorkspace = clone(state);
     editor.timeline = state;
@@ -298,17 +302,12 @@ function patchEditor(editor) {
         const mixedActive = !!this._mmxMixedController || timelineIsMixed(this);
 
         if (mixedActive && nextKey !== "mixed") {
-            // The native handler mutates this.timeline before applyTaskLayout.
-            // Restore standalone state first, then let the original handler
-            // perform its normal T2V/I2V/FL2V/R2V/V2V/RV2V transition.
             if (this._mmxMixedController) leaveMixed(this);
             else restoreLegacyWorkspace(this);
             return original.onGlobalField(field, value);
         }
 
         if (!mixedActive && nextKey === "mixed") {
-            // Capture complete standalone state before the native handler writes
-            // taskType=Mixed into it.
             saveLegacyWorkspace(this);
         }
         return original.onGlobalField(field, value);
@@ -329,6 +328,8 @@ function patchEditor(editor) {
             const state = this._mmxMixedController?.state || this._mmxMixedWorkspace || this.timeline;
             if (state) {
                 syncMixedGlobalsFromWidgets(this, state);
+                state.output = state.output || {};
+                state.output.audioMode = "generate";
                 stampNodeId(this, state);
                 this._mmxMixedWorkspace = clone(state);
                 this.timeline = state;
@@ -343,6 +344,8 @@ function patchEditor(editor) {
             const state = this._mmxMixedController?.state || this._mmxMixedWorkspace || this.timeline;
             normalizeMixedRunSelection(this);
             syncMixedGlobalsFromWidgets(this, state);
+            state.output = state.output || {};
+            state.output.audioMode = "generate";
             stampNodeId(this, state);
             return clone(state);
         }
