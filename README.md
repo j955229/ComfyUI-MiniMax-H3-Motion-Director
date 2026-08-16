@@ -62,7 +62,7 @@ It shows Segment 2 with Source Range `2.5 -> 7.5` and the orange-clothed identit
 > Additional Source Video identities.
 <img width="1694" height="922" alt="螢幕擷取畫面 2026-08-17 060214" src="https://github.com/user-attachments/assets/b39ae93f-f0ae-4585-8529-f5f5ae8f3564" />
 <img width="1724" height="924" alt="螢幕擷取畫面 2026-08-17 060204" src="https://github.com/user-attachments/assets/fd67a6d4-1ea4-4914-b23c-b346b9665769" />
-side by side here. They show two more Source Video segments using different source ranges and identity references.
+They show two more Source Video segments using different source ranges and identity references.
 
 ### Segment Result
 
@@ -121,13 +121,14 @@ The Results page supports:
 
 The Multi range is applied to both preview and export.
 
-> **Media slot M4 — source/identity materials.
+> source/identity materials.
 <img width="700" height="1050" alt="mat_6ab2eb041f5946da800d90fd12eb7763" src="https://github.com/user-attachments/assets/bfb5dbe9-0e42-41e7-b1a0-dff4f3e6b0ca" />
 <img width="1536" height="2730" alt="mat_9627ae4460244d498e13f870c9176b9a" src="https://github.com/user-attachments/assets/0ee745c8-d3d8-41f6-a865-4026aac3e5dd" />
 <img width="1024" height="1536" alt="mat_041ae9cc9fa543bb8fe8c0361422cdd1" src="https://github.com/user-attachments/assets/0a267715-a00a-4189-8104-e7a68af8efd6" />
 
 
-> **Media slot M5 — final Mixed result video.
+> final Mixed result video.
+
 https://github.com/user-attachments/assets/7590e2db-0a49-43e7-b51d-d7a6faa21dc5
 
 
