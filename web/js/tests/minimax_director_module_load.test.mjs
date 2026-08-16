@@ -17,7 +17,10 @@ Object.assign(globalThis, {
     File: dom.window.File,
     MouseEvent: dom.window.MouseEvent,
     MutationObserver: dom.window.MutationObserver,
-    navigator: dom.window.navigator,
+});
+Object.defineProperty(globalThis, "navigator", {
+    value: dom.window.navigator,
+    configurable: true,
 });
 globalThis.requestAnimationFrame = globalThis.requestAnimationFrame || ((fn) => setTimeout(() => fn(Date.now()), 0));
 globalThis.cancelAnimationFrame = globalThis.cancelAnimationFrame || ((id) => clearTimeout(id));
