@@ -32,14 +32,7 @@ def select_result_frame(frames: torch.Tensor, selector: str | int) -> torch.Tens
 
 
 def _load_matching_cache_any_node(producer, plan) -> torch.Tensor | None:
-    """Find an exact producer cache when planning did not receive the runtime node id.
-
-    This is an identity-safe fallback, not a fuzzy cache lookup: metadata must
-    exactly match the producer's current cache fingerprint before frames load.
-    It lets full ordered Mixed runs consume a producer written earlier in the
-    same queue even though the planner is built before executor node context is
-    attached.
-    """
+    """Find an exact producer cache when planning did not receive the runtime node id."""
     try:
         import folder_paths
 
@@ -97,6 +90,10 @@ class MixedResultRef:
         self._plan = plan
         self._node_id = str(node_id) if node_id is not None else None
         self._resolved: torch.Tensor | None = None
+
+    def bind_node_id(self, node_id: str | None) -> None:
+        if node_id not in (None, ""):
+            self._node_id = str(node_id)
 
     def _source_segment(self):
         for segment in self._plan.segments:
@@ -177,9 +174,12 @@ def attach_mixed_result_refs(plan, *, node_id: str | None) -> None:
                 }[role]
                 if str(getattr(seg, "mixed_mode", "")) != expected:
                     raise ValueError(f"Invalid Mixed {role} reference on {getattr(seg, 'mixed_mode', '')} segment.")
-                seg.refs = [ref for ref in (seg.refs or []) if int(getattr(ref, "index", -1)) != slot]
+                seg.refs = [
+                    ref
+                    for ref in (seg.refs or [])
+                    if int(getattr(ref, "index", -1)) != slot
+                ]
                 if role == "i2v_start":
-                    # The selected prior-result frame is the explicit I2V start source.
                     seg.source_clip = None
             else:
                 raise ValueError(f"Unsupported Mixed result reference role: {role}.")
@@ -197,4 +197,24 @@ def attach_mixed_result_refs(plan, *, node_id: str | None) -> None:
         seg.refs = sorted(seg.refs, key=lambda ref: int(getattr(ref, "index", 0)))
 
 
-__all__ = ["MixedResultRef", "attach_mixed_result_refs", "select_result_frame"]
+def bind_mixed_runtime_node(plan, node_id: str | None) -> None:
+    """Bind the actual Comfy execution node id after planning but before sampling."""
+    if not bool(getattr(plan, "mixed_mode", False)) or node_id in (None, ""):
+        return
+    value = str(node_id)
+    plan.mixed_node_id = value
+    run_selection = getattr(plan, "run_indices", None)
+    if hasattr(run_selection, "node_id"):
+        run_selection.node_id = value
+    for seg in plan.segments:
+        for ref in getattr(seg, "refs", None) or []:
+            if isinstance(ref, MixedResultRef):
+                ref.bind_node_id(value)
+
+
+__all__ = [
+    "MixedResultRef",
+    "attach_mixed_result_refs",
+    "bind_mixed_runtime_node",
+    "select_result_frame",
+]
