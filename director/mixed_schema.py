@@ -1,7 +1,8 @@
 """Pure schema and dependency rules for the Director Mixed meta-mode.
 
-This module intentionally has no ComfyUI imports so validation can run in tests
-and in frontend-adjacent tooling without loading model/runtime code.
+Mixed is a user-facing meta-mode. Every segment is compiled to one of the
+existing MiniMax H3 backend task keys; generated-result references use stable
+segment IDs so reorder/delete behavior is deterministic.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ def backend_task_key(mode: object, *, identity_count: int = 0) -> str:
 
 
 def _align_minimax_visible_frames(frame_count: int) -> int:
-    """Small pure copy of H3's 17k+5 visible-generation grid."""
+    """Pure H3 17k+5 visible-generation grid helper."""
     count = max(1, int(frame_count))
     if count <= 5:
         return 5
@@ -60,10 +61,9 @@ def _align_minimax_visible_frames(frame_count: int) -> int:
 def mixed_visible_frame_count(segment: Mapping[str, object], fps: float) -> int:
     """Compile user duration/range to visible output frames.
 
-    Source Video is intentionally *not* stretched onto the H3 grid: its selected
-    source range defines the visible segment duration. The executor may
-    internally over-generate/pad to a legal H3 length and trims back to this
-    visible count, matching standalone source-video behavior.
+    Source Video is intentionally not stretched onto the H3 grid. Its selected
+    source range defines visible duration; the runtime may internally align the
+    conditioning clip and then trim back to this visible count.
     """
     mode = normalize_mixed_mode(segment.get("mode"))
     rate = max(0.001, float(fps or 24.0))
@@ -86,14 +86,20 @@ def mixed_visible_frame_count(segment: Mapping[str, object], fps: float) -> int:
     return _align_minimax_visible_frames(max(5, int(round(seconds * rate))))
 
 
-def effective_mixed_continuity(segment: Mapping[str, object], segment_index: int) -> dict[str, bool]:
+def effective_mixed_continuity(
+    segment: Mapping[str, object],
+    segment_index: int,
+) -> dict[str, bool]:
     """Compile per-segment continuity before global runtime masters are applied."""
     if int(segment_index) <= 0:
         return {"visual": False, "audio": False}
+
     continuity = segment.get("continuity") or {}
     visual = bool(continuity.get("visual", False))
     audio = bool(continuity.get("audio", False))
 
+    # Explicit I2V start-state conditioning owns the visual start frame. Audio
+    # inheritance remains independent.
     if normalize_mixed_mode(segment.get("mode")) == "i2v":
         inputs = segment.get("inputs") or {}
         has_static_start = bool(inputs.get("startFrame") or inputs.get("start_frame"))
@@ -104,6 +110,7 @@ def effective_mixed_continuity(segment: Mapping[str, object], segment_index: int
         )
         if has_static_start or has_result_start:
             visual = False
+
     return {"visual": visual, "audio": audio}
 
 
@@ -127,7 +134,18 @@ def _normalize_frame(value: object) -> str | int:
     return index
 
 
-def normalize_result_reference(value: Mapping[str, object]) -> dict:
+def normalize_result_reference(
+    value: Mapping[str, object],
+    *,
+    consumer_index: int | None = None,
+    segment_ids: Sequence[str] | None = None,
+) -> dict:
+    """Normalize legacy Previous/Earlier refs to one stable Segment Result ref.
+
+    New persisted state always uses ``origin='segment'`` + ``segmentId``. Legacy
+    ``previous`` is resolved to the concrete preceding stable ID at load time;
+    legacy ``earlier`` keeps its explicit stable ID.
+    """
     if not isinstance(value, Mapping):
         raise MixedSchemaError("Result reference must be an object.")
 
@@ -135,33 +153,46 @@ def normalize_result_reference(value: Mapping[str, object]) -> dict:
     if role not in _RESULT_REF_ROLES:
         raise MixedSchemaError(f"Unsupported result reference role: {role!r}.")
 
-    origin_raw = str(value.get("origin") or "").strip().lower().replace("-", "_").replace(" ", "_")
-    origin_aliases = {
-        "previous_segment": "previous",
-        "prev": "previous",
-        "earlier_segment": "earlier",
-        "segment": "earlier",
-        "specific_segment": "earlier",
+    origin_raw = (
+        str(value.get("origin") or "")
+        .strip()
+        .lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
+    previous_aliases = {"previous", "previous_segment", "prev"}
+    segment_aliases = {
+        "segment",
+        "earlier",
+        "earlier_segment",
+        "specific_segment",
     }
-    origin = origin_aliases.get(origin_raw, origin_raw)
-    if origin not in {"previous", "earlier"}:
+
+    if origin_raw in previous_aliases:
+        if consumer_index is not None and consumer_index > 0 and segment_ids:
+            segment_id = str(segment_ids[consumer_index - 1])
+        else:
+            # Preserve an explicit invalid reference so validation reports a
+            # deterministic Missing Reference instead of silently retargeting.
+            segment_id = ""
+    elif origin_raw in segment_aliases:
+        segment_id = str(
+            value.get("segmentId")
+            or value.get("segment_id")
+            or value.get("sourceSegmentId")
+            or ""
+        ).strip()
+    else:
         raise MixedSchemaError(
-            f"Invalid result reference origin {origin_raw!r}; expected previous or earlier."
+            f"Invalid result reference origin {origin_raw!r}; expected Segment Result."
         )
 
-    out = {
+    return {
         "role": role,
-        "origin": origin,
+        "origin": "segment",
+        "segmentId": segment_id,
         "frame": _normalize_frame(value.get("frame", value.get("frameIndex", "last"))),
     }
-    if origin == "earlier":
-        segment_id = str(
-            value.get("segmentId") or value.get("segment_id") or value.get("sourceSegmentId") or ""
-        ).strip()
-        if not segment_id:
-            raise MixedSchemaError("Earlier Segment result reference requires segmentId.")
-        out["segmentId"] = segment_id
-    return out
 
 
 def _normalize_source_video(inputs: dict) -> None:
@@ -170,13 +201,18 @@ def _normalize_source_video(inputs: dict) -> None:
         raise MixedSchemaError("Source Video required for Mixed Source Video segment.")
     source = copy.deepcopy(dict(source))
 
-    # The material library deliberately owns Reference Video assets only. Even
-    # if a library item has already been materialized into ComfyUI input, its
-    # stable asset/library identity must not silently change its semantics into
-    # a Mixed Source Video.
+    # Material Library video is Reference Video only. A materialized library
+    # object must not silently change semantics into segment-local Source Video.
     if any(
         source.get(key) not in (None, "")
-        for key in ("assetId", "asset_id", "libraryId", "library_id", "materialId", "material_id")
+        for key in (
+            "assetId",
+            "asset_id",
+            "libraryId",
+            "library_id",
+            "materialId",
+            "material_id",
+        )
     ):
         raise MixedSchemaError(
             "Material Library Video cannot be used as Mixed Source Video; "
@@ -205,6 +241,7 @@ def _normalize_source_video(inputs: dict) -> None:
         raise MixedSchemaError("Source Video range must contain numeric startSec/endSec.") from exc
     if start < 0 or end <= start:
         raise MixedSchemaError("Source Video range must satisfy 0 <= startSec < endSec.")
+
     source["range"] = {"startSec": start, "endSec": end}
     inputs["sourceVideo"] = source
     inputs.pop("source_video", None)
@@ -212,8 +249,16 @@ def _normalize_source_video(inputs: dict) -> None:
     inputs.pop("source_range", None)
 
 
-def _identity_count(inputs: Mapping[str, object], result_refs: Sequence[Mapping[str, object]]) -> int:
-    static = inputs.get("identityPictures") or inputs.get("identity_pictures") or []
+def _identity_count(
+    inputs: Mapping[str, object],
+    result_refs: Sequence[Mapping[str, object]],
+) -> int:
+    static = (
+        inputs.get("identityPictures")
+        or inputs.get("identity_pictures")
+        or inputs.get("pictures")
+        or []
+    )
     if not isinstance(static, Sequence) or isinstance(static, (str, bytes, bytearray)):
         static_count = 0
     else:
@@ -228,9 +273,12 @@ def normalize_mixed_segments(values: Sequence[Mapping[str, object]]) -> list[dic
     if not values:
         raise MixedSchemaError("Mixed timeline requires at least one segment.")
 
-    normalized: list[dict] = []
+    # First pass establishes all stable IDs before any legacy Previous ref is
+    # migrated. This prevents reorder-sensitive implicit refs from surviving in
+    # canonical state.
+    prepared: list[dict] = []
+    segment_ids: list[str] = []
     seen: set[str] = set()
-
     for index, raw in enumerate(values):
         if not isinstance(raw, Mapping):
             raise MixedSchemaError(f"Mixed Segment {index + 1} must be an object.")
@@ -240,7 +288,12 @@ def normalize_mixed_segments(values: Sequence[Mapping[str, object]]) -> list[dic
         if segment_id in seen:
             raise MixedSchemaError(f"Duplicate segment id: {segment_id}.")
         seen.add(segment_id)
+        segment_ids.append(segment_id)
+        prepared.append(copy.deepcopy(dict(raw)))
 
+    normalized: list[dict] = []
+    for index, raw in enumerate(prepared):
+        segment_id = segment_ids[index]
         mode = normalize_mixed_mode(raw.get("mode"))
         inputs_raw = raw.get("inputs") or {}
         if not isinstance(inputs_raw, Mapping):
@@ -250,7 +303,14 @@ def normalize_mixed_segments(values: Sequence[Mapping[str, object]]) -> list[dic
         refs_raw = inputs.get("resultRefs") or inputs.get("result_refs") or []
         if not isinstance(refs_raw, Sequence) or isinstance(refs_raw, (str, bytes, bytearray)):
             raise MixedSchemaError(f"Mixed Segment {index + 1} resultRefs must be a list.")
-        result_refs = [normalize_result_reference(ref) for ref in refs_raw]
+        result_refs = [
+            normalize_result_reference(
+                ref,
+                consumer_index=index,
+                segment_ids=segment_ids,
+            )
+            for ref in refs_raw
+        ]
         inputs["resultRefs"] = result_refs
         inputs.pop("result_refs", None)
 
@@ -261,16 +321,14 @@ def normalize_mixed_segments(values: Sequence[Mapping[str, object]]) -> list[dic
         if not isinstance(continuity_raw, Mapping):
             raise MixedSchemaError(f"Mixed Segment {index + 1} continuity must be an object.")
         continuity = {
-            "visual": bool(continuity_raw.get("visual", False)),
-            "audio": bool(continuity_raw.get("audio", False)),
+            "visual": index > 0 and bool(continuity_raw.get("visual", False)),
+            "audio": index > 0 and bool(continuity_raw.get("audio", False)),
         }
-        if index == 0:
-            continuity = {"visual": False, "audio": False}
 
         identity_count = _identity_count(inputs, result_refs)
         normalized.append(
             {
-                **copy.deepcopy(dict(raw)),
+                **raw,
                 "id": segment_id,
                 "mode": mode,
                 "inputs": inputs,
@@ -278,6 +336,7 @@ def normalize_mixed_segments(values: Sequence[Mapping[str, object]]) -> list[dic
                 "backendTask": backend_task_key(mode, identity_count=identity_count),
             }
         )
+
     return normalized
 
 
@@ -298,17 +357,11 @@ def collect_dependency_indices(
     id_to_index = _id_index(segments)
 
     inputs = consumer.get("inputs") or {}
-    refs = inputs.get("resultRefs") or []
-    for ref in refs:
-        origin = ref.get("origin")
-        if origin == "previous":
-            if consumer_index <= 0:
-                raise MixedSchemaError(
-                    f"Missing Reference: Segment {consumer.get('id')} has no previous segment."
-                )
-            dependencies.add(consumer_index - 1)
-            continue
-
+    for ref in inputs.get("resultRefs") or []:
+        if str(ref.get("origin") or "") != "segment":
+            raise MixedSchemaError(
+                f"Invalid Reference: Segment {consumer.get('id')} contains a non-canonical result ref."
+            )
         source_id = str(ref.get("segmentId") or "").strip()
         source_index = id_to_index.get(source_id)
         if source_index is None:
@@ -319,12 +372,12 @@ def collect_dependency_indices(
         if source_index >= consumer_index:
             raise MixedSchemaError(
                 f"Invalid Reference: Segment {consumer.get('id')} can only reference an "
-                f"Earlier Segment; {source_id!r} is not earlier after reorder."
+                f"earlier Segment Result; {source_id!r} is not earlier after reorder."
             )
         dependencies.add(source_index)
 
-    continuity = consumer.get("continuity") or {}
-    if consumer_index > 0 and (bool(continuity.get("visual")) or bool(continuity.get("audio"))):
+    effective = effective_mixed_continuity(consumer, consumer_index)
+    if consumer_index > 0 and (effective["visual"] or effective["audio"]):
         dependencies.add(consumer_index - 1)
 
     return tuple(sorted(dependencies))
@@ -359,15 +412,16 @@ def dependency_identity(
     """Canonical dependency descriptor suitable for cache fingerprint input."""
     if consumer_index < 0 or consumer_index >= len(segments):
         raise MixedSchemaError(f"Mixed consumer index out of range: {consumer_index}.")
+
     consumer = segments[consumer_index]
     refs = [dict(ref) for ref in ((consumer.get("inputs") or {}).get("resultRefs") or [])]
-    continuity = consumer.get("continuity") or {}
+    effective = effective_mixed_continuity(consumer, consumer_index)
     continuity_identity = None
-    if consumer_index > 0 and (bool(continuity.get("visual")) or bool(continuity.get("audio"))):
+    if consumer_index > 0 and (effective["visual"] or effective["audio"]):
         continuity_identity = {
             "sourceSegmentId": str(segments[consumer_index - 1]["id"]),
-            "visual": bool(continuity.get("visual")),
-            "audio": bool(continuity.get("audio")),
+            "visual": effective["visual"],
+            "audio": effective["audio"],
         }
     return {
         "segmentId": str(consumer["id"]),
