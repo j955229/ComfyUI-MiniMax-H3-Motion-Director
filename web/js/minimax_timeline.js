@@ -128,7 +128,7 @@ import {
     setWidgetVisibility,
     syncDisabledWidgetState,
     toggleBooleanWidgetValue,
-} from "./minimax_continuity_ui.mjs?boot=director_ui_v3";
+} from "./minimax_continuity_ui.mjs?boot=director_ui_v4";
 import {
     applyI18nDom,
     aspectDisplayLabel,
@@ -4269,6 +4269,11 @@ class MiniMaxH3MotionDirectorEditor {
                     if (this.getDirectorMode() !== "mixed") return;
                     this.mixedTimeline = normalizeMixedTimeline(next);
                     this.mixedTimeline.output = this.mixedTimeline.output || {};
+                    // Mixed segment count controls which global continuity tuning
+                    // widgets are visible on the outer Director node. Refresh it
+                    // immediately when segments are added/removed or continuity
+                    // state changes instead of waiting for another task switch.
+                    refreshDirectorContinuityUi(this.node, this);
                     this.mixedTimeline.output.audioMode = "generate";
                     if (this.node?.id != null) this.mixedTimeline.nodeId = String(this.node.id);
                     this.scheduleTimelineSync?.();
