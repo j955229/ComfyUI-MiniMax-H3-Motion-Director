@@ -340,12 +340,39 @@ def _fit_source_clip_to_plan(plan, raw_clip: torch.Tensor) -> torch.Tensor:
     )
 
 
+def _mixed_source_images_output(plan, images_out: list[torch.Tensor]) -> list[torch.Tensor]:
+    """Expose each Mixed segment's actual source without inventing a global timeline.
+
+    Source Video segments own a segment-local ``source_clip``. Source-free modes
+    (T2V/R2V, plus I2V/FL2V which have keyframes rather than a temporal source)
+    emit a one-frame gray placeholder so ``source_images`` never pretends the
+    generated result was source footage. Keeping placeholders to one frame also
+    avoids recreating the large blank-video allocations fixed in v1.0.1.
+    """
+    outputs: list[torch.Tensor] = []
+    if not plan.segments:
+        return _empty_source_images_for(images_out)
+
+    for seg in plan.segments:
+        raw = getattr(seg, "source_clip", None)
+        if isinstance(raw, torch.Tensor) and raw.ndim == 4 and int(raw.shape[0]) > 0:
+            fitted = _fit_source_clip_to_plan(plan, raw)
+            target_len = max(1, int(getattr(seg, "end_frame", 0)) - int(getattr(seg, "start_frame", 0)))
+            outputs.append(pad_or_trim_frames(fitted, target_len).cpu().float())
+            continue
+        outputs.append(torch.full((1, max(1, int(plan.height)), max(1, int(plan.width)), 3), 0.5))
+    return outputs
+
+
 def build_source_images_output(
     plan,
     images_out: list[torch.Tensor],
     *,
     split_outputs: bool,
 ) -> list[torch.Tensor]:
+    if bool(getattr(plan, "mixed_mode", False)):
+        return _mixed_source_images_output(plan, images_out)
+
     if split_outputs:
         chunks: list[torch.Tensor] = []
         segment_indices = (
@@ -459,6 +486,11 @@ def finalize_director_outputs(
                 images_out,
                 split_outputs=split_source_outputs,
             )
+            if bool(getattr(plan, "mixed_mode", False)):
+                report = report + (
+                    "\n\nSource images: Mixed segment-local sources; source-free segments emit "
+                    "one-frame placeholders."
+                )
         except Exception as exc:
             log.warning("Source images output failed: %s", exc)
             source_images_out = images_out
