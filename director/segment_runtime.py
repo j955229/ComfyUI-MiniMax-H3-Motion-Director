@@ -15,6 +15,7 @@ import io
 import torch
 from PIL import Image
 
+from ..lib.generation_source_policy import is_source_free_generation_task
 from ..lib.image_prep import fit_canvas, fit_video_long_edge
 from ..lib.video_io import (
     load_timeline_segment,
@@ -111,17 +112,17 @@ def load_source_bridge_clip(
 
 
 def resolve_segment_raw_clip(plan: DirectorPlan, seg) -> torch.Tensor:
-    """Prefer in-memory gen canvas / segment clip; fall back to timeline video decode."""
+    """Prefer real visual sources; source-free generation returns no pixel clip."""
+    task_key = str(getattr(seg, "task_key", "") or "").lower()
+    if is_source_free_generation_task(task_key):
+        return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
+
     if seg.source_clip is not None and seg.source_clip.shape[0] > 0:
         return seg.source_clip.clone()
 
-    # Pure t2v (incl. external groups) has no source frames.
-    if getattr(seg, "task_key", "") == "t2v":
-        return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
-
     # FL2V end-only deliberately has no source_clip. The generation timeline's
     # tiny gray source_video is schema padding, not image0.
-    if getattr(seg, "task_key", "") == "fl2v" and is_gen_timeline_plan(plan):
+    if task_key == "fl2v" and is_gen_timeline_plan(plan):
         return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
 
     sv = plan.source_video
@@ -152,11 +153,15 @@ def resolve_segment_raw_clip_with_lookahead(
     if extra <= 0:
         return resolve_segment_raw_clip(plan, seg)
 
+    task_key = str(getattr(seg, "task_key", "") or "").lower()
+    if is_source_free_generation_task(task_key):
+        return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
+
     if seg.source_clip is not None and seg.source_clip.shape[0] > 0:
         # Gen canvases have no timeline lookahead beyond the clip itself.
         return seg.source_clip.clone()
 
-    if getattr(seg, "task_key", "") == "fl2v" and is_gen_timeline_plan(plan):
+    if task_key == "fl2v" and is_gen_timeline_plan(plan):
         return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
 
     end = int(seg.end_frame) + extra
