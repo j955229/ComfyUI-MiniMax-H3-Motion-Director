@@ -29,7 +29,8 @@ S5  R2V
 
 Mixed is implemented as a native Director mode, with its own timeline state and segment-local media, while sharing the normal Director output, continuity, Material Library, preview, post-processing, and result pipeline.
 
-> **Media slot M1 — Mixed overview.** Insert the provided screenshot `螢幕擷取畫面 2026-08-17 060144.png` here. It shows the Mixed timeline, per-boundary continuity controls, T2V, and Source Video segments in one project.
+> **Media slot M1 — Mixed overview.** <img width="1717" height="919" alt="螢幕擷取畫面 2026-08-17 060144" src="https://github.com/user-attachments/assets/3304f01d-92a8-4a38-ae59-575911e5121d" />
+ It shows the Mixed timeline, per-boundary continuity controls, T2V, and Source Video segments in one project.
 
 ### Mixed segment modes
 
@@ -54,9 +55,12 @@ The actual Source Video is **segment-local and upload-only**. A Material Library
 
 `Start sec` and `End sec` define the source range. The selected range determines the generated segment duration; Mixed does not arbitrarily time-stretch the source clip.
 
-> **Media slot M2 — Source Video + Identity example.** Insert `螢幕擷取畫面 2026-08-17 060155.png` here. It shows Segment 2 with Source Range `2.5 -> 7.5` and the orange-clothed identity reference.
+> **Media slot M2 — Source Video + Identity example.<img width="1699" height="902" alt="螢幕擷取畫面 2026-08-17 060155" src="https://github.com/user-attachments/assets/4e66feed-76d9-48e0-bc65-ca7c2b7ef6df" />
+ It shows Segment 2 with Source Range `2.5 -> 7.5` and the orange-clothed identity reference.
 
-> **Media slot M3 — Additional Source Video identities.** Place `螢幕擷取畫面 2026-08-17 060204.png` and `螢幕擷取畫面 2026-08-17 060214.png` side by side here. They show two more Source Video segments using different source ranges and identity references.
+> **Media slot M3 — Additional Source Video identities.<img width="1694" height="922" alt="螢幕擷取畫面 2026-08-17 060214" src="https://github.com/user-attachments/assets/b39ae93f-f0ae-4585-8529-f5f5ae8f3564" />
+<img width="1724" height="924" alt="螢幕擷取畫面 2026-08-17 060204" src="https://github.com/user-attachments/assets/fd67a6d4-1ea4-4914-b23c-b346b9665769" />
+side by side here. They show two more Source Video segments using different source ranges and identity references.
 
 ### Segment Result
 
@@ -115,9 +119,16 @@ The Results page supports:
 
 The Multi range is applied to both preview and export.
 
-> **Media slot M4 — source/identity materials.** If you want to document the real v1.1.0 test, show the three supplied dance Source Videos (`mat_8e763dd8...`, `mat_05763e3e...`, `mat_43e60f21...`) together with the three supplied identity images (orange, blue, and white/teal characters). Do not place them inside the repository unless you have redistribution rights; this slot is only a placement note.
+> **Media slot M4 — source/identity materials.
+<img width="700" height="1050" alt="mat_6ab2eb041f5946da800d90fd12eb7763" src="https://github.com/user-attachments/assets/bfb5dbe9-0e42-41e7-b1a0-dff4f3e6b0ca" />
+<img width="1536" height="2730" alt="mat_9627ae4460244d498e13f870c9176b9a" src="https://github.com/user-attachments/assets/0ee745c8-d3d8-41f6-a865-4026aac3e5dd" />
+<img width="1024" height="1536" alt="mat_041ae9cc9fa543bb8fe8c0361422cdd1" src="https://github.com/user-attachments/assets/0a267715-a00a-4189-8104-e7a68af8efd6" />
 
-> **Media slot M5 — final Mixed result video.** Insert or link the provided `MiniMaxH3_Director_00003_.mp4` here as the final v1.1.0 demonstration. It is the best media item for showing the complete T2V -> three Source Video/Identity segments workflow.
+
+> **Media slot M5 — final Mixed result video.
+https://github.com/user-attachments/assets/7590e2db-0a49-43e7-b51d-d7a6faa21dc5
+
+
 
 ### Mixed v1 limitations
 
