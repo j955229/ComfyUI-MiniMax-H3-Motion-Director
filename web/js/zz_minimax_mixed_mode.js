@@ -26,10 +26,16 @@ function currentTaskKey(node, editor = node?._minimaxEditor) {
     return resolveDirectorTaskKey(value);
 }
 
+function stampNodeId(editor, state) {
+    if (state && editor?.node?.id != null) state.nodeId = String(editor.node.id);
+    return state;
+}
+
 function writeState(editor, nextState, { render = false } = {}) {
     if (!editor?.timelineWidget) return;
-    const normalized = normalizeMixedTimeline(nextState);
+    const normalized = normalizeMixedTimeline(stampNodeId(editor, clone(nextState)));
     syncMixedGlobalsFromWidgets(editor, normalized);
+    stampNodeId(editor, normalized);
     editor._mmxMixedWorkspace = clone(normalized);
     editor.timeline = normalized;
     editor.timelineWidget.value = JSON.stringify(normalized);
@@ -40,7 +46,6 @@ function writeState(editor, nextState, { render = false } = {}) {
 }
 
 function saveLegacyWorkspace(editor) {
-    if (editor._mmxLegacyBeforeMixed) return;
     const raw = String(editor.timelineWidget?.value || "");
     let parsed = null;
     try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = null; }
@@ -54,10 +59,11 @@ function saveLegacyWorkspace(editor) {
 
 function restoreLegacyWorkspace(editor) {
     const saved = editor._mmxLegacyBeforeMixed;
-    if (!saved) return;
+    if (!saved) return false;
     editor.timeline = clone(saved.timeline || {});
     editor.selectedIndex = Number(saved.selectedIndex || 0);
     if (editor.timelineWidget && saved.serialized) editor.timelineWidget.value = saved.serialized;
+    return true;
 }
 
 function enterMixed(editor) {
@@ -68,6 +74,7 @@ function enterMixed(editor) {
     const state = editor._mmxMixedWorkspace
         ? normalizeMixedTimeline(editor._mmxMixedWorkspace)
         : parseOrCreateMixedTimeline(editor);
+    stampNodeId(editor, state);
     editor._mmxMixedWorkspace = clone(state);
     editor.timeline = state;
 
@@ -90,7 +97,7 @@ function enterMixed(editor) {
 
 function leaveMixed(editor) {
     if (!editor?._mmxMixedController) return false;
-    editor._mmxMixedWorkspace = editor._mmxMixedController.state;
+    editor._mmxMixedWorkspace = stampNodeId(editor, editor._mmxMixedController.state);
     editor._mmxMixedController.destroy();
     editor._mmxMixedController = null;
     const host = editor._directorModalController?.pages?.generation;
@@ -110,7 +117,10 @@ function normalizeMixedRunSelection(editor) {
         .map((value) => Number.parseInt(value, 10))
         .filter((value) => Number.isInteger(value) && value >= 0 && value < count))]
         .sort((a, b) => a - b);
-    state.runSelection = state.runSelectEnabled ? (selection.length ? selection : [...Array(count).keys()]) : [];
+    state.runSelection = state.runSelectEnabled
+        ? (selection.length ? selection : [...Array(count).keys()])
+        : [];
+    stampNodeId(editor, state);
     editor._mmxMixedWorkspace = clone(state);
     editor.timeline = state;
 }
@@ -134,7 +144,12 @@ function patchEditor(editor) {
     editor._mmxMixedOriginal = original;
 
     editor.getDirectorMode = function (taskTypeValue) {
-        const key = resolveDirectorTaskKey(taskTypeValue || widgetByName(this.node, "task_type")?.value || this.globalTask?.value || "");
+        const key = resolveDirectorTaskKey(
+            taskTypeValue
+            || widgetByName(this.node, "task_type")?.value
+            || this.globalTask?.value
+            || "",
+        );
         if (key === "mixed") return "mixed";
         return original.getDirectorMode?.(taskTypeValue) || "video";
     };
@@ -145,8 +160,7 @@ function patchEditor(editor) {
             enterMixed(this);
             return;
         }
-        const wasMixed = !!this._mmxMixedController;
-        if (wasMixed) leaveMixed(this);
+        if (this._mmxMixedController) leaveMixed(this);
         return original.applyTaskLayout?.apply(this, arguments);
     };
 
@@ -155,6 +169,7 @@ function patchEditor(editor) {
             const state = this._mmxMixedController?.state || this._mmxMixedWorkspace || this.timeline;
             if (state) {
                 syncMixedGlobalsFromWidgets(this, state);
+                stampNodeId(this, state);
                 this._mmxMixedWorkspace = clone(state);
                 this.timeline = state;
             }
@@ -168,6 +183,7 @@ function patchEditor(editor) {
             const state = this._mmxMixedController?.state || this._mmxMixedWorkspace || this.timeline;
             normalizeMixedRunSelection(this);
             syncMixedGlobalsFromWidgets(this, state);
+            stampNodeId(this, state);
             return clone(state);
         }
         return original.buildTimelinePayload?.apply(this, arguments);
@@ -176,6 +192,7 @@ function patchEditor(editor) {
     editor._writeTimelineWidget = function () {
         if (currentTaskKey(this.node, this) === "mixed") {
             const payload = this.buildTimelinePayload();
+            stampNodeId(this, payload);
             this._mmxMixedWorkspace = clone(payload);
             this.timeline = payload;
             if (this.timelineWidget) this.timelineWidget.value = JSON.stringify(payload);
@@ -187,19 +204,28 @@ function patchEditor(editor) {
 
     editor.getRunnableSegmentCount = function () {
         if (currentTaskKey(this.node, this) === "mixed") {
-            return Number((this._mmxMixedController?.state || this._mmxMixedWorkspace || this.timeline)?.segments?.length || 0);
+            return Number(
+                (this._mmxMixedController?.state || this._mmxMixedWorkspace || this.timeline)
+                    ?.segments?.length || 0,
+            );
         }
         return original.getRunnableSegmentCount?.apply(this, arguments) ?? 0;
     };
 
     editor.supportsRunSelect = function () {
-        if (currentTaskKey(this.node, this) === "mixed") return this.getRunnableSegmentCount() >= 2;
+        if (currentTaskKey(this.node, this) === "mixed") {
+            return this.getRunnableSegmentCount() >= 2;
+        }
         return original.supportsRunSelect?.apply(this, arguments) ?? false;
     };
 
     editor.isRunSelectEnabled = function () {
         if (currentTaskKey(this.node, this) === "mixed") {
-            return !!(this._mmxMixedController?.state || this._mmxMixedWorkspace || this.timeline)?.runSelectEnabled;
+            return !!(
+                this._mmxMixedController?.state
+                || this._mmxMixedWorkspace
+                || this.timeline
+            )?.runSelectEnabled;
         }
         return original.isRunSelectEnabled?.apply(this, arguments) ?? false;
     };
