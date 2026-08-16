@@ -1,0 +1,57 @@
+name: Mixed Mode CI
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+  pull_request:
+    paths:
+      - "director/mixed_*.py"
+      - "web/js/minimax_mixed_*.mjs"
+      - "web/js/zz_minimax_mixed_mode.js"
+      - "tests/test_mixed_*.py"
+      - ".github/workflows/mixed_mode_ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mixed-static-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile Python modules
+        run: |
+          python -m py_compile \
+            director/mixed_schema.py \
+            director/mixed_plan.py \
+            director/mixed_runtime.py \
+            director/mixed_selection.py \
+            director/source_bridge.py \
+            nodes/director.py \
+            nodes/director_common.py \
+            lib/task_prompts.py
+
+      - name: Run pure Python Mixed tests
+        run: |
+          python -m unittest \
+            tests.test_mixed_schema \
+            tests.test_mixed_selection
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check Mixed JavaScript syntax
+        run: |
+          node --check web/js/minimax_mixed_state.mjs
+          node --check web/js/minimax_mixed_ui.mjs
+          node --check web/js/zz_minimax_mixed_mode.js
+
+      - name: Run Mixed frontend state tests
+        run: node web/js/tests/minimax_mixed_state.test.mjs
