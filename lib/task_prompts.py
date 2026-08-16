@@ -65,6 +65,13 @@ TASK_PROMPT_SPECS: tuple[TaskPromptSpec, ...] = (
         "源视频时间轴编辑，可选参考图（图片1–9）与参考音频（音频1–3）；"
         "每段源画面为 <Video 1>，参考图用 <Picture N>，参考音频用 <Audio J>；无参考素材时等同 v2v。",
     ),
+    TaskPromptSpec(
+        "mixed",
+        "混合模式(Mixed)",
+        "",
+        "同一时间线逐段选择 T2V / I2V / FL2V / R2V / Source Video。"
+        "Mixed 是 Director 元模式，每段执行前会编译成现有 H3 后端任务。",
+    ),
 )
 
 TASK_PROMPT_BY_KEY = {spec.key: spec for spec in TASK_PROMPT_SPECS}
@@ -85,9 +92,9 @@ def task_type_combo_options() -> tuple[list[str], dict]:
     return options, {
         "default": task_type_option_label(default_spec),
         "tooltip": (
-            "MiniMax H3 支持 t2v / i2v / fl2v / r2v / v2v / rv2v。"
+            "MiniMax H3 Director 支持 t2v / i2v / fl2v / r2v / v2v / rv2v / mixed。"
+            "Mixed 为逐段元模式；其 Segment 会编译成现有 H3 task，不会把 mixed 送进模型。"
             "提示词直接送入 MiniMaxH3ImageToVideo 或 MiniMaxH3ReferenceToVideo（内部 tokenize）。"
-            "r2v 用 <Picture 1>；v2v/rv2v 为源视频时间轴编辑（自动绑定 <Video 1>）；rv2v 另可挂参考图。"
         ),
     }
 
