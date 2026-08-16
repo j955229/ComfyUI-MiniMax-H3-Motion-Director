@@ -6,27 +6,25 @@ Approved direction: integrate Mixed natively into the existing Director mode sta
 
 Development branch: `feature/mixed-mode` only.
 
-Baseline for all standalone-mode behavior: current `main` v1.0.3 (`835f8d54f977ea119deef91ae442fc83d64aece0`).
+Standalone baseline: current `main` v1.0.3 (`835f8d54f977ea119deef91ae442fc83d64aece0`).
 
-## Problem being corrected
+## Root cause being corrected
 
-The previous Mixed UI integration layered a second state machine on top of the existing Director by monkey-patching mode routing, layout switching and persistence from `zz_minimax_mixed_mode.js` / `zzz_minimax_mixed_persistence.js`.
+The previous Mixed integration added a second state machine by monkey-patching mode routing, layout switching and persistence from `zz_minimax_mixed_mode.js` / `zzz_minimax_mixed_persistence.js`.
 
 That architecture caused cross-mode state leakage:
 
-- entering Mixed could leave legacy FL2V or batch panels mounted below the Mixed editor;
-- two prompt editors could appear at the same time;
-- returning from Mixed could leave the wrong legacy workspace active;
-- T2V could incorrectly show reference-media slots that are illegal for T2V;
-- visible controls depended on which standalone mode the user entered Mixed from.
+- legacy FL2V or prompt-batch panels could remain visible under Mixed;
+- two prompt editors could appear at once;
+- returning from Mixed could restore the wrong standalone workspace;
+- standalone T2V could incorrectly inherit reference-media UI;
+- Mixed visibility could depend on which mode the user entered it from.
 
-These are not independent CSS defects. The root cause is two competing mode state machines mutating the same editor state and DOM.
+These are architectural state-ownership defects, not isolated CSS defects.
 
 ## Chosen architecture
 
-Mixed becomes a first-class Director mode handled by the same native mode-routing path as all existing modes.
-
-Conceptually:
+Mixed becomes a first-class Director mode handled by the same native routing path as the existing modes.
 
 ```text
 Generation
@@ -40,38 +38,36 @@ Generation
 │   ├─ RV2V
 │   └─ Mixed
 │
-└─ applyTaskLayout()
+└─ native applyTaskLayout()
     ├─ existing video layout
     ├─ existing prompt-batch layout
     ├─ existing FL2V layout
-    └─ native Mixed layout
+    └─ Mixed layout
 ```
 
-There must be exactly one authoritative mode transition path.
+There is exactly one authoritative mode-transition path.
 
-Mixed must not replace or wrap `getDirectorMode()`, `onGlobalField()` or `applyTaskLayout()` after editor construction. It must be recognized directly by those native functions.
+Mixed must not patch or wrap `getDirectorMode()`, `getTaskKey()`, `onGlobalField()` or `applyTaskLayout()` after editor construction. Those native functions must explicitly understand Mixed.
 
-## Non-negotiable compatibility rule
+## Standalone compatibility boundary
 
-Outside Mixed, the six existing standalone modes must render and behave exactly as `main` v1.0.3.
+Outside Mixed, the six existing modes must render and behave exactly as `main` v1.0.3.
 
-Mixed code may add an explicit `mixed` branch to shared routing, but it must not broaden the input rules of any existing mode.
+The rewrite may add explicit `mixed` branches to shared routing, but must not broaden any standalone mode's legal inputs.
 
-Examples that must remain true:
+Required invariants:
 
-- standalone T2V: prompt/duration only; no reference-image slots;
-- standalone I2V: existing first-image behavior only;
-- standalone FL2V: existing FL2V workspace and exactly its existing prompt editor;
+- standalone T2V: prompt/duration only; no reference picture/video/audio slots;
+- standalone I2V: existing start-image behavior only;
+- standalone FL2V: existing FL2V workspace, first/last-frame UI and exactly its existing prompt editor;
 - standalone R2V: existing reference picture/video/audio behavior;
-- standalone V2V/RV2V: existing source-video timeline and Source Bridge behavior.
+- standalone V2V/RV2V: existing source-video timeline, source-audio behavior and Source Bridge behavior.
 
 No Mixed transition may leave mode-specific DOM or state from another mode visible.
 
 ## Native mode routing
 
-`minimax_gen_timeline.js` must recognize `mixed` as its own Director mode rather than falling through to `video` or `prompt_batch`.
-
-Expected routing:
+`minimax_gen_timeline.js` must return a dedicated `mixed` Director mode.
 
 ```text
 T2V / I2V / R2V -> prompt_batch
@@ -80,88 +76,86 @@ V2V / RV2V       -> video
 Mixed             -> mixed
 ```
 
-`Mixed` must not be added to `PROMPT_BATCH_TASKS`, because doing so would make legacy prompt-batch helpers treat the entire Mixed timeline as T2V/I2V/R2V batch data.
+`Mixed` must not be added to `PROMPT_BATCH_TASKS`; otherwise legacy batch helpers will reinterpret Mixed schema as T2V/I2V/R2V batch state.
 
 ## State ownership
 
-Mixed state must be separate from standalone workspace state.
-
-Recommended editor state:
+This is a hard requirement, not a recommendation:
 
 ```text
-editor.timeline       -> existing standalone workspace state
-editor.mixedTimeline  -> Mixed schema state
+editor.timeline       -> standalone workspace state only
+editor.mixedTimeline  -> Mixed schema state only
 ```
 
-When `Mixed` is active:
+While Mixed is active:
 
-- Mixed UI reads/writes `editor.mixedTimeline`;
-- legacy timeline normalizers do not run against Mixed schema;
-- `buildTimelinePayload()` returns the Mixed payload;
-- `timeline_data` persistence serializes the Mixed payload;
-- the legacy `editor.timeline` remains a valid standalone workspace that can be restored without reconstructing it from Mixed data.
+- Mixed UI reads/writes `editor.mixedTimeline` only;
+- legacy batch/FL2V/video timeline normalizers never receive Mixed schema;
+- `buildTimelinePayload()` returns the canonical Mixed payload;
+- persistence serializes the Mixed payload;
+- `editor.timeline` remains a valid standalone workspace and is not rewritten into Mixed shape.
 
-When a standalone mode is active:
+While a standalone mode is active:
 
-- all existing code continues to read/write `editor.timeline` exactly as before;
-- Mixed state is retained separately and is not passed through legacy batch/FL2V/video normalizers.
+- existing code continues to read/write `editor.timeline` exactly as before;
+- `editor.mixedTimeline` remains stored separately and untouched by standalone normalizers.
 
-This separation eliminates the need for DOM snapshots and timeline-shape coercion during mode switching.
+This separation replaces the previous DOM-snapshot and timeline-shape recovery hacks.
 
-## Mode transition rules
+## Native transition rules
 
 ### Standalone -> Mixed
 
-1. Let the current standalone mode finish its existing stash operation if applicable.
-2. Preserve the standalone workspace unchanged.
-3. Set native Director mode to `mixed`.
-4. Show only the Mixed body plus truly shared Director chrome.
-5. Restore `editor.mixedTimeline` if present; otherwise create a default Mixed timeline.
+1. Let the current standalone mode execute its existing stash logic where applicable.
+2. Preserve `editor.timeline` as standalone state.
+3. Switch the native Director mode to `mixed`.
+4. Show the Mixed body and only shared Director chrome whose semantics are valid for Mixed.
+5. Restore `editor.mixedTimeline`, or create a default Mixed timeline if none exists.
 
 ### Mixed -> Standalone
 
-1. Commit pending Mixed editor drafts into `editor.mixedTimeline`.
-2. Hide/unmount the Mixed body.
-3. Set the selected standalone task normally.
-4. Let the existing native `applyTaskLayout()` restore its own workspace.
-5. Do not copy Mixed segment fields into the standalone timeline.
+1. Commit pending Mixed drafts to `editor.mixedTimeline`.
+2. Hide/unmount Mixed mode-specific body.
+3. Set the requested standalone task normally.
+4. Let native `applyTaskLayout()` restore its existing standalone workspace.
+5. Never copy Mixed segment fields into `editor.timeline`.
 
 ### Standalone -> Standalone
 
-Must remain exactly the existing main behavior.
+Must remain the existing main behavior with no Mixed detour.
 
 ## DOM/layout ownership
 
-Mixed must have one dedicated body container under the existing Director `mainBody`, for example:
+Mixed receives one dedicated body container under the existing Director `mainBody`.
 
 ```text
 .bd-main
 ├─ existing video-mode DOM
 ├─ existing prompt-batch DOM
 ├─ existing FL2V DOM
-├─ existing shared output controls
+├─ existing shared controls
 └─ .bd-mixed-panel
 ```
 
-`applyTaskLayout()` is solely responsible for which mode-specific body is visible.
+Only native `applyTaskLayout()` decides which mode-specific body is visible.
 
-When Mixed is active, all legacy mode-specific bodies must be hidden:
+When Mixed is active, all legacy mode-specific bodies are hidden:
 
-- source-video stage/controls/viewport where they are video-mode-only;
-- prompt-batch group editor/list;
+- source-video stage/controls/viewport when they are video-mode-only;
+- prompt-batch group list/editor;
 - FL2V panel/detail editor;
-- R2V common/reference panel elements owned by prompt-batch mode;
-- any legacy prompt textarea not explicitly part of the Mixed selected-segment editor.
+- R2V common/reference UI owned by prompt-batch mode;
+- every legacy prompt textarea not belonging to the Mixed selected-segment editor.
 
-The top-level mode selector remains visible.
+The top-level mode selector stays visible.
 
-Shared output controls that are truly mode-independent may remain visible, but only if their semantics are valid for Mixed. V2V/RV2V-only controls such as source-audio passthrough must remain hidden in Mixed v1.
+Shared output resolution/export controls remain the existing Director controls and appear once. V2V/RV2V-only source-audio passthrough controls remain hidden in Mixed v1.
 
 ## Mixed visual structure
 
-Mixed must use the existing Director visual language (`bd-*` controls, spacing, borders, typography, buttons and panels). It must not introduce a second design system.
+Mixed must use the existing Director `bd-*` visual system for controls, spacing, borders, typography and panels. It must not introduce an independent design language.
 
-The Mixed Generation body has three regions:
+Mixed Generation contains:
 
 1. Segment strip
    - Add Segment
@@ -170,31 +164,21 @@ The Mixed Generation body has three regions:
    - reorder / duplicate / delete
 
 2. Selected Segment editor
-   - segment mode
-   - exactly one prompt editor
+   - mode
+   - exactly one prompt textarea
    - duration where the mode permits direct duration editing
-   - only that mode's legal inputs
+   - only the legal inputs for that mode
 
 3. Continuity panel
    - Visual continuity
    - Audio continuity
-   - first segment shows no previous-segment controls
+   - no previous-segment controls for Segment 1
 
-Output resolution/export controls remain the existing Director controls rather than being duplicated inside Mixed.
+There is no global Mixed prompt editor.
 
-## Exactly one prompt editor
+Changing selected segment rebinds the same selected-segment editor instead of mounting another prompt panel.
 
-A selected Mixed segment has exactly one `prompt` field and exactly one visible prompt textarea.
-
-There is no additional global Mixed prompt box.
-
-Legacy prompt-batch / FL2V prompt editors must be hidden while Mixed is active.
-
-Changing selected Mixed segment updates the same selected-segment prompt editor.
-
-## Per-segment legal input matrix
-
-The UI must be strict. Switching a Mixed segment's mode must show only legal inputs for that mode.
+## Strict per-segment input matrix
 
 | Mixed mode | Prompt | Duration | Keyframe images | Reference pictures | Reference video/audio | Source Video |
 |---|---:|---:|---|---|---|---|
@@ -204,17 +188,17 @@ The UI must be strict. Switching a Mixed segment's mode must show only legal inp
 | R2V | yes | yes | none | up to H3 limits | existing R2V video/audio refs | none |
 | Source Video | yes | derived from Source Range | none | optional identity pictures | allowed RV2V audio refs only | required |
 
-Important acceptance invariant:
+Hard invariant:
 
-> A Mixed T2V segment can never display image/video/audio material slots.
+> A Mixed T2V segment can never create or display image, video or audio material slots.
 
-This must be enforced by state/render logic, not merely hidden by CSS after generic material controls are created.
+This is enforced by render/state branching. Generic media controls must not be created and then merely hidden with CSS.
 
 ## Segment Result references
 
-The user-facing `Previous` and `Earlier` split remains removed.
+The user-facing `Previous` / `Earlier` split remains removed.
 
-All result-based image/keyframe references use one control:
+All result-derived image/keyframe references use one control:
 
 ```text
 Source: Segment Result
@@ -238,64 +222,65 @@ Motion/Audio continuity remains a separate immediate-previous relationship and i
 
 ## Material Library
 
-Mixed must reuse the existing Material Library modal/controller.
+Mixed reuses the existing Material Library modal/controller. It must never render a second picker window.
 
-No second picker window may be rendered.
+Legal filters:
 
-The slot requesting an asset supplies a filter/acceptance policy to the existing library:
+- I2V/FL2V keyframe: image only;
+- R2V picture: image only;
+- R2V Reference Video: reference video;
+- R2V Reference Audio: audio;
+- Source Video identity: image only.
 
-- I2V/FL2V keyframe -> image only;
-- R2V picture -> image only;
-- R2V reference video -> reference video;
-- R2V reference audio -> audio;
-- Source Video identity -> image only.
+Material Library video remains Reference Video only and can never become Mixed Source Video.
 
-Material Library videos remain Reference Video only and must never become Mixed Source Video.
-
-Source Video uses its own upload/select-current-source flow.
+Mixed Source Video uses its dedicated source-video upload/range flow.
 
 ## i18n
 
-Mixed labels must use the existing locale lifecycle and change in place when the Director language changes.
+Mixed uses the existing locale lifecycle and updates in place.
 
-Technical tokens may remain language-neutral:
+Only model/task acronyms remain language-neutral:
 
 - T2V
 - I2V
 - FL2V
 - R2V
-- Source Video where used as the formal mode name if the project intentionally keeps mode labels English
 
-All ordinary descriptions, button text, validation messages and field labels must be fully localized. No Chinese UI sentence may contain accidental untranslated helper text.
+Ordinary English phrases are localized. In Chinese locale, the user-facing Mixed segment mode label is `源视频`, not `Source Video`; in English locale it is `Source Video`.
 
-## Removal of the old monkey-patch integration
+Likewise `Segment Result`, field labels, help text, buttons, validation messages and status text are fully localized. Chinese mode must not contain accidental English helper phrases, and English mode must not contain accidental Chinese UI phrases.
 
-After the native path is implemented and covered by tests, the previous state-machine takeover must be removed.
+Backend keys remain language-independent (`mixed`, `source_video`, `segment`, etc.).
 
-Specifically, `zz_minimax_mixed_mode.js` must no longer patch or replace:
+## Removal of old monkey-patch ownership
+
+After native routing is implemented and regression-tested, remove the previous mode-state takeover.
+
+`zz_minimax_mixed_mode.js` must no longer patch:
 
 - `getDirectorMode()`
 - `getTaskKey()`
 - `applyTaskLayout()`
 - `onGlobalField()`
-- persistence lifecycle methods
+- persistence lifecycle methods.
 
-`zzz_minimax_mixed_persistence.js` must no longer be required to recover Mixed JSON from legacy editor mutations.
+`zzz_minimax_mixed_persistence.js` must no longer be needed to recover Mixed JSON after legacy normalizers mutate it.
 
-If those files have no remaining legitimate responsibilities after the native rewrite, delete them rather than keep dormant competing logic.
+If those files have no non-patch responsibilities remaining, they are deleted rather than left as dormant competing integration code.
 
-## Backend impact
+## Backend boundary
 
-The existing Mixed schema/planner/runtime work remains conceptually valid and should not be rewritten merely because the UI integration changes.
+The UI rewrite does not redefine the existing Mixed backend architecture.
 
-The native UI must continue serializing the same canonical Mixed schema consumed by:
+Canonical Mixed schema continues to feed:
 
 - `director/mixed_schema.py`
 - `director/mixed_plan.py`
 - `director/mixed_runtime.py`
 - `director/mixed_selection.py`
 
-Backend task compilation remains:
+Backend compilation remains:
 
 ```text
 Mixed T2V          -> t2v
@@ -310,23 +295,23 @@ Mixed Source Bridge remains disabled in v1.
 
 ## Persistence
 
-Saving a workflow while Mixed is selected must persist:
+Saving while Mixed is active persists:
 
 - top-level task = Mixed;
 - canonical Mixed timeline schema;
 - stable segment IDs;
-- selected segment/mode data where needed for UI restoration;
-- no embedded legacy prompt-batch or FL2V workspace masquerading as Mixed content.
+- selected-segment UI state where needed;
+- no legacy FL2V/prompt-batch workspace embedded as Mixed content.
 
-Reloading the workflow must enter native Mixed mode directly without first normalizing the Mixed JSON as T2V, FL2V or source-video timeline data.
+Reloading a Mixed workflow enters native Mixed mode directly. Legacy timeline normalizers must not run on Mixed schema first.
 
-Switching away from Mixed and back in the same editor session must restore the unchanged Mixed workspace.
+Switching Mixed -> standalone -> Mixed restores the unchanged Mixed workspace. Switching standalone -> Mixed -> standalone restores the unchanged standalone workspace.
 
 ## Required regression tests
 
-### Mode isolation
+### Transition matrix
 
-Add browser/jsdom tests for these transitions:
+At minimum:
 
 - T2V -> Mixed -> T2V
 - I2V -> Mixed -> I2V
@@ -335,57 +320,55 @@ Add browser/jsdom tests for these transitions:
 - V2V -> Mixed -> V2V
 - RV2V -> Mixed -> RV2V
 
-After returning, visible standalone controls must satisfy the same invariants as `main`.
+### Standalone invariants
 
-### Explicit standalone invariants
-
-At minimum:
+After each return from Mixed:
 
 - T2V has no reference picture/video/audio slots;
-- FL2V shows exactly one FL2V prompt editor and its normal first/last-frame UI;
-- R2V shows its normal reference UI;
+- FL2V has exactly one FL2V prompt editor plus normal first/last-frame UI;
+- R2V has its normal reference UI;
 - V2V/RV2V source-video controls remain unchanged;
-- no `.bd-mixed-panel` content is visible outside Mixed.
+- `.bd-mixed-panel` is not visible.
 
 ### Mixed invariants
 
-- Mixed T2V shows exactly one prompt editor and no material slots;
-- Mixed I2V shows exactly Start Frame media input;
-- Mixed FL2V shows exactly First/Last Frame media inputs;
-- Mixed R2V shows R2V references only;
-- Mixed Source Video shows Source Video + identity controls only;
-- switching selected segment changes the one editor rather than mounting another prompt panel;
+- Mixed T2V: exactly one prompt editor, no material slots;
+- Mixed I2V: exactly Start Frame input;
+- Mixed FL2V: exactly First/Last Frame inputs;
+- Mixed R2V: R2V references only;
+- Mixed Source Video: source-video/range + identity/allowed audio controls only;
+- selecting another segment reuses the same editor;
 - shared output resolution controls appear once;
-- language switching updates Mixed in place;
-- Material Library opens the existing modal only.
+- locale switching updates all Mixed text in place;
+- Material Library action opens the existing modal only.
 
-### Persistence
+### Persistence invariants
 
 - Mixed save/reload preserves canonical schema;
-- Mixed -> standalone -> Mixed restores Mixed state;
-- standalone -> Mixed -> standalone preserves standalone workspace state;
-- loading a Mixed workflow never invokes legacy timeline normalizers on the Mixed schema.
+- Mixed -> standalone -> Mixed preserves Mixed state;
+- standalone -> Mixed -> standalone preserves standalone state;
+- loading Mixed never routes its schema through legacy timeline normalizers.
 
 ## Acceptance criteria
 
-1. The three UI regressions demonstrated by the user are impossible under automated tests: no duplicate prompt box, no FL2V panel leakage, no T2V material slots.
-2. Mixed is handled by native `getDirectorMode()` / `applyTaskLayout()` routing.
+1. The user-reported regressions are covered and prevented: no duplicate prompt box, no FL2V leakage, no T2V reference-material slots.
+2. Mixed is a native `getDirectorMode()` / `applyTaskLayout()` mode.
 3. No monkey-patch layer owns Director mode switching after the rewrite.
 4. Existing six standalone modes retain main v1.0.3 behavior.
 5. Mixed has exactly one selected-segment prompt editor.
-6. Mixed per-segment inputs strictly follow the legal input matrix.
-7. Shared output controls are not duplicated.
-8. Existing Material Library UI is reused.
-9. Mixed and standalone workspace state remain independent across repeated mode switching.
-10. Existing Mixed backend schema/planner behavior remains compatible.
+6. Mixed inputs strictly follow the legal matrix.
+7. Existing shared output controls appear once.
+8. Existing Material Library modal is reused.
+9. Mixed and standalone states remain independent through repeated switching.
+10. Existing Mixed backend schema/planner remains compatible.
 11. Both Mixed CI workflows pass on the final feature-branch HEAD.
 12. No merge to `main` occurs until real ComfyUI/H3 testing is accepted.
 
 ## Non-goals
 
 - redesigning the six existing standalone UIs;
-- adding new media capabilities to T2V/I2V/FL2V;
+- adding media capabilities to T2V/I2V/FL2V;
 - making Mixed a separate node or separate Director page;
 - changing Source Bridge semantics;
-- changing the existing backend task meanings;
+- changing backend task meanings;
 - merging to main during this rewrite.
