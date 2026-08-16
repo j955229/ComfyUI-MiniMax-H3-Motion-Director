@@ -29,7 +29,7 @@ S5  R2V
 
 Mixed 是 Director 的原生模式，拥有独立的 Mixed 时间线状态和本段素材，同时继续共用 Director 的输出参数、跨段接续、素材库、预览、后期处理和 Results。
 
-> **素材预留位 M1 — Mixed 总览。** 这里放你提供的 `螢幕擷取畫面 2026-08-17 060144.png`。这张最适合展示同一条 Mixed 时间线上同时存在 T2V、Source Video，以及片段之间的连续性按钮。
+<img width="1717" height="919" alt="螢幕擷取畫面 2026-08-17 060144" src="https://github.com/user-attachments/assets/9a78c6f6-e5af-4530-b702-db7c31f3024a" />
 
 ### Mixed 支持的片段模式
 
@@ -54,9 +54,11 @@ Source Video + Identity Pictures       -> RV2V
 
 `Start sec` 和 `End sec` 决定实际取用的 Source Range。**Source Range 本身决定该 Source Video 片段的时长**，Mixed 不会为了匹配另一个秒数去任意拉伸源视频。
 
-> **素材预留位 M2 — Source Video + Identity。** 这里放 `螢幕擷取畫面 2026-08-17 060155.png`。它最适合展示 Segment 2 的 Source Range `2.5 -> 7.5`、Source Video 和橘红衣人物 Identity。
+<img width="1699" height="902" alt="螢幕擷取畫面 2026-08-17 060155" src="https://github.com/user-attachments/assets/767a9ca0-919c-4fbd-a3c7-dd34bb7d7478" />
 
-> **素材预留位 M3 — 多个 Source Video 身份替换片段。** 这里把 `螢幕擷取畫面 2026-08-17 060204.png` 和 `螢幕擷取畫面 2026-08-17 060214.png` 并排放。前者展示蓝衣 Identity，后者展示白青衣 Identity，同时能看到不同 Source Range。
+<img width="1694" height="922" alt="螢幕擷取畫面 2026-08-17 060214" src="https://github.com/user-attachments/assets/38ce577a-20e7-48b4-9b80-cd20a4b79446" />
+<img width="1724" height="924" alt="螢幕擷取畫面 2026-08-17 060204" src="https://github.com/user-attachments/assets/f32c928e-b519-4600-a809-36df60147c53" />
+
 
 ### Segment Result
 
@@ -117,9 +119,15 @@ Results 页面包括：
 - `多段`：选择连续区间，例如 `1-2`、`1-3`、`2-4`、`3-4`，预览和导出都只处理该区间。
 - `最终结果`：完整成片与编码/保存设置。
 
-> **素材预留位 M4 — 本次真实测试素材。** 如果要说明 v1.1.0 的实际测试案例，这里展示三支舞蹈 Source Video（`mat_8e763dd8...`、`mat_05763e3e...`、`mat_43e60f21...`）与三张人物 Identity（橘红衣、蓝衣、白青衣）的对应关系。README 这里只预留说明，不要把素材直接提交进仓库，除非确认拥有公开再分发权限。
+https://github.com/user-attachments/assets/a7a510f0-3214-48ec-bb4e-e6bdeea1a955
+https://github.com/user-attachments/assets/5fe0ee9c-2822-462c-8a50-63adfb008e8a
+https://github.com/user-attachments/assets/a9b1e6b1-7f59-4147-ac38-985fe3810659
 
-> **素材预留位 M5 — 最终 Mixed 成片。** 这里放或链接你提供的 `MiniMaxH3_Director_00003_.mp4`。它最适合当 v1.1.0 的最终演示：T2V 开场 + 三个 Source Video/Identity 片段，能一次展示 Mixed 的真实使用方式。
+<img width="1536" height="2730" alt="mat_9627ae4460244d498e13f870c9176b9a" src="https://github.com/user-attachments/assets/59939a5d-db6a-4f96-96b6-f3fcb77c1847" />
+<img width="1024" height="1536" alt="mat_041ae9cc9fa543bb8fe8c0361422cdd1" src="https://github.com/user-attachments/assets/bfadb96d-cba7-4686-a095-158fe5795eaa" />
+<img width="700" height="1050" alt="mat_6ab2eb041f5946da800d90fd12eb7763" src="https://github.com/user-attachments/assets/43f60d5f-ff03-4f11-9ec1-697095f79463" />
+
+https://github.com/user-attachments/assets/e1807779-822c-4338-bffb-026ddc5c192d
 
 ### Mixed v1 当前限制
 
