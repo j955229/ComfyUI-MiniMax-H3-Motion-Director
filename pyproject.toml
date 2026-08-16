@@ -1,7 +1,7 @@
 [project]
 name = "minimax-h3-motion-director"
 description = "Multi-segment MiniMax H3 video director for ComfyUI with continuity, selective reruns, asset management, post-processing, and live preview."
-version = "0.1.0"
+version = "1.0.0"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
