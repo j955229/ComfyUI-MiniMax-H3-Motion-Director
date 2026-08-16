@@ -26,6 +26,10 @@ function currentTaskKey(node, editor = node?._minimaxEditor) {
     return resolveDirectorTaskKey(value);
 }
 
+function timelineIsMixed(editor) {
+    return String(editor?.timeline?.timelineMode || "").trim().toLowerCase() === "mixed";
+}
+
 function stampNodeId(editor, state) {
     if (state && editor?.node?.id != null) state.nodeId = String(editor.node.id);
     return state;
@@ -46,19 +50,21 @@ function writeState(editor, nextState, { render = false } = {}) {
 }
 
 function saveLegacyWorkspace(editor) {
-    const raw = String(editor.timelineWidget?.value || "");
-    let parsed = null;
-    try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = null; }
-    if (String(parsed?.timelineMode || "").toLowerCase() === "mixed") return;
+    if (!editor || timelineIsMixed(editor)) return false;
+    const snapshot = clone(editor.timeline || {});
     editor._mmxLegacyBeforeMixed = {
-        timeline: clone(editor.timeline || {}),
-        serialized: raw,
+        timeline: snapshot,
         selectedIndex: Number(editor.selectedIndex || 0),
     };
+    return true;
 }
 
 function legacyFallback(editor) {
-    const taskType = String(widgetByName(editor?.node, "task_type")?.value || "t2v — 文生视频(Text to Video)");
+    const taskType = String(
+        editor?.globalTask?.value
+        || widgetByName(editor?.node, "task_type")?.value
+        || "t2v — 文生视频(Text to Video)",
+    );
     const prompt = String(widgetByName(editor?.node, "global_prompt")?.value || "");
     const frameRate = Number(widgetByName(editor?.node, "frame_rate")?.value || 24) || 24;
     const width = Number(widgetByName(editor?.node, "width")?.value || 864) || 864;
@@ -111,36 +117,13 @@ function legacyFallback(editor) {
 }
 
 function restoreLegacyWorkspace(editor) {
-    const saved = editor._mmxLegacyBeforeMixed;
-    if (saved) {
-        editor.timeline = clone(saved.timeline || {});
-        editor.selectedIndex = Number(saved.selectedIndex || 0);
-        if (editor.timelineWidget && saved.serialized) editor.timelineWidget.value = saved.serialized;
-        return true;
-    }
-
-    const fallback = legacyFallback(editor);
-    editor.timeline = fallback;
-    editor.selectedIndex = 0;
-    if (editor.timelineWidget) editor.timelineWidget.value = JSON.stringify(fallback);
-    return false;
-}
-
-function mixedGlobalWidgetCapture(editor, event) {
-    const target = event?.target;
-    if (!target || target.tagName !== "INPUT") return;
-    const label = target.closest?.(".mmx-mixed-global label");
-    if (!label) return;
-    const prefix = Array.from(label.childNodes || [])
-        .filter((node) => node.nodeType === Node.TEXT_NODE)
-        .map((node) => node.textContent || "")
-        .join(" ")
-        .trim();
-    const widgetName = ({ FPS: "frame_rate", Width: "width", Height: "height" })[prefix];
-    if (!widgetName) return;
-    const widget = widgetByName(editor.node, widgetName);
-    const value = Number(target.value);
-    if (widget && Number.isFinite(value)) widget.value = value;
+    const saved = editor?._mmxLegacyBeforeMixed;
+    const restored = saved ? clone(saved.timeline || {}) : legacyFallback(editor);
+    editor.timeline = restored;
+    editor.selectedIndex = saved ? Number(saved.selectedIndex || 0) : 0;
+    if (editor.timelineWidget) editor.timelineWidget.value = JSON.stringify(restored);
+    editor._mmxLegacyBeforeMixed = null;
+    return !!saved;
 }
 
 function prepareMixedWorkspaceHost(editor) {
@@ -173,18 +156,25 @@ function prepareMixedWorkspaceHost(editor) {
 
 function restoreMixedWorkspaceHost(editor) {
     editor?._mmxMixedWorkspaceHost?.remove?.();
-    editor._mmxMixedWorkspaceHost = null;
+    if (editor) editor._mmxMixedWorkspaceHost = null;
     for (const item of editor?._mmxMixedHiddenChildren || []) {
         if (item?.element) item.element.hidden = !!item.hidden;
     }
-    editor._mmxMixedHiddenChildren = null;
+    if (editor) editor._mmxMixedHiddenChildren = null;
 }
 
 function enterMixed(editor) {
     if (!editor?._directorModalController?.pages?.generation) return false;
     if (editor._mmxMixedController) return true;
 
-    saveLegacyWorkspace(editor);
+    // When the native task dropdown initiated the transition, onGlobalField is
+    // wrapped below and has already captured the standalone state before it
+    // mutates timeline.global.taskType. Other entry paths (node widget changes,
+    // workflow restore) still need a snapshot here.
+    if (!editor._mmxLegacyBeforeMixed && !timelineIsMixed(editor)) {
+        saveLegacyWorkspace(editor);
+    }
+
     const state = editor._mmxMixedWorkspace
         ? normalizeMixedTimeline(editor._mmxMixedWorkspace)
         : parseOrCreateMixedTimeline(editor);
@@ -203,9 +193,6 @@ function enterMixed(editor) {
             writeState(editor, next, { render: false });
         },
     });
-    const capture = (event) => mixedGlobalWidgetCapture(editor, event);
-    editor._mmxMixedGlobalCapture = capture;
-    editor._mmxMixedController.root.addEventListener("change", capture, true);
     writeState(editor, state, { render: false });
     editor.selectedIndex = 0;
     editor.node?.setDirtyCanvas?.(true, true);
@@ -214,15 +201,7 @@ function enterMixed(editor) {
 
 function leaveMixed(editor) {
     if (!editor?._mmxMixedController) return false;
-    editor._mmxMixedWorkspace = stampNodeId(editor, editor._mmxMixedController.state);
-    if (editor._mmxMixedGlobalCapture) {
-        editor._mmxMixedController.root.removeEventListener(
-            "change",
-            editor._mmxMixedGlobalCapture,
-            true,
-        );
-        editor._mmxMixedGlobalCapture = null;
-    }
+    editor._mmxMixedWorkspace = stampNodeId(editor, clone(editor._mmxMixedController.state));
     editor._mmxMixedController.destroy();
     editor._mmxMixedController = null;
     restoreMixedWorkspaceHost(editor);
@@ -254,6 +233,7 @@ function patchEditor(editor) {
     const original = {
         getDirectorMode: editor.getDirectorMode?.bind(editor),
         applyTaskLayout: editor.applyTaskLayout?.bind(editor),
+        onGlobalField: editor.onGlobalField?.bind(editor),
         buildTimelinePayload: editor.buildTimelinePayload?.bind(editor),
         writeTimeline: editor._writeTimelineWidget?.bind(editor),
         syncFromWidgets: editor.syncFromWidgets?.bind(editor),
@@ -274,6 +254,31 @@ function patchEditor(editor) {
         );
         if (key === "mixed") return "mixed";
         return original.getDirectorMode?.(taskTypeValue) || "video";
+    };
+
+    editor.onGlobalField = function (field, value) {
+        if (field !== "taskType" || !original.onGlobalField) {
+            return original.onGlobalField?.(field, value);
+        }
+
+        const nextKey = resolveDirectorTaskKey(value);
+        const mixedActive = !!this._mmxMixedController || timelineIsMixed(this);
+
+        if (mixedActive && nextKey !== "mixed") {
+            // The native handler mutates this.timeline before applyTaskLayout.
+            // Restore the standalone workspace first, then let that handler
+            // perform its normal T2V/I2V/FL2V/R2V/V2V/RV2V transition.
+            if (this._mmxMixedController) leaveMixed(this);
+            else restoreLegacyWorkspace(this);
+            return original.onGlobalField(field, value);
+        }
+
+        if (!mixedActive && nextKey === "mixed") {
+            // Capture the complete standalone state before the native handler
+            // writes taskType=Mixed into it.
+            saveLegacyWorkspace(this);
+        }
+        return original.onGlobalField(field, value);
     };
 
     editor.applyTaskLayout = function () {
@@ -420,13 +425,6 @@ function wrapDirector(nodeType) {
     nodeType.prototype.onRemoved = function () {
         for (const timer of this._mmxMixedTimers || []) clearTimeout(timer);
         this._mmxMixedTimers?.clear?.();
-        if (this._minimaxEditor?._mmxMixedController && this._minimaxEditor._mmxMixedGlobalCapture) {
-            this._minimaxEditor._mmxMixedController.root.removeEventListener(
-                "change",
-                this._minimaxEditor._mmxMixedGlobalCapture,
-                true,
-            );
-        }
         this._minimaxEditor?._mmxMixedController?.destroy?.();
         if (this._minimaxEditor) restoreMixedWorkspaceHost(this._minimaxEditor);
         return onRemoved?.apply(this, arguments);
