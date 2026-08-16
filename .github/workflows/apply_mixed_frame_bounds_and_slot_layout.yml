@@ -1,0 +1,50 @@
+name: Apply Mixed Frame Bounds And Slot Layout
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+    paths:
+      - ".github/scripts/apply_mixed_frame_bounds_and_slot_layout.py"
+      - ".github/workflows/apply_mixed_frame_bounds_and_slot_layout.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Apply fix
+        run: python .github/scripts/apply_mixed_frame_bounds_and_slot_layout.py
+      - name: Syntax check
+        run: |
+          python -m py_compile director/mixed_schema.py director/mixed_plan.py
+          node --check web/js/minimax_mixed_state.mjs
+          node --check web/js/minimax_mixed_native_inputs.mjs
+          node --check web/js/minimax_mixed_ui_v2.mjs
+      - name: Verify key contracts
+        run: |
+          grep -q 'mixedSegmentVisibleFrameCount' web/js/minimax_mixed_state.mjs
+          grep -q 'frameIndex.max = String(maxFrameIndex)' web/js/minimax_mixed_native_inputs.mjs
+          grep -q 'writing-mode:horizontal-tb' web/js/minimax_mixed_native_inputs.mjs
+          grep -q 'Result frame index' director/mixed_schema.py
+      - name: Commit production fix
+        run: |
+          git config user.name "j955229"
+          git config user.email "120770154+j955229@users.noreply.github.com"
+          git add web/js/minimax_mixed_state.mjs web/js/minimax_mixed_native_inputs.mjs web/js/minimax_mixed_ui_v2.mjs director/mixed_schema.py director/mixed_plan.py
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: bound Mixed result frames and compact source controls"
+          git push origin HEAD:feature/mixed-mode
