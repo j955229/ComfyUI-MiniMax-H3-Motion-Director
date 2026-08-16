@@ -12,6 +12,7 @@ from __future__ import annotations
 import comfy.samplers
 
 from ..director.executor_core import execute_director_plan_core
+from ..director.mixed_runtime import bind_mixed_runtime_node
 from ..director.postprocess_config import normalize_postprocess_config
 from ..director.progress import (
     report_director_audio_preview,
@@ -41,7 +42,8 @@ def director_timeline_required_inputs() -> dict:
     gp_meta["tooltip"] = (
         "User prompt — sent directly to MiniMaxH3ImageToVideo / ReferenceToVideo. "
         "r2v: <Picture 1>. v2v: source-timeline edit (<Video 1>). "
-        "rv2v: source timeline + reference images (<Video 1> + <Picture N>)."
+        "rv2v: source timeline + reference images (<Video 1> + <Picture N>). "
+        "mixed: each segment compiles to an existing H3 task."
     )
 
     frames_meta = dict(inputs["total_frames"][1])
@@ -56,6 +58,20 @@ def director_timeline_required_inputs() -> dict:
         "global_prompt": ("STRING", gp_meta),
         "total_frames": ("INT", frames_meta),
     }
+
+
+def _append_mixed_dependency_report(plan, report: str) -> str:
+    auto_indices = sorted(getattr(plan, "mixed_auto_run_indices", None) or [])
+    if not auto_indices:
+        return report
+    reasons = getattr(plan, "mixed_auto_run_reasons", None) or {}
+    lines = ["", "[Mixed Selective Run]", "Auto-executed prerequisite segment(s):"]
+    for index in auto_indices:
+        why = reasons.get(int(index)) or reasons.get(str(index)) or []
+        suffix = f" — {' | '.join(str(item) for item in why)}" if why else ""
+        lines.append(f"- Segment {int(index) + 1}{suffix}")
+    lines.append("Only missing/stale prerequisites were added; valid dependency caches were reused.")
+    return (report or "") + "\n" + "\n".join(lines)
 
 
 class MiniMaxH3MotionDirector:
@@ -142,7 +158,8 @@ class MiniMaxH3MotionDirector:
                             "across each eligible boundary: five original source frames "
                             "are conditioning only, generated frames at B-2/B+2 are "
                             "anchors, and regenerated B-1/B/B+1 replace the hard cut. "
-                            "Visual Motion Context is skipped. 0 disables Source Bridge."
+                            "Visual Motion Context is skipped. 0 disables Source Bridge. "
+                            "Mixed v1 always forces this to 0 because its Source Videos are segment-local."
                         ),
                     },
                 ),
@@ -216,9 +233,6 @@ class MiniMaxH3MotionDirector:
                     },
                 ),
                 **director_perf_inputs(),
-                # Kept at the serialized tail for workflow index compatibility.
-                # Frontend hides this legacy header and renders pin_renorm in
-                # the existing continuity façade without moving backend widgets.
                 "bd_grp_experimental": ("BDGROUP", {"default": "Experimental"}),
                 "pin_renorm_enabled": (
                     "BOOLEAN",
@@ -232,9 +246,6 @@ class MiniMaxH3MotionDirector:
                         ),
                     },
                 ),
-                # Append-only serialized state.  The frontend hides this raw
-                # JSON widget and exposes synchronized proxy controls on the
-                # node and in the single Director modal.
                 "postprocess_config": (
                     "STRING",
                     {
@@ -277,9 +288,10 @@ class MiniMaxH3MotionDirector:
         "MiniMax H3 Motion Director: exported video/audio Motion Context, "
         "MiniMaxH3ImageToVideo / ReferenceToVideo conditioning, internal KSampler "
         "or external SAMPLER+SIGMAS, and LTXVSeparateAVLatent decode. "
-        "Supports t2v / i2v / fl2v / r2v / v2v / rv2v. "
+        "Supports t2v / i2v / fl2v / r2v / v2v / rv2v plus Mixed meta-mode. "
         "Optional i2v_groups / r2v_groups accept multi-group packs from Director Group nodes "
-        "(external priority over UI cards). Defaults: 0.4MP 16:9 (864×480), 5s / 124 frames @ 24 fps."
+        "for standalone modes; Mixed v1 uses its own segment-local schema. "
+        "Defaults: 0.4MP 16:9 (864×480), 5s / 124 frames @ 24 fps."
     )
 
     def execute(
@@ -340,6 +352,13 @@ class MiniMaxH3MotionDirector:
             r2v_groups=r2v_groups,
         )
 
+        if bool(getattr(plan, "mixed_mode", False)):
+            bind_mixed_runtime_node(plan, unique_id)
+            source_overlap_frames = 0
+            # Mixed boundary toggles are per-link requests. The visible node-level
+            # Motion/Audio Context switches remain the user-controlled global masters;
+            # executor_core combines master AND ContextLink for the actual handoff.
+
         combined, segment_outputs, segment_audios, report = execute_director_plan_core(
             plan,
             node_id=unique_id,
@@ -366,6 +385,9 @@ class MiniMaxH3MotionDirector:
             postprocess_config=postprocess_config,
         )
 
+        if bool(getattr(plan, "mixed_mode", False)):
+            report = _append_mixed_dependency_report(plan, report)
+
         outputs = finalize_director_outputs(
             plan,
             combined,
@@ -387,6 +409,36 @@ class MiniMaxH3MotionDirector:
                     save_config=save_config,
                     prompt=prompt,
                     extra_pnginfo=extra_pnginfo,
+                    segment_indices=[
+                        int(getattr(segment, "timeline_index", segment.index))
+                        for segment in (
+                            plan.segments
+                            if plan.export_mode == "all"
+                            else [
+                                plan.segments[index]
+                                for index in sorted(
+                                    plan.run_indices
+                                    if plan.run_indices is not None
+                                    else range(len(plan.segments))
+                                )
+                            ]
+                        )
+                    ],
+                    segment_frame_counts=[
+                        int(segment.frame_count)
+                        for segment in (
+                            plan.segments
+                            if plan.export_mode == "all"
+                            else [
+                                plan.segments[index]
+                                for index in sorted(
+                                    plan.run_indices
+                                    if plan.run_indices is not None
+                                    else range(len(plan.segments))
+                                )
+                            ]
+                        )
+                    ],
                 )
                 final_payload = record.info()
                 if auto_result is not None:
@@ -403,8 +455,6 @@ class MiniMaxH3MotionDirector:
                         ))
                 report_director_final_ready(unique_id, final_payload)
             except Exception as exc:
-                # Internal VIDEO construction and saving are side channels.  A
-                # completed H3 result must remain usable even if export setup fails.
                 outputs = (*outputs[:-1], outputs[-1] + (
                     "\n\n[Save Video]\nStatus: FAILED (generation result preserved)"
                     f"\nError: {exc}"

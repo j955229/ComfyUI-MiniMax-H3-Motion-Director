@@ -26,7 +26,7 @@ from ..director.plan import build_director_plan, count_all_timeline_segments, co
 from ..director.progress import report_director_planning
 from ..lib.image_prep import fit_canvas, fit_video_long_edge
 from ..lib.video_io import load_timeline_segment
-from ..lib.task_prompts import task_type_combo_options
+from ..lib.task_prompts import resolve_task_key, task_type_combo_options
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director")
 
@@ -157,6 +157,49 @@ def default_timeline_json(
     )
 
 
+def _default_mixed_timeline_json(
+    *,
+    global_prompt: str,
+    frame_rate: float,
+    width: int,
+    height: int,
+    ref_max_size: int,
+) -> str:
+    """Create a valid root Mixed project when the user switches mode before editing cards."""
+    return json.dumps(
+        {
+            "version": 1,
+            "timelineMode": "mixed",
+            "frameRate": frame_rate,
+            "width": width,
+            "height": height,
+            "refMaxSize": ref_max_size,
+            "output": {
+                "mode": "fixed",
+                "longEdge": ref_max_size,
+                "width": width,
+                "height": height,
+                "maxExportFrames": 0,
+                "exportMode": "all",
+                "audioMode": "generate",
+            },
+            "runSelectEnabled": False,
+            "runSelection": [],
+            "segments": [
+                {
+                    "id": "seg_1",
+                    "mode": "t2v",
+                    "prompt": global_prompt or "",
+                    "duration": 5.0,
+                    "inputs": {"resultRefs": [], "identityPictures": []},
+                    "continuity": {"visual": False, "audio": False},
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
 def prepare_director_plan(
     *,
     timeline_data: str,
@@ -176,10 +219,43 @@ def prepare_director_plan(
         build_plan_from_external_groups,
         validate_external_group_inputs,
     )
+    from ..director.mixed_plan import build_mixed_director_plan, is_mixed_timeline
 
+    task_key_requested = resolve_task_key(task_type)
     if not timeline_data or not timeline_data.strip():
-        timeline_data = default_timeline_json(
-            task_type=task_type,
+        if task_key_requested == "mixed":
+            timeline_data = _default_mixed_timeline_json(
+                global_prompt=global_prompt,
+                frame_rate=frame_rate,
+                width=width,
+                height=height,
+                ref_max_size=ref_max_size,
+            )
+        else:
+            timeline_data = default_timeline_json(
+                task_type=task_type,
+                global_prompt=global_prompt,
+                total_frames=total_frames,
+                frame_rate=frame_rate,
+                width=width,
+                height=height,
+                ref_max_size=ref_max_size,
+            )
+
+    try:
+        timeline_obj = json.loads(timeline_data)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid timeline_data JSON: {exc}") from exc
+
+    if is_mixed_timeline(timeline_obj, task_key_requested):
+        if i2v_groups is not None or r2v_groups is not None:
+            raise ValueError(
+                "Mixed v1 does not accept Director Inputs / external groups. "
+                "Disconnect i2v_groups/r2v_groups and configure each Mixed segment in the Director."
+            )
+        plan = build_mixed_director_plan(
+            timeline_obj,
+            global_task_type=task_type,
             global_prompt=global_prompt,
             total_frames=total_frames,
             frame_rate=frame_rate,
@@ -187,6 +263,14 @@ def prepare_director_plan(
             height=height,
             ref_max_size=ref_max_size,
         )
+        runnable = len(plan.run_indices) if plan.run_indices is not None else len(plan.segments)
+        report_director_planning(
+            unique_id,
+            runnable,
+            timeline_segment_total=len(plan.segments),
+        )
+        log.info("MiniMax H3 Motion Director: Mixed | %s", plan_summary(plan).replace("\n", " | "))
+        return plan
 
     task_key, ext_groups, family = validate_external_group_inputs(
         task_type=task_type,
@@ -256,12 +340,39 @@ def _fit_source_clip_to_plan(plan, raw_clip: torch.Tensor) -> torch.Tensor:
     )
 
 
+def _mixed_source_images_output(plan, images_out: list[torch.Tensor]) -> list[torch.Tensor]:
+    """Expose each Mixed segment's actual source without inventing a global timeline.
+
+    Source Video segments own a segment-local ``source_clip``. Source-free modes
+    (T2V/R2V, plus I2V/FL2V which have keyframes rather than a temporal source)
+    emit a one-frame gray placeholder so ``source_images`` never pretends the
+    generated result was source footage. Keeping placeholders to one frame also
+    avoids recreating the large blank-video allocations fixed in v1.0.1.
+    """
+    outputs: list[torch.Tensor] = []
+    if not plan.segments:
+        return _empty_source_images_for(images_out)
+
+    for seg in plan.segments:
+        raw = getattr(seg, "source_clip", None)
+        if isinstance(raw, torch.Tensor) and raw.ndim == 4 and int(raw.shape[0]) > 0:
+            fitted = _fit_source_clip_to_plan(plan, raw)
+            target_len = max(1, int(getattr(seg, "end_frame", 0)) - int(getattr(seg, "start_frame", 0)))
+            outputs.append(pad_or_trim_frames(fitted, target_len).cpu().float())
+            continue
+        outputs.append(torch.full((1, max(1, int(plan.height)), max(1, int(plan.width)), 3), 0.5))
+    return outputs
+
+
 def build_source_images_output(
     plan,
     images_out: list[torch.Tensor],
     *,
     split_outputs: bool,
 ) -> list[torch.Tensor]:
+    if bool(getattr(plan, "mixed_mode", False)):
+        return _mixed_source_images_output(plan, images_out)
+
     if split_outputs:
         chunks: list[torch.Tensor] = []
         segment_indices = (
@@ -375,6 +486,11 @@ def finalize_director_outputs(
                 images_out,
                 split_outputs=split_source_outputs,
             )
+            if bool(getattr(plan, "mixed_mode", False)):
+                report = report + (
+                    "\n\nSource images: Mixed segment-local sources; source-free segments emit "
+                    "one-frame placeholders."
+                )
         except Exception as exc:
             log.warning("Source images output failed: %s", exc)
             source_images_out = images_out

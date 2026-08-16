@@ -212,6 +212,7 @@ export function resolveContinuityUiState({
     const multiSegment = segments > 1;
     const bridgeTask = BRIDGE_TASKS.has(task);
     const motionTask = MOTION_CONTEXT_TASKS.has(task);
+    const mixedTask = task === "mixed";
     const normalizedBridge = normalizeSourceBridgeValue(sourceBridgeValue);
     const bridgeOn = normalizedBridge > 0;
     const motionOn = boolValue(motionContextEnabled);
@@ -225,17 +226,21 @@ export function resolveContinuityUiState({
 
     let mode = "unsupported";
     if (!multiSegment) mode = "single";
+    else if (mixedTask) mode = "mixed";
     else if (motionTask) mode = "motion_context_task";
     else if (bridgeTask) mode = "video_strategy";
 
     const generatedMotionUi = mode === "motion_context_task";
+    const mixedMotionUi = mode === "mixed";
     const videoMotionUi = mode === "video_strategy"
         && videoStrategy === VIDEO_CONTINUITY_STRATEGIES.MOTION_CONTEXT;
-    const motionActive = (generatedMotionUi && motionOn) || videoMotionUi;
+    const motionActive = mixedMotionUi
+        ? (multiSegment && motionOn)
+        : ((generatedMotionUi && motionOn) || videoMotionUi);
     const supportedVisualTask = VISUAL_MOTION_CONTEXT_TASKS.has(task);
-    const showColorReanchor = multiSegment && supportedVisualTask;
-    const showContextFrames = generatedMotionUi || videoMotionUi;
-    const showAudioContinuation = multiSegment && supportedVisualTask;
+    const showColorReanchor = multiSegment && (supportedVisualTask || mixedTask);
+    const showContextFrames = generatedMotionUi || videoMotionUi || (mixedTask && multiSegment);
+    const showAudioContinuation = multiSegment && (supportedVisualTask || mixedTask);
     const audioContinuationActive = showAudioContinuation
         && String(audioMode || "generate").toLowerCase() === "generate";
 
@@ -247,17 +252,21 @@ export function resolveContinuityUiState({
         videoStrategy,
         sourceBridgeValue: normalizedBridge,
         showSingleSegmentMessage: mode === "single",
-        showMotionContext: generatedMotionUi,
+        showMotionContext: generatedMotionUi || mixedMotionUi,
         showContextFrames,
         showAudioContinuation,
         showVisualContinuitySelector: mode === "video_strategy",
         showBridgeLength: false,
         showColorReanchor,
-        motionContextControlEnabled: generatedMotionUi,
-        contextFramesControlEnabled: motionActive,
+        motionContextControlEnabled: generatedMotionUi || mixedMotionUi,
+        contextFramesControlEnabled: mixedTask ? (multiSegment && motionOn) : motionActive,
         audioContextControlEnabled: audioContinuationActive,
-        colorReanchorControlEnabled: showColorReanchor && motionActive,
+        colorReanchorControlEnabled: mixedTask
+            ? (multiSegment && motionOn)
+            : (showColorReanchor && motionActive),
         colorReanchorEnabled: boolValue(colorReanchorEnabled),
-        pinRenormControlEnabled: multiSegment && supportedVisualTask && motionActive,
+        pinRenormControlEnabled: mixedTask
+            ? (multiSegment && motionOn)
+            : (multiSegment && supportedVisualTask && motionActive),
     };
 }

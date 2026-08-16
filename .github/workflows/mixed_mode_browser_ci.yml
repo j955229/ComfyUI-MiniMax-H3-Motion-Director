@@ -1,0 +1,81 @@
+name: Mixed Mode Browser CI
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+  pull_request:
+    paths:
+      - "web/js/minimax_mixed_*.mjs"
+      - "web/js/minimax_timeline.js"
+      - "web/js/minimax_gen_timeline.js"
+      - "web/js/tests/minimax_mixed_*.mjs"
+      - "web/js/tests/minimax_director_module_load.test.mjs"
+      - ".github/workflows/mixed_mode_browser_ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  mixed-browser-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install jsdom for isolated browser smoke
+        run: npm install --no-save --ignore-scripts jsdom@26
+
+      - name: Provide Comfy frontend stubs
+        run: |
+          mkdir -p scripts
+          cat > scripts/app.js <<'EOF'
+          export const __extensions = [];
+          export const app = {
+            registerExtension(extension) {
+              __extensions.push(extension);
+            },
+          };
+          EOF
+          cat > scripts/api.js <<'EOF'
+          export const api = {
+            apiURL: (value) => value,
+            fetchApi: async () => ({
+              ok: true,
+              status: 200,
+              json: async () => ({ items: [] }),
+              text: async () => "",
+            }),
+            addEventListener: () => {},
+            removeEventListener: () => {},
+          };
+          EOF
+
+      - name: Check Mixed browser modules
+        run: |
+          node --check web/js/minimax_timeline.js
+          node --check web/js/minimax_gen_timeline.js
+          node --check web/js/minimax_mixed_ui.mjs
+          node --check web/js/minimax_mixed_ui_v2.mjs
+          node --check web/js/minimax_mixed_i18n.mjs
+          node --check web/js/minimax_mixed_material_picker.mjs
+          node --check web/js/minimax_mixed_state.mjs
+          node --check web/js/tests/minimax_director_module_load.test.mjs
+          node --check web/js/tests/minimax_mixed_native_contract.test.mjs
+          node --check web/js/tests/minimax_mixed_mode_inputs.test.mjs
+          node --check web/js/tests/minimax_mixed_browser.test.mjs
+
+      - name: Load real Director module
+        run: node web/js/tests/minimax_director_module_load.test.mjs
+
+      - name: Run native Mixed integration contract
+        run: node web/js/tests/minimax_mixed_native_contract.test.mjs
+
+      - name: Run Mixed per-mode input contract
+        run: node web/js/tests/minimax_mixed_mode_inputs.test.mjs
+
+      - name: Run Mixed integrated browser contract
+        run: node web/js/tests/minimax_mixed_browser.test.mjs

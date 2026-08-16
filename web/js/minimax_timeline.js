@@ -13,7 +13,7 @@ import {
     globalRefineSummary,
     mountPostprocessUI,
 } from "./minimax_postprocess_ui.mjs?boot=postprocess_output_v5";
-import { mountOutputUI } from "./minimax_output_ui.mjs?boot=live_results_v1";
+import { mountOutputUI } from "./minimax_output_ui.mjs?boot=live_results_v2";
 import { resolveExternalGroupTerminal } from "./minimax_external_groups.mjs";
 import {
     CUSTOM_ASPECT_RATIO,
@@ -128,7 +128,7 @@ import {
     setWidgetVisibility,
     syncDisabledWidgetState,
     toggleBooleanWidgetValue,
-} from "./minimax_continuity_ui.mjs?boot=director_ui_v3";
+} from "./minimax_continuity_ui.mjs?boot=director_ui_v5";
 import {
     applyI18nDom,
     aspectDisplayLabel,
@@ -142,6 +142,7 @@ import {
     applySamplingWidgetVisibility,
     migrateLegacySamplingControlNode,
     migrateLegacySamplingControlWorkflow,
+    repairDirectorGroupWidgetWorkflow,
     seedControlModeFromWidgets,
 } from "./minimax_sampling_ui.js";
 import {
@@ -158,6 +159,12 @@ import {
     setContextLinkChannels,
     toggleContextLink,
 } from "./minimax_context_links.mjs";
+import {
+    createDefaultMixedTimeline,
+    mountMixedUI,
+    syncMixedGlobalsFromWidgets,
+} from "./minimax_mixed_ui.mjs?boot=mixed_native_v7";
+import { normalizeMixedTimeline } from "./minimax_mixed_state.mjs?boot=mixed_native_v6";
 
 const RULER_H = 24;
 const SEG_LABEL_H = 20;
@@ -2382,7 +2389,7 @@ class MiniMaxH3MotionDirectorEditor {
 
         const initTotal = Math.max(0, parseInt(this.totalFramesWidget?.value || 124, 10));
         const initFps = coerceTimelineFps(this.frameRateWidget?.value || 24);
-        this.timeline = parseTimeline(this.timelineWidget?.value, initTotal, initFps);
+        this.timeline = this._loadNativeTimelineState(this.timelineWidget?.value, initTotal, initFps);
         if (!this._hadSerializedPostprocessConfig) {
             this.postprocessStore.patch("preview", "enabled", this.timeline.liveTaePreview !== false);
         }
@@ -2432,7 +2439,9 @@ class MiniMaxH3MotionDirectorEditor {
         this._unsubLocale = onLocaleChange(() => this.applyLocale());
         this.applyLocale();
         this._directorMode = getDirectorMode(this.taskTypeWidget?.value);
-        if (this._directorMode === "video") {
+        if (this._directorMode === "mixed") {
+            // Mixed owns editor.mixedTimeline; legacy normalizers intentionally do nothing here.
+        } else if (this._directorMode === "video") {
             this.restoreVideoFromTimeline();
         } else if (this._directorMode === "prompt_batch" || this._directorMode === "image_batch") {
             ensureImageBatchTimeline(this);
@@ -2584,6 +2593,7 @@ class MiniMaxH3MotionDirectorEditor {
 
     /** Mirror graph-wired Group count/duration into the Director timeline UI. */
     syncExternalGroupsTimeline() {
+        if (this.isMixedMode()) return;
         this.updateExternalGroupsBanner();
         const specs = collectExternalGroupSpecs(this);
         if (!specs?.length) {
@@ -2827,6 +2837,7 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     buildTimelinePayload() {
+        if (this.isMixedMode()) return this._mixedPayload();
         this.ensureContextLinks();
         this.timeline.seedMode = seedControlModeFromWidgets(this.node?.widgets || []);
         if (this.isFl2vMode()) {
@@ -3012,6 +3023,12 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     _writeTimelineWidget() {
+        if (this.isMixedMode()) {
+            if (!this.timelineWidget) return;
+            this.timelineWidget.value = JSON.stringify(this._mixedPayload());
+            this.node.setDirtyCanvas(true, false);
+            return;
+        }
         if (!this.timelineWidget) return;
         this.syncFromWidgets();
         this.timelineWidget.value = JSON.stringify(this.buildTimelinePayload());
@@ -3821,6 +3838,7 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     getRunnableSegmentCount() {
+        if (this.isMixedMode()) return this._ensureMixedTimeline().segments?.length || 0;
         if (this.isFl2vMode()) return fl2vStartIndices(this).length;
         return this.timeline.segments?.length || 0;
     }
@@ -3871,6 +3889,7 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     supportsRunSelect() {
+        if (this.isMixedMode()) return this.getRunnableSegmentCount() >= 2;
         const n = this.getRunnableSegmentCount();
         if (n < 2) return false;
         const mode = this.getDirectorMode();
@@ -3881,6 +3900,12 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     getRunProgressSegmentTotal() {
+        if (this.isMixedMode()) {
+            const state = this._normalizeMixedRunSelection();
+            const n = state.segments?.length || 0;
+            if (!state.runSelectEnabled || n < 2) return Math.max(n, 1);
+            return state.runSelection?.length || Math.max(n, 1);
+        }
         const n = this.getRunnableSegmentCount();
         if (!this.isRunSelectEnabled() || n < 2) return Math.max(n, 1);
         const count = (this.timeline.runSelection || []).length;
@@ -3888,10 +3913,12 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     isRunSelectEnabled() {
+        if (this.isMixedMode()) return !!this._ensureMixedTimeline().runSelectEnabled;
         return !!this.timeline.runSelectEnabled;
     }
 
     normalizeRunSelection() {
+        if (this.isMixedMode()) { this._normalizeMixedRunSelection(); return; }
         if (!this.isRunSelectEnabled()) return;
         if (this.isFl2vMode()) {
             const valid = new Set(fl2vStartIndices(this));
@@ -3908,6 +3935,10 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     isSegmentRunEnabled(index) {
+        if (this.isMixedMode()) {
+            const state = this._normalizeMixedRunSelection();
+            return !state.runSelectEnabled || (state.runSelection || []).includes(Number(index));
+        }
         if (!this.isRunSelectEnabled()) return true;
         return (this.timeline.runSelection || []).includes(index);
     }
@@ -3985,6 +4016,11 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     updateRunSelectUI() {
+        if (this.isMixedMode()) {
+            this.btnRunSelectToggle?.classList.add("hidden");
+            if (this.runSelectBar) this.runSelectBar.hidden = true;
+            return;
+        }
         const n = this.getRunnableSegmentCount();
         const canRunSelect = this.supportsRunSelect();
         const enabled = this.isRunSelectEnabled() && canRunSelect;
@@ -4049,13 +4085,286 @@ class MiniMaxH3MotionDirectorEditor {
         };
     }
 
+    isMixedMode() {
+        return this.getDirectorMode() === "mixed";
+    }
+
+    _cloneMixedValue(value) {
+        if (typeof structuredClone === "function") return structuredClone(value);
+        return JSON.parse(JSON.stringify(value));
+    }
+
+    _loadNativeTimelineState(raw, totalFrames, fps) {
+        const source = String(raw || "").trim();
+        if (source) {
+            try {
+                const parsed = JSON.parse(source);
+                if (parsed && typeof parsed === "object"
+                    && !Array.isArray(parsed)
+                    && String(parsed.timelineMode || "").trim().toLowerCase() === "mixed") {
+                    this.mixedTimeline = normalizeMixedTimeline(parsed);
+                    if (this.node?.id != null) this.mixedTimeline.nodeId = String(this.node.id);
+                    this._mixedLoadedFromSerialized = true;
+                    // Mixed schema must never pass through legacy video/batch/FL2V normalizers.
+                    return parseTimeline("", totalFrames, fps);
+                }
+            } catch {
+                // Legacy parser below owns malformed/non-Mixed timeline handling.
+            }
+        }
+        this._mixedLoadedFromSerialized = false;
+        return parseTimeline(raw, totalFrames, fps);
+    }
+
+    _ensureMixedTimeline() {
+        if (!this.mixedTimeline) {
+            const raw = String(this.timelineWidget?.value || "").trim();
+            try {
+                const parsed = JSON.parse(raw || "{}");
+                if (String(parsed?.timelineMode || "").trim().toLowerCase() === "mixed") {
+                    this.mixedTimeline = normalizeMixedTimeline(parsed);
+                }
+            } catch {
+                // Fall through to a fresh Mixed timeline.
+            }
+        }
+        if (!this.mixedTimeline) this.mixedTimeline = createDefaultMixedTimeline(this);
+        this.mixedTimeline = normalizeMixedTimeline(this.mixedTimeline);
+        this.mixedTimeline.output = this.mixedTimeline.output || {};
+        this.mixedTimeline.output.audioMode = "generate";
+        if (this.node?.id != null) this.mixedTimeline.nodeId = String(this.node.id);
+        return this.mixedTimeline;
+    }
+
+    _mixedTotalFrames() {
+        const state = this._ensureMixedTimeline();
+        const fps = Math.max(1, Number(state.frameRate || this.frameRateWidget?.value || 24) || 24);
+        return (state.segments || []).reduce((total, seg) => {
+            if (seg?.mode === "source_video") {
+                const range = seg?.inputs?.sourceVideo?.range || {};
+                const seconds = Math.max(0, Number(range.endSec || 0) - Number(range.startSec || 0));
+                return total + Math.max(1, Math.round(seconds * fps));
+            }
+            return total + durationToClampedMiniMaxFrames(seg?.duration ?? 5, fps).frames;
+        }, 0);
+    }
+
+    _normalizeMixedRunSelection() {
+        const state = this._ensureMixedTimeline();
+        const count = state.segments?.length || 0;
+        const selection = [...new Set((state.runSelection || [])
+            .map((value) => Number.parseInt(value, 10))
+            .filter((value) => Number.isInteger(value) && value >= 0 && value < count))]
+            .sort((a, b) => a - b);
+        state.runSelection = state.runSelectEnabled
+            ? (selection.length ? selection : [...Array(count).keys()])
+            : [];
+        return state;
+    }
+
+    _syncMixedFromSharedWidgets() {
+        const state = this._ensureMixedTimeline();
+        syncMixedGlobalsFromWidgets(this, state);
+        state.output = state.output || {};
+        state.output.audioMode = "generate";
+        if (this.node?.id != null) state.nodeId = String(this.node.id);
+        this.mixedTimeline = normalizeMixedTimeline(state);
+        return this.mixedTimeline;
+    }
+
+    _applyMixedSharedControls() {
+        const state = this._ensureMixedTimeline();
+        state.output = state.output || {};
+        const output = state.output;
+        const initialWidth = Math.max(32, Number(output.width ?? state.width ?? 864) || 864);
+        const initialHeight = Math.max(32, Number(output.height ?? state.height ?? 480) || 480);
+
+        output.mode = "fixed";
+        output.multiple = output.multiple ?? MINIMAX_CANVAS_MULTIPLE;
+        if (!output.aspectRatio) {
+            const match = RESOLUTION_ASPECTS.find(([, aw, ah]) => (
+                Math.abs(initialWidth / initialHeight - aw / ah) < 0.02
+            ));
+            output.aspectRatio = match ? match[0] : CUSTOM_ASPECT_RATIO;
+        } else {
+            output.aspectRatio = isCustomAspectRatio(output.aspectRatio)
+                ? CUSTOM_ASPECT_RATIO
+                : normalizeAspectRatioLabel(output.aspectRatio);
+        }
+        if (output.megapixels == null) {
+            const inferred = Math.round((initialWidth * initialHeight / (1024 * 1024)) * 10) / 10;
+            output.megapixels = clampMegapixels(inferred || DEFAULT_MEGAPIXELS);
+        } else {
+            output.megapixels = clampMegapixels(output.megapixels);
+        }
+
+        if (isCustomAspectRatio(output.aspectRatio)) {
+            output.width = snapResolutionDim(initialWidth, output.multiple);
+            output.height = snapResolutionDim(initialHeight, output.multiple);
+        } else {
+            const resolved = resolutionFromSelector(
+                output.aspectRatio,
+                output.megapixels,
+                output.multiple,
+            );
+            output.width = resolved?.width ?? snapResolutionDim(initialWidth, output.multiple);
+            output.height = resolved?.height ?? snapResolutionDim(initialHeight, output.multiple);
+            if (resolved) {
+                output.aspectRatio = resolved.aspectRatio;
+                output.megapixels = resolved.megapixels;
+                output.multiple = resolved.multiple;
+            }
+        }
+        output.longEdge = Math.max(output.width, output.height);
+        state.width = output.width;
+        state.height = output.height;
+        state.refMaxSize = output.longEdge;
+
+        const setWidget = (name, value) => {
+            const widget = this.widget?.(name) || this.node?.widgets?.find?.((item) => item?.name === name);
+            if (widget && value != null) widget.value = value;
+        };
+        setWidget("frame_rate", state.frameRate ?? 24);
+        setWidget("width", output.width);
+        setWidget("height", output.height);
+        setWidget("ref_max_size", output.longEdge);
+        if (this.fpsInput) this.fpsInput.value = String(state.frameRate ?? 24);
+        if (this.outAspect) this.outAspect.value = output.aspectRatio;
+        if (this.outMp) this.outMp.value = String(output.megapixels);
+        if (this.outW) this.outW.value = String(output.width);
+        if (this.outH) this.outH.value = String(output.height);
+        if (this.outLong) this.outLong.value = String(output.longEdge);
+        if (this.outMode) this.outMode.value = "fixed";
+        if (this.outExportMode && output.exportMode) this.outExportMode.value = output.exportMode;
+        if (this.outMaxFrames) this.outMaxFrames.value = String(output.maxExportFrames ?? 0);
+        if (this.outAudioMode) this.outAudioMode.value = "generate";
+        this.updateOutputModeUI?.();
+        this.updateOutputPreview?.();
+    }
+
+    _setMixedBodiesActive(active) {
+        const host = this._mixedPanelHost;
+        const parent = this.mainBody || this.root?.querySelector?.(".bd-main");
+        if (active && parent && this.outputBarEl?.parentElement === parent) {
+            // Keep exactly the same vertical hierarchy as standalone Director:
+            // mode toolbar -> output controls -> active mode body.
+            parent.insertBefore(this.outputBarEl, parent.firstChild);
+            if (host?.parentElement === parent) this.outputBarEl.after(host);
+        }
+        for (const child of Array.from(this.mainBody?.children || [])) {
+            if (child === host || child === this.outputBarEl) continue;
+            child.classList?.toggle("hidden", !!active);
+        }
+        for (const element of this.root?.querySelectorAll?.(
+            ".bd-actions, .bd-smart-split-msg, .bd-external-groups-msg",
+        ) || []) {
+            element.classList?.toggle("hidden", !!active);
+        }
+        // Legacy prompt/reference panels are nested in some standalone modes,
+        // so direct-child isolation alone is insufficient.
+        for (const element of [this.globalPanel, this.segmentPanel]) {
+            element?.classList?.toggle("hidden", !!active);
+        }
+        const continuity = this.segmentContinuityWrap
+            || this.root?.querySelector?.('[data-r="segment-continuity-wrap"]');
+        const common = this.r2vCommonToggle
+            || this.root?.querySelector?.('[data-a="r2v-common-toggle"]');
+        const audio = this.outAudioWrap
+            || this.root?.querySelector?.('[data-r="out-audio-wrap"]');
+        continuity?.classList?.toggle("hidden", !!active);
+        common?.classList?.toggle("hidden", !!active);
+        audio?.classList?.toggle("hidden", !!active);
+        this.outputBarEl?.classList?.remove("hidden");
+        this._mixedPanelHost?.classList?.toggle("hidden", !active);
+    }
+
+    _ensureMixedPanelHost() {
+        if (this._mixedPanelHost?.isConnected) return this._mixedPanelHost;
+        const host = document.createElement("div");
+        host.className = "bd-mixed-panel";
+        host.dataset.r = "mixed-panel";
+        host.style.minWidth = "0";
+        host.style.minHeight = "0";
+        host.style.width = "100%";
+        const parent = this.mainBody || this.root?.querySelector?.(".bd-main");
+        if (!parent) return null;
+        if (this.outputBarEl?.parentElement === parent) {
+            // Match the standalone Director hierarchy: toolbar -> output -> body.
+            parent.insertBefore(this.outputBarEl, parent.firstChild);
+            this.outputBarEl.after(host);
+        } else {
+            parent.appendChild(host);
+        }
+        this._mixedPanelHost = host;
+        return host;
+    }
+
+    _enterMixedNative(prevMode) {
+        if (prevMode && prevMode !== "mixed") this._standaloneDirectorMode = prevMode;
+        if (!this._standaloneDirectorMode || this._standaloneDirectorMode === "mixed") {
+            this._standaloneDirectorMode = "video";
+        }
+        const state = this._ensureMixedTimeline();
+        this._applyMixedSharedControls();
+        const host = this._ensureMixedPanelHost();
+        if (!host) return false;
+        this._setMixedBodiesActive(true);
+        if (!this._mixedController) {
+            this._mixedController = mountMixedUI({
+                host,
+                editor: this,
+                initialState: state,
+                onChange: (next) => {
+                    if (this.getDirectorMode() !== "mixed") return;
+                    this.mixedTimeline = normalizeMixedTimeline(next);
+                    this.mixedTimeline.output = this.mixedTimeline.output || {};
+                    // Mixed segment count controls which global continuity tuning
+                    // widgets are visible on the outer Director node. Refresh it
+                    // immediately when segments are added/removed or continuity
+                    // state changes instead of waiting for another task switch.
+                    refreshDirectorContinuityUi(this.node, this);
+                    this.mixedTimeline.output.audioMode = "generate";
+                    if (this.node?.id != null) this.mixedTimeline.nodeId = String(this.node.id);
+                    this.scheduleTimelineSync?.();
+                    this.updateVideoNameLabel?.();
+                },
+            });
+        } else {
+            this._mixedController.setState(state);
+        }
+        this.updateVideoNameLabel?.();
+        this.node?.setDirtyCanvas?.(true, true);
+        return true;
+    }
+
+    _leaveMixedNative() {
+        if (this._mixedController) {
+            this.mixedTimeline = normalizeMixedTimeline(this._mixedController.state);
+            if (this.node?.id != null) this.mixedTimeline.nodeId = String(this.node.id);
+            this._mixedController.destroy();
+            this._mixedController = null;
+        }
+        this._setMixedBodiesActive(false);
+        this.node?.setDirtyCanvas?.(true, true);
+    }
+
+    _mixedPayload() {
+        const state = this._syncMixedFromSharedWidgets();
+        this._normalizeMixedRunSelection();
+        state.output = state.output || {};
+        state.output.audioMode = "generate";
+        if (this.node?.id != null) state.nodeId = String(this.node.id);
+        this.mixedTimeline = normalizeMixedTimeline(state);
+        return this._cloneMixedValue(this.mixedTimeline);
+    }
+
     getDirectorMode() {
         return getDirectorMode(this.globalTask?.value || this.taskTypeWidget?.value);
     }
 
     isGenMode() {
         const mode = this.getDirectorMode();
-        return mode !== "video" && mode !== "prompt_batch" && mode !== "fl2v";
+        return mode !== "video" && mode !== "prompt_batch" && mode !== "fl2v" && mode !== "mixed";
     }
 
     isImageBatch() {
@@ -4450,6 +4759,16 @@ class MiniMaxH3MotionDirectorEditor {
 
     applyTaskLayout(prevMode) {
         const mode = this.getDirectorMode();
+        if (mode === "mixed") {
+            this._enterMixedNative(prevMode || this._directorMode);
+            this._directorMode = "mixed";
+            this.updateDomWidgetHeight?.();
+            return;
+        }
+        if (prevMode === "mixed" || this._directorMode === "mixed") {
+            this._leaveMixedNative();
+            prevMode = this._standaloneDirectorMode || "video";
+        }
         const prev = prevMode || "video";
         const wasBatch = prev === "prompt_batch" || prev === "image_batch";
         const isBatch = mode === "prompt_batch";
@@ -4552,6 +4871,7 @@ class MiniMaxH3MotionDirectorEditor {
         }
         this.timeline.timelineMode = mode;
         this._directorMode = mode;
+        this._standaloneDirectorMode = mode;
 
         const taskKey = this.getTaskKey();
         const isR2v = isBatch && taskKey === "r2v";
@@ -4946,6 +5266,14 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     updateVideoNameLabel() {
+        if (this.isMixedMode()) {
+            const n = this._ensureMixedTimeline().segments?.length || 0;
+            const frames = this._mixedTotalFrames();
+            this.videoNameEl.textContent = getLocale() === "en"
+                ? `Mixed · ${n} segment${n === 1 ? "" : "s"} · ${frames}f`
+                : `混合 · ${n}段 · ${frames}帧`;
+            return;
+        }
         if (this.isFl2vMode()) {
             const shots = this.timeline.shots || [];
             const n = shots.length;
@@ -5325,6 +5653,7 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     getTotalFrames() {
+        if (this.isMixedMode()) return this._mixedTotalFrames();
         // fl2v: visual canvas may be longer than the sampling window (overflow = dashed).
         if (this.isFl2vMode()) return getFl2vVisualFrames(this);
         if (this.isImageBatch() || this.isGenMode()) {
@@ -5361,6 +5690,7 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     getFrameRate() {
+        if (this.isMixedMode()) return Math.max(1, Number(this._ensureMixedTimeline().frameRate || 24) || 24);
         return coerceTimelineFps(this.fpsInput?.value ?? this.frameRateWidget?.value ?? this.timeline.frameRate ?? 24);
     }
 
@@ -5485,6 +5815,17 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     onFrameRateChanged(value) {
+        if (this.isMixedMode()) {
+            const fps = coerceTimelineFps(value);
+            const state = this._ensureMixedTimeline();
+            state.frameRate = fps;
+            if (this.frameRateWidget) this.frameRateWidget.value = fps;
+            if (this.fpsInput) this.fpsInput.value = String(fps);
+            this.mixedTimeline = normalizeMixedTimeline(state);
+            this.scheduleTimelineSync();
+            this.updateVideoNameLabel();
+            return;
+        }
         const oldFps = coerceTimelineFps(this.timeline.frameRate ?? this.frameRateWidget?.value ?? 24);
         const newFps = this.syncFrameRateUI(value);
         if (Math.abs(oldFps - newFps) < 0.001) {
@@ -5516,6 +5857,11 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     updateModeUI() {
+        if (this.isMixedMode()) {
+            this._enterMixedNative(this._standaloneDirectorMode);
+            this.updateVideoNameLabel();
+            return;
+        }
         const global = this.isGlobalMode();
         this.globalPanel.style.display = global ? "flex" : "none";
         this.segmentPanel.style.display = global ? "none" : "flex";
@@ -5800,20 +6146,27 @@ class MiniMaxH3MotionDirectorEditor {
 
     updateOutputModeUI() {
         const taskKey = this.getTaskKey();
-        const useSelector = this.isImageBatch() || this.isGenMode() || this.isFl2vMode()
+        const mixedMode = this.isMixedMode();
+        const useSelector = mixedMode || this.isImageBatch() || this.isGenMode() || this.isFl2vMode()
             || NO_VIDEO_UPLOAD_TASKS.has(taskKey);
-        // Gen / batch / fl2v: aspect + megapixels, or Custom width/height.
-        // Video edit (v2v): long_edge / fixed — must toggle .hidden (CSS uses !important).
+        // Gen / batch / fl2v / Mixed: aspect + megapixels, or Custom width/height.
+        // Standalone source-video edit (v2v/rv2v): long_edge / fixed.
         if (this.outAspect) this.outAspect.classList.toggle("hidden", !useSelector);
         if (this.outMode) this.outMode.classList.toggle("hidden", useSelector);
         if (this.outLongWrap) this.outLongWrap.style.display = "";
         if (useSelector) {
-            const custom = isCustomAspectRatio(this.timeline.output?.aspectRatio ?? this.outAspect?.value);
+            const activeOutput = mixedMode
+                ? (this._ensureMixedTimeline().output || {})
+                : (this.timeline.output || {});
+            const custom = isCustomAspectRatio(activeOutput.aspectRatio ?? this.outAspect?.value);
             if (this.outMpWrap) this.outMpWrap.classList.toggle("hidden", custom);
             if (this.outLongWrap) this.outLongWrap.classList.add("hidden");
             if (this.outFixedWrap) this.outFixedWrap.classList.toggle("hidden", !custom);
-            if (custom) this.applyCustomResolution();
-            else this.applyResolutionSelector();
+            // Mixed has its own state object; never mutate standalone timeline.output here.
+            if (!mixedMode) {
+                if (custom) this.applyCustomResolution();
+                else this.applyResolutionSelector();
+            }
             return;
         }
         if (this.outMpWrap) this.outMpWrap.classList.add("hidden");
@@ -5841,8 +6194,10 @@ class MiniMaxH3MotionDirectorEditor {
             }
             return;
         }
-        if (this.isGenBlank() || this.isImageBatch() || this.isFl2vMode()) {
-            const out = this.timeline.output || {};
+        if (this.isGenBlank() || this.isImageBatch() || this.isFl2vMode() || this.isMixedMode()) {
+            const out = this.isMixedMode()
+                ? (this._ensureMixedTimeline().output || {})
+                : (this.timeline.output || {});
             if (isCustomAspectRatio(out.aspectRatio)) {
                 const w = snapResolutionDim(out.width ?? this.outW?.value ?? 864, out.multiple ?? MINIMAX_CANVAS_MULTIPLE);
                 const h = snapResolutionDim(out.height ?? this.outH?.value ?? 480, out.multiple ?? MINIMAX_CANVAS_MULTIPLE);
@@ -5886,7 +6241,10 @@ class MiniMaxH3MotionDirectorEditor {
 
     _exportPreviewSuffix() {
         const cap = this.getMaxExportFrames();
-        const exportMode = this.timeline.output?.exportMode === "segments"
+        const activeOutput = this.isMixedMode()
+            ? this._ensureMixedTimeline().output
+            : this.timeline.output;
+        const exportMode = activeOutput?.exportMode === "segments"
             ? t("output.preview.segmentExport")
             : "";
         const dur = this.getTimelineDurationSec().toFixed(2);
@@ -5902,6 +6260,72 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     onOutputField(key, value) {
+        if (this.isMixedMode()) {
+            const state = this._ensureMixedTimeline();
+            state.output = state.output || {};
+            const out = state.output;
+            out.mode = "fixed";
+            out.multiple = out.multiple ?? MINIMAX_CANVAS_MULTIPLE;
+
+            const applySelector = () => {
+                if (isCustomAspectRatio(out.aspectRatio)) return;
+                out.aspectRatio = normalizeAspectRatioLabel(out.aspectRatio || DEFAULT_ASPECT_RATIO);
+                out.megapixels = clampMegapixels(out.megapixels ?? DEFAULT_MEGAPIXELS);
+                const resolved = resolutionFromSelector(
+                    out.aspectRatio,
+                    out.megapixels,
+                    out.multiple,
+                );
+                if (!resolved) return;
+                out.aspectRatio = resolved.aspectRatio;
+                out.megapixels = resolved.megapixels;
+                out.multiple = resolved.multiple;
+                out.width = resolved.width;
+                out.height = resolved.height;
+                out.longEdge = Math.max(resolved.width, resolved.height);
+            };
+
+            if (key === "aspectRatio") {
+                if (isCustomAspectRatio(value)) {
+                    out.aspectRatio = CUSTOM_ASPECT_RATIO;
+                    out.width = snapResolutionDim(out.width ?? 864, out.multiple);
+                    out.height = snapResolutionDim(out.height ?? 480, out.multiple);
+                    out.longEdge = Math.max(out.width, out.height);
+                } else {
+                    out.aspectRatio = normalizeAspectRatioLabel(value || DEFAULT_ASPECT_RATIO);
+                    applySelector();
+                }
+            } else if (key === "megapixels") {
+                out.megapixels = clampMegapixels(value);
+                applySelector();
+            } else if (key === "width") {
+                out.aspectRatio = CUSTOM_ASPECT_RATIO;
+                out.width = snapResolutionDim(value || 864, out.multiple);
+                out.height = snapResolutionDim(out.height ?? 480, out.multiple);
+                out.longEdge = Math.max(out.width, out.height);
+            } else if (key === "height") {
+                out.aspectRatio = CUSTOM_ASPECT_RATIO;
+                out.width = snapResolutionDim(out.width ?? 864, out.multiple);
+                out.height = snapResolutionDim(value || 480, out.multiple);
+                out.longEdge = Math.max(out.width, out.height);
+            } else if (key === "maxExportFrames") {
+                const n = Number.parseInt(value, 10);
+                out.maxExportFrames = Number.isFinite(n) && n > 0 ? n : 0;
+            } else if (key === "exportMode") {
+                out.exportMode = value === "segments" ? "segments" : "all";
+            } else if (key === "longEdge") {
+                out.longEdge = Math.max(32, Number(value) || 32);
+            } else if (key !== "audioMode" && key !== "mode") {
+                out[key] = value;
+            }
+
+            out.audioMode = "generate";
+            out.mode = "fixed";
+            this.mixedTimeline = normalizeMixedTimeline(state);
+            this._applyMixedSharedControls();
+            this.scheduleTimelineSync();
+            return;
+        }
         this.timeline.output = this.timeline.output || {
             mode: "long_edge",
             aspectRatio: DEFAULT_ASPECT_RATIO,
@@ -6052,6 +6476,7 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     syncFromWidgets() {
+        if (this.isMixedMode()) { this._syncMixedFromSharedWidgets(); return; }
         this.timeline.global = this.timeline.global || { refs: [], referenceVideo: {}, continuousReference: false };
         this.timeline.global.taskType = this.globalTask?.value || this.taskTypeWidget?.value || "";
         this.timeline.global.prompt = this.globalPrompt?.value ?? this.globalPromptWidget?.value ?? "";
@@ -6085,6 +6510,15 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     commit(skipRender = false, { syncTimeline = true } = {}) {
+        if (this.isMixedMode()) {
+            this._syncMixedFromSharedWidgets();
+            this._normalizeMixedRunSelection();
+            if (syncTimeline) this._writeTimelineWidget();
+            this.updateVideoNameLabel?.();
+            this.updateRunSelectUI?.();
+            this.node?.setDirtyCanvas?.(true, false);
+            return;
+        }
         this.syncFromWidgets();
         this.normalizeSegments();
         if (this.isRunSelectEnabled()) this.normalizeRunSelection();
@@ -8849,6 +9283,7 @@ class MiniMaxH3MotionDirectorEditor {
     formatTime(frames) { return (frames / this.getFrameRate()).toFixed(2); }
 
     updateSelectionUI() {
+        if (this.isMixedMode()) return;
         this.timeline.global = this.timeline.global || { taskType: "", prompt: "", refs: [] };
         if (this.globalTask) this.globalTask.value = this.timeline.global.taskType || "";
         if (this.globalPrompt) {
@@ -9324,6 +9759,31 @@ class MiniMaxH3MotionDirectorEditor {
     }
 
     onGlobalField(field, value) {
+        if (field === "taskType") {
+            const currentMode = this._directorMode || this.getDirectorMode();
+            const nextMode = getDirectorMode(value);
+            if (nextMode === "mixed") {
+                if (currentMode !== "mixed") this._standaloneDirectorMode = currentMode;
+                if (this.globalTask) this.globalTask.value = value;
+                if (this.taskTypeWidget) this.taskTypeWidget.value = value;
+                this.applyTaskLayout(currentMode);
+                this.scheduleTimelineSync();
+                this.updateModeUI?.();
+                this.updateSelectionUI?.();
+                return;
+            }
+            if (currentMode === "mixed") {
+                this.timeline.global = this.timeline.global || { refs: [] };
+                this.timeline.global.taskType = value;
+                if (this.globalTask) this.globalTask.value = value;
+                if (this.taskTypeWidget) this.taskTypeWidget.value = value;
+                this.applyTaskLayout("mixed");
+                this.scheduleTimelineSync();
+                this.updateModeUI?.();
+                this.updateSelectionUI?.();
+                return;
+            }
+        }
         this.timeline.global = this.timeline.global || { refs: [] };
         if (field === "taskType") {
             const prevTaskKey = resolveTaskKey(
@@ -10397,6 +10857,7 @@ app.registerExtension({
     name: "ComfyUI.MiniMaxH3MotionDirectorPlugin",
     async beforeConfigureGraph(graphData) {
         migrateLegacySamplingControlWorkflow(graphData);
+        repairDirectorGroupWidgetWorkflow(graphData);
     },
     async setup() {
         const flushDirectors = () => {
@@ -10699,11 +11160,13 @@ app.registerExtension({
                 if (!ed) return;
                 const initTotal = Math.max(0, parseInt(ed.totalFramesWidget?.value || 124, 10));
                 const initFps = coerceTimelineFps(ed.frameRateWidget?.value || 24);
-                ed.timeline = parseTimeline(ed.timelineWidget?.value, initTotal, initFps);
+                ed.timeline = ed._loadNativeTimelineState(ed.timelineWidget?.value, initTotal, initFps);
                 ed.ensureContextLinks();
                 ed.syncFrameRateUI(ed.timeline.frameRate);
                 ed._directorMode = ed.getDirectorMode();
-                if (ed._directorMode === "video") {
+                if (ed._directorMode === "mixed") {
+                    // Mixed owns editor.mixedTimeline; legacy normalizers intentionally do nothing here.
+                } else if (ed._directorMode === "video") {
                     ed.restoreVideoFromTimeline();
                 } else if (ed._directorMode === "prompt_batch" || ed._directorMode === "image_batch") {
                     ensureImageBatchTimeline(ed);

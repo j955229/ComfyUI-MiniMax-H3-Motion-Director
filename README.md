@@ -2,13 +2,131 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-A ComfyUI Director node built for **multi-segment MiniMax H3 video production**.
+**Current version: v1.1.0**
 
-It brings the parts that matter in real multi-shot production into one Director: segmentation, prompts, reference assets, cross-segment continuity, selective reruns, post-processing, live preview, and final export.
+A ComfyUI Director node for **multi-segment MiniMax H3 video production**.
 
-Supported modes: `T2V / I2V / FL2V / R2V / V2V / RV2V`.
+It brings segmentation, prompts, reference assets, cross-segment continuity, selective reruns, post-processing, live preview, result inspection, and final export into one production interface.
+
+Standalone modes: `T2V / I2V / FL2V / R2V / V2V / RV2V`  
+Mixed meta-mode: `T2V / I2V / FL2V / R2V / Source Video` per segment.
 
 ![MiniMax H3 Motion Director](docs/images/director-node.webp)
+
+## v1.1.0 — Mixed Mode
+
+v1.1.0 adds a native **Mixed** timeline. A single project can now combine different generation methods segment by segment instead of forcing the entire Director timeline to use one task type.
+
+Example:
+
+```text
+S1  T2V
+S2  Source Video + Identity  -> RV2V runtime
+S3  I2V using Segment Result
+S4  FL2V
+S5  R2V
+```
+
+Mixed is implemented as a native Director mode, with its own timeline state and segment-local media, while sharing the normal Director output, continuity, Material Library, preview, post-processing, and result pipeline.
+
+> **Media slot M1 — Mixed overview.** Insert the provided screenshot `螢幕擷取畫面 2026-08-17 060144.png` here. It shows the Mixed timeline, per-boundary continuity controls, T2V, and Source Video segments in one project.
+
+### Mixed segment modes
+
+| Mixed segment mode | Main input | Runtime path | Notes |
+|---|---|---|---|
+| `T2V` | Prompt | T2V | Normal text-driven generation |
+| `I2V` | Start image + Prompt | I2V path | Start image can be uploaded or come from an earlier Segment Result |
+| `FL2V` | First/Last frame + Prompt | FL2V path | Either frame can use an uploaded image; Segment Result is supported where applicable |
+| `R2V` | Prompt + reference media | R2V | Identity / scene / voice / motion references |
+| `Source Video` | Source Video + Prompt | V2V or RV2V | No Identity Pictures -> V2V; Identity Pictures present -> RV2V |
+
+### Source Video in Mixed
+
+`Source Video` is deliberately one Mixed segment mode instead of exposing separate V2V and RV2V buttons.
+
+```text
+Source Video + 0 Identity Pictures  -> V2V
+Source Video + Identity Pictures    -> RV2V
+```
+
+The actual Source Video is **segment-local and upload-only**. A Material Library video is a reference video, not the Source Video.
+
+`Start sec` and `End sec` define the source range. The selected range determines the generated segment duration; Mixed does not arbitrarily time-stretch the source clip.
+
+> **Media slot M2 — Source Video + Identity example.** Insert `螢幕擷取畫面 2026-08-17 060155.png` here. It shows Segment 2 with Source Range `2.5 -> 7.5` and the orange-clothed identity reference.
+
+> **Media slot M3 — Additional Source Video identities.** Place `螢幕擷取畫面 2026-08-17 060204.png` and `螢幕擷取畫面 2026-08-17 060214.png` side by side here. They show two more Source Video segments using different source ranges and identity references.
+
+### Segment Result
+
+Mixed can reuse a decoded static frame from an earlier generated segment.
+
+Canonical behavior:
+
+```text
+Earlier Segment -> last frame
+Earlier Segment -> explicit frame index
+```
+
+Typical uses:
+
+- I2V: use an earlier Segment Result as the current start frame.
+- FL2V: use an earlier Segment Result as First Frame or Last Frame.
+- The source segment must be earlier in the timeline.
+
+A Segment Result is a **static decoded frame**. It is not Motion Context. This means a Segment Result frame and cross-segment Motion Context can be used together when the mode allows it.
+
+### Per-boundary continuity
+
+Mixed continuity is configured directly between segment cards:
+
+```text
+[S1]  S1->S2  [S2]  S2->S3  [S3]
+        visual         visual
+        audio          audio
+```
+
+The boundary buttons request continuity for that specific link. The main Director node still provides the global masters and tuning:
+
+- Motion Context
+- Context Frames
+- Latent Scale Lock
+- Continue Generated Audio
+- Color Re-anchor
+
+The effective visual handoff is therefore the node-level Motion Context master **and** the boundary visual request. Audio follows the same master + boundary-request model.
+
+If a mode has an explicit reset condition, the report explains the result. For example, an independently uploaded I2V start image resets visual context, so a visual request can be reported as requested but not actually applied.
+
+### Mixed output and Material Library
+
+Mixed uses one shared output canvas across all segments, using the same normal resolution selector (`aspect ratio + megapixels + FPS`) as the generation modes.
+
+The global Material Library button applies to the currently selected Mixed segment and only exposes media that are legal for that segment mode. The actual Source Video remains upload-only.
+
+### Mixed Results
+
+The Results page supports:
+
+- `Segment` — inspect one segment.
+- `Multi` — preview/export a continuous segment range such as `1-2`, `1-3`, `2-4`, or `3-4`.
+- `Final` — full final result and encoding controls.
+
+The Multi range is applied to both preview and export.
+
+> **Media slot M4 — source/identity materials.** If you want to document the real v1.1.0 test, show the three supplied dance Source Videos (`mat_8e763dd8...`, `mat_05763e3e...`, `mat_43e60f21...`) together with the three supplied identity images (orange, blue, and white/teal characters). Do not place them inside the repository unless you have redistribution rights; this slot is only a placement note.
+
+> **Media slot M5 — final Mixed result video.** Insert or link the provided `MiniMaxH3_Director_00003_.mp4` here as the final v1.1.0 demonstration. It is the best media item for showing the complete T2V -> three Source Video/Identity segments workflow.
+
+### Mixed v1 limitations
+
+- Mixed v1 does not use the external `Director Inputs` group system; Mixed media are managed by the native Director UI.
+- Source Bridge is not used by Mixed v1.
+- Source Video itself is not supplied from the Material Library.
+- Arbitrary Segment Result references are backward-only.
+
+---
 
 # Credits / License
 
@@ -22,7 +140,6 @@ This project contains or modifies code / algorithms from:
 - [Kijai / ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) — GPL-3.0; portions of packed-latent preview / TAEHV behavior were informed by its implementation.
 
 Thanks to all upstream projects and contributors.
-
 
 ## Why use Director?
 
@@ -39,39 +156,41 @@ Motion Director puts those jobs back into one production interface while keeping
 
 ## Core features
 
-- Six MiniMax H3 task modes: `T2V / I2V / FL2V / R2V / V2V / RV2V`.
-- Multi-segment timeline with an independent Prompt, duration, mode, and assets for each segment.
-- **Selective Run**: rerun only selected segments instead of regenerating the entire sequence.
-- Cross-segment continuity: Motion Context, Context Frames, Latent Scale Lock, Continue Generated Audio, and Color Re-anchor.
-- Source Bridge for V2V / RV2V source-video boundaries.
-- Common Assets and a persistent Material Library to reduce repeated uploads.
-- Unified external `Director Inputs` / `Director Assets` architecture.
+- Six standalone MiniMax H3 task modes: `T2V / I2V / FL2V / R2V / V2V / RV2V`.
+- Native `Mixed` meta-mode with per-segment `T2V / I2V / FL2V / R2V / Source Video`.
+- Multi-segment timeline with independent Prompt, mode, duration/range, and assets per segment.
+- **Selective Run**: rerun selected segments instead of regenerating the entire sequence.
+- Cross-segment Motion Context and generated-audio continuation.
+- Segment Result frame reuse between earlier and later Mixed segments.
+- Source Bridge for standalone V2V / RV2V source-video boundaries.
+- Common Assets and persistent Material Library.
+- Unified external `Director Inputs` / `Director Assets` architecture for standalone modes.
 - Built-in sampling or external ComfyUI `SAMPLER + SIGMAS`.
 - Global Refine and Face Refine post-processing.
-- Director Live Preview, independent of ComfyUI's default sampler preview.
-- Results page with Segment / Multi / Final views and final video saving.
-- The main node is an `OUTPUT_NODE`, so it can execute without a downstream node while still exposing `images / audio / fps` for additional ComfyUI processing.
+- Director Live Preview.
+- Results page with Segment / Multi-range / Final views and final video saving.
+- Main node is an `OUTPUT_NODE` and still exposes `images / audio / fps` for downstream ComfyUI processing.
 
 ---
 
 ## Quick start
 
 1. Add `MiniMax H3 Motion Director` to the workflow.
-2. Connect the MiniMax H3 `model`, `video_vae`, `audio_vae`, and `clip`.
+2. Connect MiniMax H3 `model`, `video_vae`, `audio_vae`, and `clip`.
 3. Open Director.
-4. Choose the task mode on the Generation page.
-5. Create the required segments or prompt groups.
-6. Fill in each Prompt and add the images, audio, or video required by the selected mode.
-7. Enable continuity features when later segments should continue from earlier ones.
-8. Use **Selective Run** when only some segments need to be regenerated.
+4. Choose a standalone task mode or `Mixed`.
+5. Create the required segments.
+6. Fill in each Prompt and add media required by that segment mode.
+7. Configure boundary continuity when a later segment should inherit visual or generated-audio context.
+8. Use **Selective Run** when only some segments need regeneration.
 9. Queue the workflow.
-10. Watch progress in Live Preview and inspect the outputs in Results.
+10. Watch Live Preview and inspect Segment / Multi / Final results.
 
 ---
 
-# Generation: six task modes
+# Generation: standalone task modes
 
-The same Director can switch between all six MiniMax H3 video tasks.
+The same Director can switch between all six standalone MiniMax H3 video tasks.
 
 <img width="1709" height="902" alt="T2V generation mode" src="https://github.com/user-attachments/assets/89d1275a-fc5e-4d0e-aead-edfd82f8dae9" />
 <img width="1717" height="894" alt="I2V generation mode" src="https://github.com/user-attachments/assets/c5eea561-fc53-460c-b010-36abe8a7d60f" />
@@ -89,21 +208,21 @@ The same Director can switch between all six MiniMax H3 video tasks.
 | `V2V` | Source Video + Prompt | Managed by Director | Not required | Uploaded in Director | Video redraw / transformation while keeping source motion |
 | `RV2V` | Source Video + Prompt + image/audio references | `rv_prompt_N` + `rv_assets_N` | 9 images / 3 audios | Uploaded in Director | Source motion plus identity / voice references |
 
-## T2V
+### T2V
 
-Each segment is primarily driven by its Prompt. It works well for splitting a script into several shots and using Motion Context to continue from one segment to the next.
+Prompt-driven generation. Multi-segment T2V works well with Motion Context.
 
-## I2V
+### I2V
 
-Each prompt group can provide its own starting image.
+Each group can provide its own starting image.
 
-## FL2V
+### FL2V
 
 Each group can use a first frame, a last frame, or both.
 
-## R2V
+### R2V
 
-R2V exposes the most complete reference-asset structure. Each Assets group can contain up to:
+Each R2V Assets group can contain up to:
 
 ```text
 Picture 1-9
@@ -111,17 +230,13 @@ Video 1-3
 Audio 1-3
 ```
 
-This is useful when character identity, clothing, scene references, voice, motion, and other references need to exist in the same shot.
+### V2V
 
-## V2V
+Source Video is managed inside Director. Standalone V2V supports its dedicated source-video timeline and Source Bridge behavior.
 
-The Source Video is managed inside Director. It supports global mode, segmented mode, manual splitting, smart scene splitting, and Source Bridge at segment boundaries.
+### RV2V
 
-## RV2V
-
-RV2V uses Source Video as the primary motion/content source while allowing additional reference images and audio.
-
-In RV2V, `Director Assets` currently exposes 9 image slots and 3 audio slots. Source Video remains managed by Director and is not replaced by an Assets video input.
+RV2V uses Source Video as the primary motion/content source while allowing additional identity and audio references.
 
 ---
 
@@ -131,38 +246,24 @@ In RV2V, `Director Assets` currently exposes 9 image slots and 3 audio slots. So
 
 ## Common Assets
 
-When the same character, scene, prop, or voice needs to appear across many segments, it can be placed in Common Assets instead of being added repeatedly.
-
-Example for R2V:
-
-```text
-Common Assets: Character A, Character B
-
-Segment 1: Prop X
-Segment 2: Prop Y
-Segment 3: No additional asset
-```
-
-At execution time, every segment receives the Common Assets plus its own segment-specific assets, and the references are renumbered into a continuous official reference sequence.
-
-Common Assets are intended for references that the whole shot chain should know. Segment assets are intended for references that only matter in the current segment.
+Use Common Assets when the same character, scene, prop, or voice should be known by many standalone segments. Segment assets remain local to the current segment/group.
 
 ## Material Library
 
-The Material Library is a persistent asset-management interface separate from the current segment editor. It can store and reuse:
+The persistent Material Library can store and reuse:
 
 - Images
 - Audio
 - Video
 - Prompts
 
-Images can be categorized as characters, scenes, props, or other material. Library items can be assigned to the current task and target segment without repeatedly browsing for the same files on disk.
+In Mixed mode, the global Library button targets the currently selected segment and respects that segment's legal inputs.
 
 ---
 
 # External Director Inputs / Assets
 
-Other ComfyUI nodes can feed generated images, audio, or video directly into Director through the unified external input architecture:
+Other ComfyUI nodes can feed generated images, audio, or video into standalone Director modes through:
 
 ```text
 MiniMax H3 Motion Director Assets
@@ -174,7 +275,7 @@ MiniMax H3 Motion Director
 
 ![External Director Inputs and Assets](docs/images/external-inputs.webp)
 
-The repository exposes only three Director-related nodes:
+The repository exposes three Director-related nodes:
 
 | Node | Purpose |
 |---|---|
@@ -182,9 +283,7 @@ The repository exposes only three Director-related nodes:
 | `MiniMax H3 Motion Director Inputs` | Dynamic Prompt / image / Assets inputs |
 | `MiniMax H3 Motion Director Assets` | Packages mode-specific media for the current group |
 
-Director decides the active task mode and group count, and Inputs changes its sockets accordingly. You do not need to maintain six separate input-node variants manually.
-
-### External input shapes by mode
+External input shapes:
 
 ```text
 T2V   prompt_N
@@ -195,13 +294,11 @@ RV2V  rv_prompt_N + rv_assets_N
 V2V   Source Video is managed by Director
 ```
 
-For a given group, internally uploaded media and externally connected media are mutually exclusive. Prompt sourcing is handled separately, so you can externalize media only, Prompt only, or both.
+Mixed v1 uses its native segment editor instead of this external group architecture.
 
 ---
 
 # Main node controls
-
-The main node stays compact and exposes four areas that are used frequently.
 
 ## Sampling
 
@@ -213,9 +310,7 @@ The main node stays compact and exposes four areas that are used frequently.
 - Video Sigma Shift
 - Audio Sigma Shift
 
-The node reports sampling state as internal, external, or incomplete.
-
-When both external `sampler + sigmas` are connected correctly, Director uses external sampling. Otherwise it falls back to its internal sampling settings.
+When both external `sampler + sigmas` are connected correctly, Director uses external sampling. Otherwise it falls back to internal sampling.
 
 ## Cross-segment continuity
 
@@ -224,22 +319,18 @@ When both external `sampler + sigmas` are connected correctly, Director uses ext
 - Latent Scale Lock
 - Continue Generated Audio
 - Color Re-anchor
-- Source Bridge, where applicable
+- Source Bridge where applicable in standalone V2V / RV2V
 
-These controls define how a later segment can inherit state from the previous segment.
+In Mixed, these node-level switches/tuning values are global masters; each segment boundary independently requests visual and/or audio inheritance.
 
 ## Post-processing
 
 - Global Refine
 - Face Refine
 
-The main node shows the switches and summaries. Full parameters live on Director's Post Processing page.
-
 ## Performance
 
 - Clear VRAM between segments
-
-This is intended for long or multi-segment jobs where memory pressure needs to be reduced between segments.
 
 ---
 
@@ -251,33 +342,11 @@ This is intended for long or multi-segment jobs where memory pressure needs to b
 
 ## Post Processing
 
-Post Processing uses a side-by-side layout.
-
-### Global Refine
-
-Runs a second sampling/upscaling pass over the full segment. It can configure secondary sampling, scaling method, target size, and related refine parameters.
-
-### Face Refine
-
-Handles face detection, tracking, cropping, local denoising, and compositing. It is useful when faces in the original H3 output are unstable, too small, or need an additional local repair pass.
-
-Global Refine and Face Refine can be enabled independently.
+Global Refine can run a second sampling/upscaling pass. Face Refine handles face detection, tracking, crop refinement, denoising, and compositing. They can be enabled independently.
 
 ## Live Preview
 
-Live Preview does not use ComfyUI's default sampler preview as the final preview interface. Director displays the active generation stage itself.
-
-The page is divided into:
-
-```text
-General
-Upscale
-Face Refine
-```
-
-Preview frame count, preview FPS, maximum resolution, JPEG quality, and preview interval can be configured.
-
-During generation, the current Stage / Step is updated continuously. The completed previous stage remains as a static snapshot so you can compare generation, Global Refine, and Face Refine results.
+Director owns its preview UI and displays the active generation/post-processing stage. Completed stages can remain visible as snapshots for comparison.
 
 ## Results
 
@@ -289,13 +358,11 @@ Multi
 Final
 ```
 
-The Final section can configure auto-save, output path, filename prefix, format, encoder, and encoding mode.
+`Multi` can select a continuous start/end segment range. `Final` provides save path, filename prefix, format, encoder, and encoding controls.
 
 ---
 
 # Outputs
-
-The public outputs are intentionally simple:
 
 | Output | Type | Description |
 |---|---|---|
@@ -303,26 +370,21 @@ The public outputs are intentionally simple:
 | `audio` | `AUDIO` list | Matching final audio |
 | `fps` | `FLOAT` | Final frame rate |
 
-`MiniMax H3 Motion Director` is also an `OUTPUT_NODE`:
-
-- It can run as the final workflow node even when nothing is connected to its right-side outputs.
-- If you want your own ComfyUI post-processing chain, continue wiring `images / audio / fps` into other nodes.
+`MiniMax H3 Motion Director` is also an `OUTPUT_NODE`, so it can execute as the end of a workflow without a downstream node.
 
 ---
 
 # Multi-segment continuity
 
-The simplest model is:
+The basic model is:
 
 ```text
-S1 → S2 → S3 → S4
+S1 -> S2 -> S3 -> S4
 ```
-
-Independent generation treats the four segments as unrelated tasks. Director's continuity system lets later segments inherit context from earlier ones.
 
 ### Motion Context
 
-Carries motion and visual context across generated segments. `Context Frames` controls how much of the previous segment's tail is brought into the next generation.
+Carries visual/motion context from the previous generated segment. `Context Frames` controls how much previous tail context is available.
 
 ### Latent Scale Lock
 
@@ -330,17 +392,15 @@ Reduces instability caused by latent-scale changes between segments.
 
 ### Continue Generated Audio
 
-Maintains a generated-audio continuity chain so each segment does not restart its audio context from zero.
+Carries generated-audio context across enabled boundaries.
 
 ### Color Re-anchor
 
-Helps suppress color and overall visual drift across long segment chains.
+Helps suppress long-chain color drift.
 
 ### Source Bridge
 
-V2V / RV2V also has to deal with the movement boundaries of the Source Video itself. Source Bridge rebuilds a transition across source-video segment boundaries after the source has been split.
-
-These controls are optional and can be enabled according to the needs of each project.
+Used by standalone V2V / RV2V source-video segmentation. Mixed v1 does not use Source Bridge.
 
 ---
 
@@ -348,27 +408,31 @@ These controls are optional and can be enabled according to the needs of each pr
 
 ### Text-driven multi-shot video
 
-`T2V` + multiple segment Prompts + Motion Context. Split a script into shots and rerun only the failed segments.
+`T2V` + multiple Prompts + Motion Context.
 
-### Continuous shots starting from character artwork
+### Continuous generated shots starting from artwork
 
-`I2V` + start image + Motion Context. Useful for character art, anime illustrations, or scene concept images.
+`I2V` + start image / Segment Result where appropriate + Motion Context.
 
 ### Explicit start/end control
 
-`FL2V` + first/last image. Useful for transitions that need a defined visual state at both ends.
+`FL2V` + first/last image or earlier Segment Result.
 
 ### Character / voice / multi-reference short-form production
 
-`R2V` + Common Assets + segment assets + Material Library. Useful for projects that repeatedly reuse people, identity references, voices, and props.
+`R2V` + reusable references + Material Library.
 
 ### Redrawing motion from an existing video
 
-`V2V` + segmented mode + Source Bridge. Useful when the original motion/timing should be preserved while regenerating the visuals.
+Standalone `V2V`, or Mixed `Source Video` without Identity Pictures.
 
-### Existing video + character identity reference
+### Existing motion + character identity replacement
 
-`RV2V` + Source Video + reference images / audio. Useful when the original motion should drive the video while identity and voice references are added or replaced.
+Standalone `RV2V`, or Mixed `Source Video` with Identity Pictures.
+
+### Real mixed production
+
+Use different segment modes according to the shot instead of forcing the whole project into one task type. For example: T2V establishing shot -> Source Video/RV2V performance -> I2V or FL2V controlled ending.
 
 ---
 
@@ -383,7 +447,7 @@ cd ComfyUI-MiniMax-H3-Motion-Director
 python -m pip install -r requirements.txt
 ```
 
-If you use the Windows portable build, replace `python` with the Python executable actually used by that ComfyUI installation.
+If you use a Windows portable build, replace `python` with the Python executable used by that ComfyUI installation.
 
 Restart ComfyUI completely after installation.
 
@@ -394,28 +458,26 @@ cd ComfyUI/custom_nodes/ComfyUI-MiniMax-H3-Motion-Director
 git pull
 ```
 
-When an update contains frontend files, restart ComfyUI and hard-refresh the browser.
+After frontend updates, restart ComfyUI and hard-refresh the browser.
 
 ### Dependencies
 
-`requirements.txt` currently includes:
-
-- `opencv-python-headless` — V2V / source-video timeline decoding.
-- `imageio-ffmpeg` — V2V / RV2V source-audio extraction.
+- `opencv-python-headless` — source-video decoding.
+- `imageio-ffmpeg` — source-audio extraction.
 - `scenedetect` — smart scene splitting.
 
-> Do not load the standalone `ComfyUI-H3-Motion-Context` at the same time. This project integrates and modifies the relevant H3 runtime patch, and loading both implementations can cause conflicts.
+> Do not load the standalone `ComfyUI-H3-Motion-Context` at the same time. This project integrates and modifies the relevant H3 runtime patch, and loading both implementations can conflict.
 
 ---
 
 # Usage notes
 
-- External `sampler` and `sigmas` should be connected as a pair. Connecting only one is treated as an incomplete external sampling setup.
-- `Director Inputs` is optional. Without it, the entire workflow can be managed through Director's internal UI.
-- FL2V Assets exposes only first and last images. Do not apply the R2V 9/3/3 asset layout to FL2V.
-- RV2V Assets does not expose Reference Video. Source Video is managed by Director.
-- Do not use internal and external media sources for the same group at the same time.
-- Multi-segment generation, post-processing, and high-resolution jobs can significantly increase VRAM and system-memory pressure. Enable VRAM clearing between segments when needed.
-- If the interface still shows an older frontend after an update, restart ComfyUI completely and hard-refresh the browser cache.
+- External `sampler` and `sigmas` should be connected as a pair.
+- `Director Inputs` is optional for standalone modes; Mixed v1 uses the native Director UI.
+- FL2V Assets exposes first/last images rather than the R2V 9/3/3 asset layout.
+- RV2V Assets does not expose Reference Video; Source Video is managed by Director.
+- Do not use internal and external media sources for the same standalone group at the same time.
+- Source Video range determines Mixed Source Video segment duration.
+- Multi-segment, post-processing, and high-resolution jobs can significantly increase VRAM and system-memory pressure.
+- If the interface shows an older frontend after updating, restart ComfyUI and hard-refresh the browser cache.
 - Do not load the standalone `ComfyUI-H3-Motion-Context` alongside this project.
-

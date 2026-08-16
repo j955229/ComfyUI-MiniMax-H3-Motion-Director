@@ -1,7 +1,7 @@
 // MiniMax H3 Motion Director — auto-loaded Material Library extension.
 
 import { app } from "../../scripts/app.js";
-import { mountMaterialLibrary } from "./minimax_material_library_modal.mjs";
+import { mountMaterialLibrary } from "./minimax_material_library_modal.mjs?boot=mixed_global_library_v1";
 
 function isDirectorNode(node) {
     const cls = node?.comfyClass || node?.type || "";

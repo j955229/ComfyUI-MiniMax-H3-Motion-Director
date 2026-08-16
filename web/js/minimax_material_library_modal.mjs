@@ -86,7 +86,28 @@ function ensureStyles() {
     document.head.appendChild(style);
 }
 
+function isMixedEditor(editor) {
+    return !!editor?.isMixedMode?.();
+}
+
+function currentMixedSegment(editor) {
+    return editor?._mixedController?.selectedSegment
+        || editor?.mixedTimeline?.segments?.[Number(editor?._mixedController?.selectedIndex || 0)]
+        || null;
+}
+
+function currentMixedIndex(editor) {
+    return Math.max(0, Number(editor?._mixedController?.selectedIndex || 0) || 0);
+}
+
+function mixedEffectiveMode(editor) {
+    const mode = String(currentMixedSegment(editor)?.mode || "t2v").trim().toLowerCase();
+    if (mode === "source_video") return "rv2v";
+    return ["t2v", "i2v", "fl2v", "r2v"].includes(mode) ? mode : "t2v";
+}
+
 function currentMode(editor) {
+    if (isMixedEditor(editor)) return mixedEffectiveMode(editor);
     return String(editor?.getTaskKey?.() || editor?.globalTask?.value || editor?.timeline?.global?.taskType || "t2v").trim().toLowerCase();
 }
 
@@ -122,6 +143,58 @@ function compactTargetLabel(target) {
 function selectedCountTotal(state) {
     const c = queueCounts(state);
     return c.image + c.audio + c.video + c.prompt;
+}
+
+function buildMixedMaterialPlan(state, editor) {
+    const segment = currentMixedSegment(editor);
+    const mode = mixedEffectiveMode(editor);
+    const segmentIndex = currentMixedIndex(editor);
+    const assignments = [];
+    const pushAll = (queue, queueKind, targetKind) => {
+        for (const entry of queue || []) {
+            assignments.push({
+                queueKind,
+                occurrenceOrder: entry.order,
+                itemId: entry.itemId,
+                item: entry.item,
+                segmentIndex,
+                targetKind,
+            });
+        }
+    };
+    if (!segment) {
+        return { mode, target: null, existingSegments: 0, requiredSegments: 0, createSegments: 0, assignments, warnings: [], blockedReason: "target_required" };
+    }
+    if (mode === "t2v") {
+        pushAll(state.prompts, "prompt", "prompt");
+    } else if (mode === "i2v") {
+        pushAll(state.images, "image", "start_image");
+        pushAll(state.prompts, "prompt", "prompt");
+    } else if (mode === "fl2v") {
+        pushAll(state.fl2vFirstFrames, "first", "first_frame");
+        pushAll(state.fl2vLastFrames, "last", "last_frame");
+        pushAll(state.prompts, "prompt", "prompt");
+    } else if (mode === "r2v") {
+        pushAll(state.images, "image", "reference_picture");
+        pushAll(state.audio, "audio", "reference_audio");
+        pushAll(state.videos, "video", "reference_video");
+        pushAll(state.prompts, "prompt", "prompt");
+    } else if (mode === "rv2v") {
+        pushAll(state.images, "image", "reference_picture");
+        pushAll(state.audio, "audio", "reference_audio");
+        // Source Video is intentionally local-upload only in Mixed.
+        pushAll(state.prompts, "prompt", "prompt");
+    }
+    return {
+        mode,
+        target: `mixed:${segment.id || segmentIndex}`,
+        existingSegments: 1,
+        requiredSegments: 1,
+        createSegments: 0,
+        assignments,
+        warnings: [],
+        blockedReason: "",
+    };
 }
 
 /**
@@ -286,6 +359,7 @@ export function mountMaterialLibrary(editor, node = null) {
     let previewOpen = false;
     let categoriesByType = Object.fromEntries(TYPE_ORDER.map((kind) => [kind, [...materialCategories(kind)]]));
     let lastAppliedSignature = null;
+    let lastMixedTargetId = "";
 
     const setStatus = (message = "", kind = "") => {
         statusEl.textContent = message;
@@ -304,8 +378,18 @@ export function mountMaterialLibrary(editor, node = null) {
             lastAppliedSignature = null;
             setStatus("");
         }
+        if (isMixedEditor(editor)) {
+            const seg = currentMixedSegment(editor);
+            const targetId = String(seg?.id || `index:${currentMixedIndex(editor)}`);
+            if (lastMixedTargetId && lastMixedTargetId !== targetId) {
+                clearAllSelections(state);
+                lastAppliedSignature = null;
+            }
+            lastMixedTargetId = targetId;
+            state.target = `mixed:${targetId}`;
+        }
         if (!allowedTypes(state.mode).has(state.activeType)) state.activeType = firstAllowedType(state.mode);
-        if (state.mode === "r2v" && state.target === "common" && state.activeType === "prompt") state.activeType = "image";
+        if (!isMixedEditor(editor) && state.mode === "r2v" && state.target === "common" && state.activeType === "prompt") state.activeType = "image";
     };
 
     const allQueues = () => [
@@ -363,7 +447,16 @@ export function mountMaterialLibrary(editor, node = null) {
 
     const renderContext = () => {
         contextEl.replaceChildren();
-        if (state.mode === "r2v" || state.mode === "rv2v") {
+        if (isMixedEditor(editor)) {
+            const label = document.createElement("span");
+            label.className = "mmx-ml-context-label";
+            label.textContent = `${mlT("target")}: S${currentMixedIndex(editor) + 1}`;
+            contextEl.appendChild(label);
+            if (state.mode === "rv2v") {
+                const note = document.createElement("span"); note.className = "mmx-ml-context-label"; note.textContent = mlT("sourceLocalOnly");
+                contextEl.appendChild(note);
+            }
+        } else if (state.mode === "r2v" || state.mode === "rv2v") {
             const label = document.createElement("span"); label.className = "mmx-ml-context-label"; label.textContent = `${mlT("target")}:`;
             const targets = document.createElement("div"); targets.className = "mmx-ml-targets";
             if (state.mode === "r2v") addTargetButton(targets, "common", mlT("common"));
@@ -581,7 +674,15 @@ export function mountMaterialLibrary(editor, node = null) {
         card.title = mlT("leftRightHint");
         card.addEventListener("click", () => {
             const role = state.mode === "fl2v" && item.type === "image" ? state.fl2vRole : null;
-            markSelectionChanged(); addMaterialOccurrence(state, item.type, item, role); renderAll();
+            markSelectionChanged();
+            if (isMixedEditor(editor) && state.mode === "i2v" && item.type === "image") {
+                state.images = [];
+            } else if (isMixedEditor(editor) && state.mode === "fl2v" && item.type === "image") {
+                if (role === "first") state.fl2vFirstFrames = [];
+                else state.fl2vLastFrames = [];
+            }
+            addMaterialOccurrence(state, item.type, item, role);
+            renderAll();
         });
         card.addEventListener("contextmenu", (event) => {
             event.preventDefault(); event.stopPropagation();
@@ -600,7 +701,9 @@ export function mountMaterialLibrary(editor, node = null) {
     };
 
     const renderPreview = () => {
-        const plan = buildMaterialAllocationPlan({ mode: state.mode, state, timeline: editor.timeline });
+        const plan = isMixedEditor(editor)
+            ? buildMixedMaterialPlan(state, editor)
+            : buildMaterialAllocationPlan({ mode: state.mode, state, timeline: editor.timeline });
         const counts = queueCounts(state);
         const countText = state.mode === "fl2v"
             ? `${mlT("selected")}: ${mlT("first")} ${counts.first} · ${mlT("last")} ${counts.last} · Prompt ${counts.prompt}`
@@ -736,6 +839,78 @@ export function mountMaterialLibrary(editor, node = null) {
         });
     };
 
+    const mixedDescriptor = (kind, mat, item, index = 0) => {
+        const path = inputRelativePath(mat);
+        const base = {
+            index,
+            assetId: item?.id || "",
+            fileName: mat?.name || relativeName(item),
+            type: "input",
+            subfolder: mat?.subfolder || "",
+        };
+        if (kind === "image") return { ...base, imageFile: path };
+        if (kind === "audio") return { ...base, audioFile: path };
+        return { ...base, videoFile: path };
+    };
+
+    const removeMixedResultRole = (segment, role) => {
+        segment.inputs = segment.inputs || {};
+        segment.inputs.resultRefs = Array.isArray(segment.inputs.resultRefs) ? segment.inputs.resultRefs : [];
+        segment.inputs.resultRefs = segment.inputs.resultRefs.filter((ref) => ref?.role !== role);
+    };
+
+    const appendMixedQueue = async (segment, field, kind, queue, limit, materialize) => {
+        segment.inputs = segment.inputs || {};
+        const values = Array.isArray(segment.inputs[field]) ? [...segment.inputs[field]] : [];
+        for (const entry of queue || []) {
+            if (values.length >= limit) break;
+            const mat = await materialize(entry.item);
+            values.push(mixedDescriptor(kind, mat, entry.item, values.length));
+        }
+        segment.inputs[field] = values.slice(0, limit).map((item, index) => ({ ...item, index }));
+    };
+
+    const applyMixedPlan = async (materialize) => {
+        const segment = currentMixedSegment(editor);
+        if (!segment) throw new Error("Mixed segment is not available.");
+        const mode = mixedEffectiveMode(editor);
+        segment.inputs = segment.inputs || {};
+        segment.inputs.resultRefs = Array.isArray(segment.inputs.resultRefs) ? segment.inputs.resultRefs : [];
+
+        if (mode === "i2v" && state.images.length) {
+            const entry = state.images[state.images.length - 1];
+            const mat = await materialize(entry.item);
+            segment.inputs.startFrame = mixedDescriptor("image", mat, entry.item, 0);
+            removeMixedResultRole(segment, "i2v_start");
+        } else if (mode === "fl2v") {
+            if (state.fl2vFirstFrames.length) {
+                const entry = state.fl2vFirstFrames[state.fl2vFirstFrames.length - 1];
+                const mat = await materialize(entry.item);
+                segment.inputs.firstFrame = mixedDescriptor("image", mat, entry.item, 0);
+                removeMixedResultRole(segment, "fl2v_first");
+            }
+            if (state.fl2vLastFrames.length) {
+                const entry = state.fl2vLastFrames[state.fl2vLastFrames.length - 1];
+                const mat = await materialize(entry.item);
+                segment.inputs.lastFrame = mixedDescriptor("image", mat, entry.item, 0);
+                removeMixedResultRole(segment, "fl2v_last");
+            }
+        } else if (mode === "r2v") {
+            await appendMixedQueue(segment, "pictures", "image", state.images, MAX_REFERENCE_IMAGES, materialize);
+            await appendMixedQueue(segment, "referenceAudios", "audio", state.audio, MAX_REFERENCE_AUDIOS, materialize);
+            await appendMixedQueue(segment, "referenceVideos", "video", state.videos, MAX_REFERENCE_VIDEOS, materialize);
+        } else if (mode === "rv2v") {
+            await appendMixedQueue(segment, "identityPictures", "image", state.images, MAX_REFERENCE_IMAGES, materialize);
+            await appendMixedQueue(segment, "referenceAudios", "audio", state.audio, MAX_REFERENCE_AUDIOS, materialize);
+        }
+
+        if (state.prompts.length) {
+            const text = state.prompts.map((entry) => entry.item?.content || "").filter(Boolean).join("\n");
+            if (text) segment.prompt = applyPromptText(segment.prompt, text, state.promptApplyMode);
+        }
+        editor._mixedController?.commitExternalMutation?.();
+    };
+
     const applyPlan = async () => {
         if (applying) return;
         const plan = renderPreview();
@@ -743,7 +918,9 @@ export function mountMaterialLibrary(editor, node = null) {
         applying = true; renderPreview(); setStatus("");
         const materialize = materializeCacheFactory();
         try {
-            if (state.mode === "t2v") {
+            if (isMixedEditor(editor)) {
+                await applyMixedPlan(materialize);
+            } else if (state.mode === "t2v") {
                 ensureSegments(editor, "t2v", plan.requiredSegments);
                 applySequentialPrompts(editor.timeline.segments, state.prompts);
                 refreshEditor(editor);

@@ -206,6 +206,7 @@ export function isPromptBatchTask(taskKey) {
 
 export function getDirectorMode(taskTypeValue) {
     const key = resolveTaskKey(taskTypeValue);
+    if (key === "mixed") return "mixed";
     if (FL2V_TASKS.has(key)) return "fl2v";
     if (PROMPT_BATCH_TASKS.has(key)) return "prompt_batch";
     // v2v / rv2v (and any non-batch key) → MiniMax H3 source-video timeline.

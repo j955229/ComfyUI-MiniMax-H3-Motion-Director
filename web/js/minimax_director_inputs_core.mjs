@@ -15,7 +15,7 @@ const MODE_PREFIX = Object.freeze({
 
 export function resolveDirectorTaskKey(value) {
     const text = String(value || "").trim().toLowerCase();
-    const match = text.match(/(?:^|\b)(rv2v|fl2v|r2v|i2v|v2v|t2v)(?:\b|$)/i);
+    const match = text.match(/(?:^|\b)(mixed|rv2v|fl2v|r2v|i2v|v2v|t2v)(?:\b|$)/i);
     return match ? match[1].toLowerCase() : "t2v";
 }
 
@@ -47,6 +47,11 @@ export function directorGroupCount(timeline, mode) {
 
 export function desiredDirectorInputSockets(mode, groupCount) {
     const task = resolveDirectorTaskKey(mode);
+    // Mixed v1 owns heterogeneous segment-local inputs inside Director.  The
+    // existing external Inputs protocol is intentionally single-mode and must
+    // not expose misleading prompt/media sockets for Mixed.
+    if (task === "mixed") return [];
+
     const prefix = MODE_PREFIX[task] || "text";
     const count = Math.max(1, Number.parseInt(groupCount, 10) || 1);
     const out = [];

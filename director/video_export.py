@@ -135,6 +135,10 @@ class FinalVideoRecord:
     video: Any
     fps: float
     frame_count: int
+    images: torch.Tensor | None = None
+    audio: dict[str, Any] | None = None
+    segment_indices: tuple[int, ...] = ()
+    segment_frame_counts: tuple[int, ...] = ()
     prompt: Any = None
     extra_pnginfo: dict[str, Any] | None = None
     auto_save_attempted: bool = False
@@ -274,6 +278,8 @@ class FinalVideoRegistry:
         save_config: Any,
         prompt: Any = None,
         extra_pnginfo: dict[str, Any] | None = None,
+        segment_indices: list[int] | tuple[int, ...] | None = None,
+        segment_frame_counts: list[int] | tuple[int, ...] | None = None,
     ) -> tuple[FinalVideoRecord, dict[str, Any] | None]:
         node = str(node_id)
         with self._lock:
@@ -281,9 +287,21 @@ class FinalVideoRegistry:
             existing = self._records.get(node)
             if existing is not None and existing.run_id == run_id:
                 return existing, existing.auto_save_result
-            video = self.video_factory(images, audio, float(fps))
+            final_images = _combine_images(images)
+            final_audio = _combine_audio(audio)
+            video = self.video_factory(final_images, final_audio, float(fps))
             record = FinalVideoRecord(
-                node, run_id, video, float(fps), int(frame_count), prompt, extra_pnginfo
+                node_id=node,
+                run_id=run_id,
+                video=video,
+                fps=float(fps),
+                frame_count=int(frame_count),
+                images=final_images,
+                audio=final_audio,
+                segment_indices=tuple(int(value) for value in (segment_indices or ())),
+                segment_frame_counts=tuple(int(value) for value in (segment_frame_counts or ())),
+                prompt=prompt,
+                extra_pnginfo=extra_pnginfo,
             )
             self._records[node] = record
 
@@ -311,10 +329,78 @@ class FinalVideoRegistry:
                 raise FinalVideoUnavailable("Final Result is not ready or has already been released")
             return record
 
-    def save(self, node_id: Any, run_id: Any, config: Any) -> dict[str, Any]:
+    def _range_record(self, record: FinalVideoRecord, start: int, end: int) -> FinalVideoRecord:
+        if start < 0 or end < start:
+            raise ValueError("Invalid segment range")
+        indices = list(record.segment_indices)
+        counts = list(record.segment_frame_counts)
+        if not indices or len(indices) != len(counts):
+            raise FinalVideoUnavailable("Segment range metadata is unavailable for this Final Result")
+        expected = list(range(start, end + 1))
+        positions = [pos for pos, index in enumerate(indices) if start <= index <= end]
+        actual = [indices[pos] for pos in positions]
+        if actual != expected:
+            missing = [index + 1 for index in expected if index not in actual]
+            raise FinalVideoUnavailable(
+                f"Requested segment range contains unavailable segment(s): {missing}"
+            )
+        if record.images is None:
+            raise FinalVideoUnavailable("Final Result image frames are unavailable")
+        offsets = [0]
+        for count in counts:
+            offsets.append(offsets[-1] + max(0, int(count)))
+        first_pos, last_pos = positions[0], positions[-1]
+        frame_start = offsets[first_pos]
+        frame_end = offsets[last_pos + 1]
+        if frame_end > int(record.images.shape[0]):
+            raise FinalVideoUnavailable("Segment range exceeds Final Result frame count")
+        images = record.images[frame_start:frame_end]
+        audio = None
+        if isinstance(record.audio, dict) and isinstance(record.audio.get("waveform"), torch.Tensor):
+            sample_rate = int(record.audio.get("sample_rate") or 0)
+            if sample_rate > 0:
+                sample_start = max(0, int(round(frame_start / record.fps * sample_rate)))
+                sample_end = max(sample_start, int(round(frame_end / record.fps * sample_rate)))
+                waveform = record.audio["waveform"][..., sample_start:sample_end]
+                audio = {**record.audio, "waveform": waveform}
+        metadata = dict(record.extra_pnginfo or {})
+        metadata["motion_director_result_range"] = {
+            "start_segment": start + 1,
+            "end_segment": end + 1,
+        }
+        return FinalVideoRecord(
+            node_id=record.node_id,
+            run_id=record.run_id,
+            video=self.video_factory(images, audio, record.fps),
+            fps=record.fps,
+            frame_count=int(images.shape[0]),
+            images=images,
+            audio=audio,
+            segment_indices=tuple(expected),
+            segment_frame_counts=tuple(counts[pos] for pos in positions),
+            prompt=record.prompt,
+            extra_pnginfo=metadata,
+        )
+
+    def save(
+        self,
+        node_id: Any,
+        run_id: Any,
+        config: Any,
+        segment_range: Any = None,
+    ) -> dict[str, Any]:
         record = self.get(node_id, run_id)
         with record.lock:
-            return self.saver(record, normalize_save_config(config))
+            save_config = normalize_save_config(config)
+            target = record
+            if isinstance(segment_range, dict):
+                start = int(segment_range.get("start", 0))
+                end = int(segment_range.get("end", start))
+                target = self._range_record(record, start, end)
+                save_config["filename_prefix"] = (
+                    f"{save_config['filename_prefix']}_segments_{start + 1}-{end + 1}"
+                )
+            return self.saver(target, save_config)
 
 
 FINAL_VIDEO_REGISTRY = FinalVideoRegistry()
