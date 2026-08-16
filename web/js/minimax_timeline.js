@@ -142,6 +142,7 @@ import {
     applySamplingWidgetVisibility,
     migrateLegacySamplingControlNode,
     migrateLegacySamplingControlWorkflow,
+    repairDirectorGroupWidgetWorkflow,
     seedControlModeFromWidgets,
 } from "./minimax_sampling_ui.js";
 import {
@@ -10747,6 +10748,7 @@ app.registerExtension({
     name: "ComfyUI.MiniMaxH3MotionDirectorPlugin",
     async beforeConfigureGraph(graphData) {
         migrateLegacySamplingControlWorkflow(graphData);
+        repairDirectorGroupWidgetWorkflow(graphData);
     },
     async setup() {
         const flushDirectors = () => {
