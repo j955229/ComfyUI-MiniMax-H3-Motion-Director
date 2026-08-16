@@ -1,4 +1,4 @@
-import { mixedSegmentVisibleFrameCount } from "./minimax_mixed_state.mjs";
+import { mixedSegmentVisibleFrameCount } from "./minimax_mixed_state.mjs?boot=mixed_native_v5";
 
 // Mixed segment input renderer using the Director's existing visual language.
 // Deliberately uses the same bd-batch-*, bd-fl2v-* and bd-r2v-* classes as

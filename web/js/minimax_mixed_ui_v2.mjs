@@ -8,11 +8,11 @@ import {
     normalizeMixedTimeline,
     referencedDependents,
     validateMixedReferences,
-} from "./minimax_mixed_state.mjs";
+} from "./minimax_mixed_state.mjs?boot=mixed_native_v5";
 import { inputRelativePath, materializeMaterial } from "./minimax_material_library_api.mjs";
 import { pickMixedMaterial } from "./minimax_mixed_material_picker.mjs";
 import { mt, onMixedLocaleChange } from "./minimax_mixed_i18n.mjs";
-import { renderMixedNativeModeCard } from "./minimax_mixed_native_inputs.mjs?boot=native_inputs_v1";
+import { renderMixedNativeModeCard } from "./minimax_mixed_native_inputs.mjs?boot=mixed_native_v5";
 
 const STYLE_ID = "mmx-mixed-mode-integrated-styles";
 const CHUNK_BYTES = 8 * 1024 * 1024;
