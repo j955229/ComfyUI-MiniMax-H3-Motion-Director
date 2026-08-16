@@ -44,6 +44,7 @@ jobs:
             apiURL: (value) => value,
             fetchApi: async () => ({
               ok: true,
+              status: 200,
               json: async () => ({ items: [] }),
               text: async () => "",
             }),
@@ -57,6 +58,10 @@ jobs:
           node --check web/js/zz_minimax_mixed_mode.js
           node --check web/js/zzz_minimax_mixed_persistence.js
           node --check web/js/minimax_mixed_ui.mjs
+          node --check web/js/minimax_mixed_ui_v2.mjs
+          node --check web/js/minimax_mixed_i18n.mjs
+          node --check web/js/minimax_mixed_material_picker.mjs
+          node --check web/js/minimax_mixed_state.mjs
           node --check web/js/tests/minimax_mixed_lifecycle.smoke.mjs
           node --check web/js/tests/minimax_mixed_browser.test.mjs
 
