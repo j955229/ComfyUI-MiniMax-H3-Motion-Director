@@ -19,6 +19,23 @@ import {
 assert.equal(resolveDirectorTaskKey("mixed — 混合模式(Mixed)"), "mixed");
 assert.deepEqual(desiredDirectorInputSockets("mixed", 6), []);
 
+const standaloneCases = [
+    ["t2v — 文生视频(Text to Video)", "t2v", ["text_prompt_1", "text_prompt_2"]],
+    ["i2v — 图生视频(Image to Video)", "i2v", ["image_prompt_1", "image_1", "image_prompt_2", "image_2"]],
+    ["fl2v — 首尾帧生视频(First-Last Frame)", "fl2v", ["fl_prompt_1", "fl_assets_1", "fl_prompt_2", "fl_assets_2"]],
+    ["r2v — 参考主体生视频(Reference to Video)", "r2v", ["ref_prompt_1", "ref_assets_1", "ref_prompt_2", "ref_assets_2"]],
+    ["v2v — 视频转视频(Video to Video)", "v2v", ["video_prompt_1", "video_prompt_2"]],
+    ["rv2v — 参考素材改视频(Reference Video Edit)", "rv2v", ["rv_prompt_1", "rv_assets_1", "rv_prompt_2", "rv_assets_2"]],
+];
+for (const [label, key, expectedSockets] of standaloneCases) {
+    assert.equal(resolveDirectorTaskKey(label), key);
+    assert.deepEqual(
+        desiredDirectorInputSockets(label, 2).map((socket) => socket.name),
+        expectedSockets,
+        `${key} Director Inputs routing changed`,
+    );
+}
+
 assert.deepEqual(MIXED_SEGMENT_MODES, ["t2v", "i2v", "fl2v", "r2v", "source_video"]);
 assert.equal(backendTaskPreview("source_video", 0), "v2v");
 assert.equal(backendTaskPreview("source_video", 2), "rv2v");
