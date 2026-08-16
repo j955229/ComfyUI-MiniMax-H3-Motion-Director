@@ -11,6 +11,7 @@ import torch
 
 import folder_paths
 
+from .cache_path import cache_root
 from .context_cache import context_fingerprint
 from .segment_cache import _write_via_temp
 
@@ -33,13 +34,11 @@ def _cache_root(node_id: str | None) -> Path | None:
     if not node_id:
         return None
     try:
-        root = (
-            Path(folder_paths.get_output_directory())
-            / "minimax_motion_context_cache"
-            / str(node_id)
+        return cache_root(
+            folder_paths.get_output_directory(),
+            "minimax_motion_context_cache",
+            node_id,
         )
-        root.mkdir(parents=True, exist_ok=True)
-        return root
     except OSError as exc:
         log.warning("AV latent cache directory unavailable: %s", exc)
         return None

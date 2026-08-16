@@ -13,6 +13,7 @@ import folder_paths
 
 from ..lib.tensor_fingerprint import tensor_fingerprint
 from .audio_trim import audio_has_samples
+from .cache_path import cache_root
 from .context_identity import context_producer_fingerprint
 from .segment_cache import _write_via_temp
 
@@ -51,13 +52,11 @@ def _cache_root(node_id: str | None) -> Path:
             "Motion Director: the node has no unique_id, so Motion Context cache "
             "cannot be used for selection runs."
         )
-    root = (
-        Path(folder_paths.get_output_directory())
-        / "minimax_motion_context_cache"
-        / str(node_id)
+    return cache_root(
+        folder_paths.get_output_directory(),
+        "minimax_motion_context_cache",
+        node_id,
     )
-    root.mkdir(parents=True, exist_ok=True)
-    return root
 
 
 def save_motion_context_cache(

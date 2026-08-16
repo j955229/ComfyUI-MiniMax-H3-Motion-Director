@@ -17,6 +17,7 @@ PRODUCER_IDENTITY_SCHEMA = "previous_context_segment_dependencies_v3_master_boun
 _CONSUMER_ONLY_SETTINGS = {
     "context_length",
     "latent_handoff_pipeline",
+    "seed",
 }
 
 
