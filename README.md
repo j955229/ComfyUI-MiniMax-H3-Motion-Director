@@ -171,6 +171,14 @@ The Results page supports:
 The Multi range is applied to both preview and export.
 
 > source/identity materials.
+
+
+https://github.com/user-attachments/assets/65f2bb99-776e-4be2-b9fd-8067470ba5c8
+
+https://github.com/user-attachments/assets/26b9e93f-1e85-4563-815c-92ebed5c859c
+
+https://github.com/user-attachments/assets/e7fca15e-c902-428f-9fdb-6ced42bffb71
+
 <img width="700" height="1050" alt="mat_6ab2eb041f5946da800d90fd12eb7763" src="https://github.com/user-attachments/assets/bfb5dbe9-0e42-41e7-b1a0-dff4f3e6b0ca" />
 <img width="1536" height="2730" alt="mat_9627ae4460244d498e13f870c9176b9a" src="https://github.com/user-attachments/assets/0ee745c8-d3d8-41f6-a865-4026aac3e5dd" />
 <img width="1024" height="1536" alt="mat_041ae9cc9fa543bb8fe8c0361422cdd1" src="https://github.com/user-attachments/assets/0a267715-a00a-4189-8104-e7a68af8efd6" />
