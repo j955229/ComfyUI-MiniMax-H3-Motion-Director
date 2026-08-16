@@ -719,7 +719,7 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
         toolbar.appendChild(spacer);
         panel.appendChild(toolbar);
 
-        const errors = validateMixedReferences(state.segments);
+        const errors = validateMixedReferences(state.segments, state.frameRate || 24);
         const invalidIds = new Set(errors.map((error) => String(error.consumerId)));
         const cards = document.createElement("div");
         cards.className = "mmx-mixed-cards";
@@ -837,6 +837,7 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
                 onChange?.(clone(state));
             },
             tr: mt,
+            frameRate: state.frameRate || 24,
         });
 
         const continuityTitle = document.createElement("b");
@@ -864,7 +865,7 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
                 continuityPanel.appendChild(label);
             }
         }
-        const errors = validateMixedReferences(state.segments).filter((error) => String(error.consumerId) === String(seg.id));
+        const errors = validateMixedReferences(state.segments, state.frameRate || 24).filter((error) => String(error.consumerId) === String(seg.id));
         for (const _error of errors) {
             const warning = document.createElement("div");
             warning.className = "bd-meta mmx-mixed-warning";

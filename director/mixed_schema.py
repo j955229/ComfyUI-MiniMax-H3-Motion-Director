@@ -267,7 +267,11 @@ def _identity_count(
     return static_count + dynamic_count
 
 
-def normalize_mixed_segments(values: Sequence[Mapping[str, object]]) -> list[dict]:
+def normalize_mixed_segments(
+    values: Sequence[Mapping[str, object]],
+    *,
+    fps: float = 24.0,
+) -> list[dict]:
     if not isinstance(values, Sequence) or isinstance(values, (str, bytes, bytearray)):
         raise MixedSchemaError("Mixed segments must be an ordered list.")
     if not values:
@@ -336,6 +340,23 @@ def normalize_mixed_segments(values: Sequence[Mapping[str, object]]) -> list[dic
                 "backendTask": backend_task_key(mode, identity_count=identity_count),
             }
         )
+
+    id_to_index = {str(segment["id"]): i for i, segment in enumerate(normalized)}
+    for consumer_index, segment in enumerate(normalized):
+        for ref in (segment.get("inputs") or {}).get("resultRefs") or []:
+            source_id = str(ref.get("segmentId") or "").strip()
+            source_index = id_to_index.get(source_id)
+            if source_index is None or source_index >= consumer_index:
+                continue
+            frame = ref.get("frame", "last")
+            if frame == "last":
+                continue
+            max_index = max(0, mixed_visible_frame_count(normalized[source_index], fps) - 1)
+            if int(frame) > max_index:
+                raise MixedSchemaError(
+                    f"Result frame index {frame} is outside source Segment {source_index + 1} "
+                    f"range 0..{max_index}."
+                )
 
     return normalized
 

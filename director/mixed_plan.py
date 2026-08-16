@@ -132,8 +132,8 @@ def build_mixed_director_plan(
         if node_id not in (None, "")
         else str(mixed.get("nodeId") or mixed.get("node_id") or "").strip()
     ) or None
-    normalized = normalize_mixed_segments(mixed.get("segments") or [])
     fps = float(mixed.get("frameRate") or frame_rate or 24.0)
+    normalized = normalize_mixed_segments(mixed.get("segments") or [], fps=fps)
 
     output = mixed.get("output") or {}
     output_mode = str(output.get("mode") or "fixed").strip().lower()

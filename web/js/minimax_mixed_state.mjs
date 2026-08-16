@@ -23,6 +23,25 @@ export function backendTaskPreview(mode, identityCount = 0) {
     return normalized;
 }
 
+export function mixedSegmentVisibleFrameCount(segment, fps = 24) {
+    const seg = segment || {};
+    const mode = normalizeMode(seg.mode);
+    const rate = Math.max(0.001, Number(fps) || 24);
+    if (mode === "source_video") {
+        const range = seg.inputs?.sourceVideo?.range || {};
+        const start = Number(range.startSec ?? 0);
+        const end = Number(range.endSec ?? 0);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) return 0;
+        return Math.max(4, Math.round((end - start) * rate));
+    }
+    const explicit = Number.parseInt(seg.frameCount ?? seg.frame_count ?? 0, 10);
+    if (explicit > 0) return explicit;
+    const seconds = Math.max(0.1, Number(seg.duration ?? 5) || 5);
+    const raw = Math.max(5, Math.round(seconds * rate));
+    if (raw <= 5) return 5;
+    return 5 + 17 * Math.ceil((raw - 5) / 17);
+}
+
 function clone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
     return JSON.parse(JSON.stringify(value));
@@ -165,7 +184,7 @@ export function dependencyIndices(segments, consumerIndex) {
     return [...deps].sort((a, b) => a - b);
 }
 
-export function validateMixedReferences(segments) {
+export function validateMixedReferences(segments, fps = 24) {
     const ids = new Map(segments.map((seg, index) => [String(seg.id), index]));
     const errors = [];
     segments.forEach((seg, consumerIndex) => {
@@ -177,6 +196,20 @@ export function validateMixedReferences(segments) {
                 errors.push({ code: "missing_reference", consumerId: seg.id, sourceId, message: "Referenced segment is missing." });
             } else if (sourceIndex >= consumerIndex) {
                 errors.push({ code: "invalid_reference", consumerId: seg.id, sourceId, message: "Segment Result reference points forward after reorder." });
+            } else if (ref.frame !== "last") {
+                const frame = Number.parseInt(ref.frame, 10);
+                const frameCount = mixedSegmentVisibleFrameCount(segments[sourceIndex], fps);
+                const maxFrame = Math.max(0, frameCount - 1);
+                if (!Number.isInteger(frame) || frame < 0 || frame > maxFrame) {
+                    errors.push({
+                        code: "frame_out_of_range",
+                        consumerId: seg.id,
+                        sourceId,
+                        frame,
+                        maxFrame,
+                        message: `Segment Result frame ${ref.frame} is outside 0..${maxFrame}.`,
+                    });
+                }
             }
         }
     });
