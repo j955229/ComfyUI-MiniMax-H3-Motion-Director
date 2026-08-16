@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -27,6 +29,51 @@ def select_result_frame(frames: torch.Tensor, selector: str | int) -> torch.Tens
             f"0..{int(frames.shape[0]) - 1}."
         )
     return frames[index : index + 1]
+
+
+def _load_matching_cache_any_node(producer, plan) -> torch.Tensor | None:
+    """Find an exact producer cache when planning did not receive the runtime node id.
+
+    This is an identity-safe fallback, not a fuzzy cache lookup: metadata must
+    exactly match the producer's current cache fingerprint before frames load.
+    It lets full ordered Mixed runs consume a producer written earlier in the
+    same queue even though the planner is built before executor node context is
+    attached.
+    """
+    try:
+        import folder_paths
+
+        from .segment_cache import segment_cache_fingerprint
+
+        expected = segment_cache_fingerprint(producer, plan)
+        base = Path(folder_paths.get_output_directory()) / "minimax_seg_cache"
+        if not base.is_dir():
+            return None
+        index = int(producer.index)
+        meta_name = f"seg_{index:04d}.meta.json"
+        tensor_name = f"seg_{index:04d}.pt"
+        for node_root in base.iterdir():
+            if not node_root.is_dir():
+                continue
+            meta_path = node_root / meta_name
+            tensor_path = node_root / tensor_name
+            if not meta_path.is_file() or not tensor_path.is_file():
+                continue
+            try:
+                stored = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if stored != expected:
+                continue
+            try:
+                tensor = torch.load(tensor_path, map_location="cpu", weights_only=True)
+            except Exception:
+                continue
+            if isinstance(tensor, torch.Tensor) and tensor.ndim == 4 and int(tensor.shape[0]) > 0:
+                return tensor
+    except Exception:
+        return None
+    return None
 
 
 class MixedResultRef:
@@ -63,14 +110,15 @@ class MixedResultRef:
     def tensor(self) -> torch.Tensor:
         if self._resolved is not None:
             return self._resolved
-        if not self._node_id:
-            raise ValueError(
-                "Mixed previous/earlier result reference requires a Director node id for cache resolution."
-            )
+
         from .segment_cache import load_segment_cache
 
         producer = self._source_segment()
-        cached = load_segment_cache(self._node_id, producer, self._plan)
+        cached = (
+            load_segment_cache(self._node_id, producer, self._plan)
+            if self._node_id
+            else _load_matching_cache_any_node(producer, self._plan)
+        )
         if cached is None:
             raise ValueError(
                 f"Mixed dependency unavailable: Segment {getattr(producer, 'timeline_index', producer.index) + 1} "
