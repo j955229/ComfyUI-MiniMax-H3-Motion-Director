@@ -40,7 +40,11 @@ class MixedSelectionTests(unittest.TestCase):
 
     def test_valid_result_dependency_reuses_cache_while_missing_context_dependency_reruns(self):
         plan = self._plan()
-        plan.cache_settings = {"seed": 1}
+        plan.cache_settings = {
+            "seed": 1,
+            "motion_context_enabled": True,
+            "audio_context_enabled": True,
+        }
         selection = MixedRunSelection(
             plan=plan,
             segments=self._segments(),
@@ -54,7 +58,11 @@ class MixedSelectionTests(unittest.TestCase):
 
     def test_all_valid_dependencies_are_reused(self):
         plan = self._plan()
-        plan.cache_settings = {"seed": 1}
+        plan.cache_settings = {
+            "seed": 1,
+            "motion_context_enabled": True,
+            "audio_context_enabled": True,
+        }
         selection = MixedRunSelection(
             plan=plan,
             segments=self._segments(),
@@ -91,6 +99,75 @@ class MixedSelectionTests(unittest.TestCase):
         selection._full_segment_hit = lambda index: False
         selection._context_hit = lambda index, **kwargs: False
         self.assertEqual(tuple(selection), (0, 1, 2))
+
+    def test_visual_master_off_removes_visual_only_dependency(self):
+        segments = [
+            {"id": "a", "inputs": {"resultRefs": []}, "continuity": {}},
+            {
+                "id": "b",
+                "inputs": {"resultRefs": []},
+                "continuity": {"visual": True, "audio": False},
+            },
+        ]
+        plan = SimpleNamespace(
+            cache_settings={"motion_context_enabled": False, "audio_context_enabled": True},
+            segments=[SimpleNamespace(index=0), SimpleNamespace(index=1)],
+        )
+        selection = MixedRunSelection(
+            plan=plan,
+            segments=segments,
+            requested={1},
+            node_id="7",
+        )
+        selection._full_segment_hit = lambda index: False
+        selection._context_hit = lambda index, **kwargs: False
+        self.assertEqual(tuple(selection), (1,))
+
+    def test_audio_master_off_removes_audio_only_dependency(self):
+        segments = [
+            {"id": "a", "inputs": {"resultRefs": []}, "continuity": {}},
+            {
+                "id": "b",
+                "inputs": {"resultRefs": []},
+                "continuity": {"visual": False, "audio": True},
+            },
+        ]
+        plan = SimpleNamespace(
+            cache_settings={"motion_context_enabled": True, "audio_context_enabled": False},
+            segments=[SimpleNamespace(index=0), SimpleNamespace(index=1)],
+        )
+        selection = MixedRunSelection(
+            plan=plan,
+            segments=segments,
+            requested={1},
+            node_id="7",
+        )
+        selection._full_segment_hit = lambda index: False
+        selection._context_hit = lambda index, **kwargs: False
+        self.assertEqual(tuple(selection), (1,))
+
+    def test_result_dependency_survives_all_continuity_masters_off(self):
+        segments = [
+            {"id": "a", "inputs": {"resultRefs": []}, "continuity": {}},
+            {
+                "id": "b",
+                "inputs": {"resultRefs": [{"role": "identity", "origin": "previous", "frame": "last"}]},
+                "continuity": {"visual": True, "audio": True},
+            },
+        ]
+        plan = SimpleNamespace(
+            cache_settings={"motion_context_enabled": False, "audio_context_enabled": False},
+            segments=[SimpleNamespace(index=0), SimpleNamespace(index=1)],
+        )
+        selection = MixedRunSelection(
+            plan=plan,
+            segments=segments,
+            requested={1},
+            node_id="7",
+        )
+        selection._full_segment_hit = lambda index: False
+        selection._context_hit = lambda index, **kwargs: False
+        self.assertEqual(tuple(selection), (0, 1))
 
 
 if __name__ == "__main__":
