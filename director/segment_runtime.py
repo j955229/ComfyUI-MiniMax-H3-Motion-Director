@@ -120,6 +120,14 @@ def resolve_segment_raw_clip(plan: DirectorPlan, seg) -> torch.Tensor:
     if seg.source_clip is not None and seg.source_clip.shape[0] > 0:
         return seg.source_clip.clone()
 
+    # Mixed owns no shared source timeline.  Generative Mixed segments may use
+    # lazy Picture/keyframe refs (e.g. Previous/Earlier Segment Stills), so the
+    # absence of source_clip is intentional and must not fall through to the
+    # legacy video-timeline loader.  Source Video Mixed segments are planned
+    # with their own segment-local source_clip and therefore return above.
+    if getattr(seg, "mixed_mode", None):
+        return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
+
     # FL2V end-only deliberately has no source_clip. The generation timeline's
     # tiny gray source_video is schema padding, not image0.
     if task_key == "fl2v" and is_gen_timeline_plan(plan):
@@ -158,8 +166,12 @@ def resolve_segment_raw_clip_with_lookahead(
         return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
 
     if seg.source_clip is not None and seg.source_clip.shape[0] > 0:
-        # Gen canvases have no timeline lookahead beyond the clip itself.
+        # Gen canvases / Mixed segment-local sources have no shared-timeline
+        # lookahead beyond their own clip. H3 reference preparation pads safely.
         return seg.source_clip.clone()
+
+    if getattr(seg, "mixed_mode", None):
+        return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
 
     if task_key == "fl2v" and is_gen_timeline_plan(plan):
         return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
