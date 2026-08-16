@@ -63,12 +63,42 @@ jobs:
           ! grep -F 'test_previous_segment_reference_tracks_reorder' tests/test_mixed_schema.py
 
       - name: Run pure Python Mixed and synced-main tests
+        shell: bash
         run: |
           # Discover directly from this repository's tests directory. This avoids
           # an unrelated installed top-level `tests` package shadowing the repo.
-          python -m unittest discover -v -s tests -p 'test_mixed_*.py'
-          python -m unittest discover -v -s tests -p 'test_cache_path.py'
-          python -m unittest discover -v -s tests -p 'test_context_identity_seed.py'
+          # Capture each suite separately so a failing unittest traceback is also
+          # surfaced as a check annotation for API-only CI debugging.
+          run_suite() {
+            local label="$1"
+            local pattern="$2"
+            local log
+            log="$(mktemp)"
+
+            if python -m unittest discover -v -s tests -p "$pattern" 2>&1 | tee "$log"; then
+              rm -f "$log"
+              return 0
+            fi
+
+            local message
+            message="$(python - "$log" <<'PY'
+          import pathlib
+          import sys
+
+          text = pathlib.Path(sys.argv[1]).read_text(errors="replace")[-12000:]
+          print(text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A"))
+          PY
+          )"
+            echo "::error title=${label} failed::${message}"
+            rm -f "$log"
+            return 1
+          }
+
+          failed=0
+          run_suite "Mixed tests" "test_mixed_*.py" || failed=1
+          run_suite "Cache path tests" "test_cache_path.py" || failed=1
+          run_suite "Context identity seed tests" "test_context_identity_seed.py" || failed=1
+          exit "$failed"
 
       - uses: actions/setup-node@v4
         with:
