@@ -4084,6 +4084,10 @@ class MiniMaxH3MotionDirectorEditor {
         };
     }
 
+    isMixedMode() {
+        return this.getDirectorMode() === "mixed";
+    }
+
     _cloneMixedValue(value) {
         if (typeof structuredClone === "function") return structuredClone(value);
         return JSON.parse(JSON.stringify(value));
