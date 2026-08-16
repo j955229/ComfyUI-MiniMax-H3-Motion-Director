@@ -1,4 +1,4 @@
-import { mixedSegmentVisibleFrameCount } from "./minimax_mixed_state.mjs?boot=mixed_native_v5";
+import { mixedSegmentVisibleFrameCount } from "./minimax_mixed_state.mjs?boot=mixed_native_v6";
 
 // Mixed segment input renderer using the Director's existing visual language.
 // Deliberately uses the same bd-batch-*, bd-fl2v-* and bd-r2v-* classes as
@@ -9,7 +9,7 @@ const MAX_VIDEOS = 3;
 const MAX_AUDIOS = 3;
 const pictureVisibility = new Map();
 const resultAdvancedVisibility = new Map();
-const NATIVE_STYLE_ID = "mmx-mixed-native-input-overrides-v2";
+const NATIVE_STYLE_ID = "mmx-mixed-native-input-overrides-v3";
 
 function ensureNativeStyles() {
     if (document.getElementById(NATIVE_STYLE_ID)) return;
@@ -23,6 +23,12 @@ function ensureNativeStyles() {
 .mmx-mixed-slot-tools{position:absolute;left:7px;right:7px;bottom:7px;z-index:8;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:5px;pointer-events:auto}
 .mmx-mixed-slot-tools .bd-btn{flex:1 1 70px;min-width:0;padding:3px 5px;font-size:10px;white-space:nowrap;writing-mode:horizontal-tb!important;background:rgba(18,18,18,.88);backdrop-filter:blur(2px)}
 .mmx-mixed-slot-tools .bd-btn.active{border-color:#4fff8f;color:#4fff8f;background:rgba(22,56,35,.92)}
+.mmx-mixed-i2v-controls{display:flex;flex-direction:column;gap:5px;margin:0 0 6px;min-width:0}
+.mmx-mixed-i2v-actions{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap;min-height:28px}
+.mmx-mixed-i2v-actions .mmx-mixed-slot-tools{position:static!important;left:auto!important;right:auto!important;bottom:auto!important;display:flex;justify-content:flex-start;gap:8px;flex-wrap:wrap;width:auto}
+.mmx-mixed-i2v-actions .mmx-mixed-slot-tools .bd-btn{flex:0 0 auto;min-width:86px;padding:4px 10px;font-size:11px}
+.mmx-mixed-i2v-advanced-host:empty{display:none}
+.mmx-mixed-i2v-advanced-host .mmx-mixed-result-advanced{position:static;left:auto;right:auto;bottom:auto;width:100%;box-sizing:border-box;margin:0}
 .mmx-mixed-result-summary{display:inline-flex;align-items:center;justify-content:center;max-width:calc(100% - 22px);padding:5px 8px;border:1px solid rgba(79,255,143,.55);border-radius:5px;background:rgba(12,30,20,.78);color:#bfffd4;font-size:11px;text-align:center;pointer-events:auto;cursor:pointer}
 .mmx-mixed-result-advanced{position:absolute;left:7px;right:7px;bottom:38px;z-index:9;display:grid;grid-template-columns:minmax(110px,1fr) minmax(92px,auto) minmax(70px,100px) auto auto;gap:5px;align-items:center;padding:6px;border:1px solid #46515a;border-radius:6px;background:rgba(18,21,23,.96);box-shadow:0 4px 16px rgba(0,0,0,.45)}
 .mmx-mixed-result-range{font-size:10px;color:#9aa5ad;white-space:nowrap;text-align:center}
@@ -149,7 +155,7 @@ function appendPrompt(parent, seg, onPromptInput, tr) {
     };
     prompts.append(label, textarea);
     parent.appendChild(prompts);
-    return textarea;
+    return { textarea, prompts };
 }
 
 function resultSelector(ref, segmentIndex, segments, mutate, tr) {
@@ -207,7 +213,7 @@ async function chooseAndStore({ seg, kind, key, role, upload, mutate, status, tr
     }
 }
 
-function appendIntegratedResultControls(slot, ctx, { role, staticKey }) {
+function appendIntegratedResultControls(slot, ctx, { role, staticKey, controlsHost = null, advancedHost = null }) {
     const { seg, segmentIndex, segments, mutate, upload, status, tr, frameRate } = ctx;
     const ref = refsFor(seg, role)[0] || null;
     const advancedKey = resultAdvancedKey(seg, role);
@@ -225,7 +231,7 @@ function appendIntegratedResultControls(slot, ctx, { role, staticKey }) {
     }), { disabled: segmentIndex <= 0 });
     resultButton.classList.toggle("active", !!ref);
     tools.append(uploadButton, resultButton);
-    slot.appendChild(tools);
+    (controlsHost || slot).appendChild(tools);
 
     if (!ref || !resultAdvancedVisibility.get(advancedKey)) return;
     const panel = document.createElement("div");
@@ -290,7 +296,7 @@ function appendIntegratedResultControls(slot, ctx, { role, staticKey }) {
         resultAdvancedVisibility.delete(advancedKey);
     }));
     panel.append(source, frameMode, frameIndex, range, remove);
-    slot.appendChild(panel);
+    (advancedHost || slot).appendChild(panel);
 }
 
 function renderT2v(container, ctx) {
@@ -346,13 +352,28 @@ function renderI2v(container, ctx) {
         source.textContent = tr("mixed.startFrame");
     }
     source.onclick = (event) => {
-        if (event.target.closest?.(".x, .mmx-mixed-slot-tools, .mmx-mixed-result-advanced")) return;
+        if (event.target.closest?.(".x, .mmx-mixed-result-summary")) return;
         void chooseAndStore({ seg, kind: "image", key: "startFrame", role: "i2v_start", upload, mutate, status, tr });
     };
-    appendIntegratedResultControls(source, ctx, { role: "i2v_start", staticKey: "startFrame" });
     media.appendChild(source);
     card.appendChild(media);
-    appendPrompt(card, seg, onPromptInput, tr);
+
+    const { prompts } = appendPrompt(card, seg, onPromptInput, tr);
+    prompts.classList.add("mmx-mixed-i2v-prompts");
+    const controls = document.createElement("div");
+    controls.className = "mmx-mixed-i2v-controls";
+    const actions = document.createElement("div");
+    actions.className = "mmx-mixed-i2v-actions";
+    const advanced = document.createElement("div");
+    advanced.className = "mmx-mixed-i2v-advanced-host";
+    controls.append(actions, advanced);
+    prompts.insertBefore(controls, prompts.firstChild);
+    appendIntegratedResultControls(source, ctx, {
+        role: "i2v_start",
+        staticKey: "startFrame",
+        controlsHost: actions,
+        advancedHost: advanced,
+    });
     container.appendChild(card);
 }
 
