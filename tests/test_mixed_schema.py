@@ -6,7 +6,9 @@ from director.mixed_schema import (
     backend_task_key,
     collect_dependency_indices,
     dependency_identity,
+    effective_mixed_continuity,
     expand_run_selection,
+    mixed_visible_frame_count,
     normalize_mixed_segments,
 )
 from lib.task_modes import SUPPORTED_TASK_KEYS
@@ -41,6 +43,43 @@ class MixedSchemaTests(unittest.TestCase):
         self.assertEqual(backend_task_key("source_video", identity_count=0), "v2v")
         self.assertEqual(backend_task_key("source_video", identity_count=1), "rv2v")
         self.assertEqual(backend_task_key("r2v", identity_count=9), "r2v")
+
+    def test_generation_duration_aligns_to_h3_grid(self):
+        item = seg("seg_a", mode="t2v")
+        item["duration"] = 5.0
+        self.assertEqual(mixed_visible_frame_count(item, 24.0), 124)
+
+    def test_source_video_range_is_visible_duration_without_h3_grid_stretch(self):
+        item = seg("seg_a", mode="source_video")
+        item["inputs"]["sourceVideo"] = {
+            "videoFile": "fight.mp4",
+            "range": {"startSec": 1.0, "endSec": 3.0},
+        }
+        normalized = normalize_mixed_segments([item])[0]
+        self.assertEqual(mixed_visible_frame_count(normalized, 24.0), 48)
+
+    def test_explicit_i2v_start_suppresses_visual_but_keeps_audio_continuity(self):
+        item = seg("seg_b", mode="i2v", visual=True, audio=True)
+        item["inputs"]["startFrame"] = {"imageFile": "start.png"}
+        normalized = normalize_mixed_segments([seg("seg_a"), item])
+        self.assertEqual(
+            effective_mixed_continuity(normalized[1], 1),
+            {"visual": False, "audio": True},
+        )
+
+    def test_previous_result_i2v_start_also_suppresses_visual_context(self):
+        item = seg(
+            "seg_b",
+            mode="i2v",
+            refs=[{"role": "i2v_start", "origin": "previous", "frame": "last"}],
+            visual=True,
+            audio=True,
+        )
+        normalized = normalize_mixed_segments([seg("seg_a"), item])
+        self.assertEqual(
+            effective_mixed_continuity(normalized[1], 1),
+            {"visual": False, "audio": True},
+        )
 
     def test_duplicate_stable_ids_are_rejected(self):
         with self.assertRaisesRegex(MixedSchemaError, "Duplicate segment id"):
