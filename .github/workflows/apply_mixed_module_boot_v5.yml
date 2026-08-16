@@ -1,0 +1,52 @@
+name: Apply Mixed Module Boot V5
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+    paths:
+      - ".github/scripts/bump_mixed_module_boot_v5.py"
+      - ".github/workflows/apply_mixed_module_boot_v5.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Apply boot version fix
+        run: python .github/scripts/bump_mixed_module_boot_v5.py
+      - name: Syntax check
+        run: |
+          node --check web/js/minimax_timeline.js
+          node --check web/js/minimax_mixed_ui.mjs
+          node --check web/js/minimax_mixed_ui_v2.mjs
+          node --check web/js/minimax_mixed_native_inputs.mjs
+          node --check web/js/minimax_mixed_state.mjs
+      - name: Verify one coherent boot chain
+        run: |
+          grep -q 'minimax_mixed_ui.mjs?boot=mixed_native_v5' web/js/minimax_timeline.js
+          grep -q 'minimax_mixed_state.mjs?boot=mixed_native_v5' web/js/minimax_timeline.js
+          grep -q 'minimax_mixed_ui_v2.mjs?boot=mixed_native_v5' web/js/minimax_mixed_ui.mjs
+          grep -q 'minimax_mixed_native_inputs.mjs?boot=mixed_native_v5' web/js/minimax_mixed_ui_v2.mjs
+          grep -q 'minimax_mixed_state.mjs?boot=mixed_native_v5' web/js/minimax_mixed_native_inputs.mjs
+      - name: Commit fix
+        run: |
+          git config user.name "j955229"
+          git config user.email "120770154+j955229@users.noreply.github.com"
+          git add web/js/minimax_timeline.js web/js/minimax_mixed_ui.mjs web/js/minimax_mixed_ui_v2.mjs web/js/minimax_mixed_native_inputs.mjs
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: refresh Mixed module dependency graph"
+          git push origin HEAD:feature/mixed-mode
