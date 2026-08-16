@@ -9,6 +9,8 @@ from director.mixed_schema import (
     expand_run_selection,
     normalize_mixed_segments,
 )
+from lib.task_modes import SUPPORTED_TASK_KEYS
+from lib.task_prompts import task_type_combo_options
 
 
 def seg(seg_id, mode="t2v", *, refs=None, visual=False, audio=False, identity_count=0):
@@ -29,6 +31,11 @@ class MixedSchemaTests(unittest.TestCase):
             MIXED_USER_MODES,
             ("t2v", "i2v", "fl2v", "r2v", "source_video"),
         )
+
+    def test_mixed_is_user_meta_mode_not_h3_backend_task(self):
+        options, _meta = task_type_combo_options()
+        self.assertTrue(any(option.startswith("mixed — ") for option in options))
+        self.assertNotIn("mixed", SUPPORTED_TASK_KEYS)
 
     def test_source_video_compiles_to_v2v_or_rv2v_from_identity_count(self):
         self.assertEqual(backend_task_key("source_video", identity_count=0), "v2v")
