@@ -12,6 +12,7 @@ from __future__ import annotations
 import comfy.samplers
 
 from ..director.executor_core import execute_director_plan_core
+from ..director.mixed_runtime import bind_mixed_runtime_node
 from ..director.postprocess_config import normalize_postprocess_config
 from ..director.progress import (
     report_director_audio_preview,
@@ -41,7 +42,8 @@ def director_timeline_required_inputs() -> dict:
     gp_meta["tooltip"] = (
         "User prompt — sent directly to MiniMaxH3ImageToVideo / ReferenceToVideo. "
         "r2v: <Picture 1>. v2v: source-timeline edit (<Video 1>). "
-        "rv2v: source timeline + reference images (<Video 1> + <Picture N>)."
+        "rv2v: source timeline + reference images (<Video 1> + <Picture N>). "
+        "mixed: each segment compiles to an existing H3 task."
     )
 
     frames_meta = dict(inputs["total_frames"][1])
@@ -142,7 +144,8 @@ class MiniMaxH3MotionDirector:
                             "across each eligible boundary: five original source frames "
                             "are conditioning only, generated frames at B-2/B+2 are "
                             "anchors, and regenerated B-1/B/B+1 replace the hard cut. "
-                            "Visual Motion Context is skipped. 0 disables Source Bridge."
+                            "Visual Motion Context is skipped. 0 disables Source Bridge. "
+                            "Mixed v1 always forces this to 0 because its Source Videos are segment-local."
                         ),
                     },
                 ),
@@ -277,9 +280,10 @@ class MiniMaxH3MotionDirector:
         "MiniMax H3 Motion Director: exported video/audio Motion Context, "
         "MiniMaxH3ImageToVideo / ReferenceToVideo conditioning, internal KSampler "
         "or external SAMPLER+SIGMAS, and LTXVSeparateAVLatent decode. "
-        "Supports t2v / i2v / fl2v / r2v / v2v / rv2v. "
+        "Supports t2v / i2v / fl2v / r2v / v2v / rv2v plus Mixed meta-mode. "
         "Optional i2v_groups / r2v_groups accept multi-group packs from Director Group nodes "
-        "(external priority over UI cards). Defaults: 0.4MP 16:9 (864×480), 5s / 124 frames @ 24 fps."
+        "for standalone modes; Mixed v1 uses its own segment-local schema. "
+        "Defaults: 0.4MP 16:9 (864×480), 5s / 124 frames @ 24 fps."
     )
 
     def execute(
@@ -339,6 +343,16 @@ class MiniMaxH3MotionDirector:
             i2v_groups=i2v_groups,
             r2v_groups=r2v_groups,
         )
+
+        if bool(getattr(plan, "mixed_mode", False)):
+            # Planning intentionally stays independent from Comfy's hidden
+            # UNIQUE_ID. Bind lazy result references and cache-aware selective
+            # dependencies to the actual runtime node immediately before use.
+            bind_mixed_runtime_node(plan, unique_id)
+            # Mixed Source Videos are segment-local, not adjacent slices of one
+            # physical source timeline. The standalone five-frame Source Bridge
+            # is therefore semantically invalid for Mixed v1.
+            source_overlap_frames = 0
 
         combined, segment_outputs, segment_audios, report = execute_director_plan_core(
             plan,
