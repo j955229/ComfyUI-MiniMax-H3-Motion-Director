@@ -131,6 +131,16 @@ class MixedSchemaTests(unittest.TestCase):
         normalized = normalize_mixed_segments([good])
         self.assertEqual(normalized[0]["backendTask"], "v2v")
 
+    def test_material_library_video_is_never_legal_source_video(self):
+        bad = seg("seg_a", mode="source_video")
+        bad["inputs"]["sourceVideo"] = {
+            "assetId": "library-video-42",
+            "videoFile": "materialized/library/fight.mp4",
+            "range": {"startSec": 0.0, "endSec": 2.0},
+        }
+        with self.assertRaisesRegex(MixedSchemaError, "Material Library Video cannot be used"):
+            normalize_mixed_segments([bad])
+
 
 if __name__ == "__main__":
     unittest.main()
