@@ -1,0 +1,52 @@
+name: Apply Mixed Continuity and Result Range
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+    paths:
+      - '.github/scripts/apply_mixed_continuity_and_result_range.py'
+      - '.github/workflows/apply_mixed_continuity_and_result_range.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply update
+        run: python .github/scripts/apply_mixed_continuity_and_result_range.py
+      - name: Verify syntax
+        run: |
+          python -m py_compile director/mixed_schema.py director/video_export.py director/http_routes.py nodes/director.py
+          node --check web/js/minimax_continuity_ui.mjs
+          node --check web/js/minimax_output_ui.mjs
+          node --check web/js/minimax_timeline.js
+      - name: Verify contracts
+        run: |
+          grep -q 'Mixed per-boundary toggles are authoritative' nodes/director.py
+          grep -q 'mixedTask ? multiSegment' web/js/minimax_continuity_ui.mjs
+          grep -q 'data-range-start' web/js/minimax_output_ui.mjs
+          grep -q 'segment_range' web/js/minimax_output_ui.mjs
+          grep -q '_segments_' director/video_export.py
+          grep -q 'live_results_v2' web/js/minimax_timeline.js
+      - name: Commit production changes
+        run: |
+          git config user.name 'j955229'
+          git config user.email '120770154+j955229@users.noreply.github.com'
+          git add director/mixed_schema.py nodes/director.py web/js/minimax_continuity_ui.mjs director/video_export.py director/http_routes.py web/js/minimax_output_ui.mjs web/js/minimax_timeline.js
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m 'feat: make Mixed continuity authoritative and add result ranges'
+          git push origin HEAD:feature/mixed-mode
