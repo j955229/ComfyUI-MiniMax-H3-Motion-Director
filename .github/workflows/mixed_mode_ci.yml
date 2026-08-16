@@ -15,8 +15,10 @@ on:
       - "nodes/director_common.py"
       - "lib/task_prompts.py"
       - "web/js/minimax_director_inputs_core.mjs"
+      - "web/js/minimax_gen_timeline.js"
+      - "web/js/minimax_timeline.js"
       - "web/js/minimax_mixed_*.mjs"
-      - "web/js/zz_minimax_mixed_mode.js"
+      - "web/js/tests/minimax_mixed_*.mjs"
       - "tests/test_mixed_*.py"
       - "tests/test_cache_path.py"
       - "tests/test_context_identity_seed.py"
@@ -71,12 +73,17 @@ jobs:
       - name: Check Mixed JavaScript syntax
         run: |
           node --check web/js/minimax_director_inputs_core.mjs
+          node --check web/js/minimax_gen_timeline.js
+          node --check web/js/minimax_timeline.js
           node --check web/js/minimax_mixed_state.mjs
           node --check web/js/minimax_mixed_ui.mjs
           node --check web/js/minimax_mixed_ui_v2.mjs
           node --check web/js/minimax_mixed_i18n.mjs
           node --check web/js/minimax_mixed_material_picker.mjs
-          node --check web/js/zz_minimax_mixed_mode.js
+          node --check web/js/tests/minimax_mixed_native_contract.test.mjs
+          node --check web/js/tests/minimax_mixed_mode_inputs.test.mjs
 
       - name: Run Mixed frontend state tests
-        run: node web/js/tests/minimax_mixed_state.test.mjs
+        run: |
+          node web/js/tests/minimax_mixed_state.test.mjs
+          node web/js/tests/minimax_mixed_native_contract.test.mjs
