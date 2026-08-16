@@ -75,7 +75,8 @@ S5  R2V
 
 Mixed is implemented as a native Director mode, with its own timeline state and segment-local media, while sharing the normal Director output, continuity, Material Library, preview, post-processing, and result pipeline.
 
-> **Media slot M1 — Mixed overview.** <img width="1717" height="919" alt="螢幕擷取畫面 2026-08-17 060144" src="https://github.com/user-attachments/assets/3304f01d-92a8-4a38-ae59-575911e5121d" />
+<img width="1717" height="919" alt="螢幕擷取畫面 2026-08-17 060144" src="https://github.com/user-attachments/assets/3304f01d-92a8-4a38-ae59-575911e5121d" />
+
  It shows the Mixed timeline, per-boundary continuity controls, T2V, and Source Video segments in one project.
 
 ### Mixed segment modes
@@ -101,13 +102,15 @@ The actual Source Video is **segment-local and upload-only**. A Material Library
 
 `Start sec` and `End sec` define the source range. The selected range determines the generated segment duration; Mixed does not arbitrarily time-stretch the source clip.
 
-> Source Video + Identity example.
+
 <img width="1699" height="902" alt="螢幕擷取畫面 2026-08-17 060155" src="https://github.com/user-attachments/assets/4e66feed-76d9-48e0-bc65-ca7c2b7ef6df" />
+
 It shows Segment 2 with Source Range `2.5 -> 7.5` and the orange-clothed identity reference.
 
-> Additional Source Video identities.
+
 <img width="1694" height="922" alt="螢幕擷取畫面 2026-08-17 060214" src="https://github.com/user-attachments/assets/b39ae93f-f0ae-4585-8529-f5f5ae8f3564" />
 <img width="1724" height="924" alt="螢幕擷取畫面 2026-08-17 060204" src="https://github.com/user-attachments/assets/fd67a6d4-1ea4-4914-b23c-b346b9665769" />
+
 They show two more Source Video segments using different source ranges and identity references.
 
 ### Segment Result
