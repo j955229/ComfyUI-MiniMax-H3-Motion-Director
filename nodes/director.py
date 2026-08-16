@@ -60,6 +60,20 @@ def director_timeline_required_inputs() -> dict:
     }
 
 
+def _append_mixed_dependency_report(plan, report: str) -> str:
+    auto_indices = sorted(getattr(plan, "mixed_auto_run_indices", None) or [])
+    if not auto_indices:
+        return report
+    reasons = getattr(plan, "mixed_auto_run_reasons", None) or {}
+    lines = ["", "[Mixed Selective Run]", "Auto-executed prerequisite segment(s):"]
+    for index in auto_indices:
+        why = reasons.get(int(index)) or reasons.get(str(index)) or []
+        suffix = f" — {' | '.join(str(item) for item in why)}" if why else ""
+        lines.append(f"- Segment {int(index) + 1}{suffix}")
+    lines.append("Only missing/stale prerequisites were added; valid dependency caches were reused.")
+    return (report or "") + "\n" + "\n".join(lines)
+
+
 class MiniMaxH3MotionDirector:
     """In-node timeline Director using ComfyUI official MiniMax H3 pipeline."""
 
@@ -219,9 +233,6 @@ class MiniMaxH3MotionDirector:
                     },
                 ),
                 **director_perf_inputs(),
-                # Kept at the serialized tail for workflow index compatibility.
-                # Frontend hides this legacy header and renders pin_renorm in
-                # the existing continuity façade without moving backend widgets.
                 "bd_grp_experimental": ("BDGROUP", {"default": "Experimental"}),
                 "pin_renorm_enabled": (
                     "BOOLEAN",
@@ -235,9 +246,6 @@ class MiniMaxH3MotionDirector:
                         ),
                     },
                 ),
-                # Append-only serialized state.  The frontend hides this raw
-                # JSON widget and exposes synchronized proxy controls on the
-                # node and in the single Director modal.
                 "postprocess_config": (
                     "STRING",
                     {
@@ -345,13 +353,7 @@ class MiniMaxH3MotionDirector:
         )
 
         if bool(getattr(plan, "mixed_mode", False)):
-            # Planning intentionally stays independent from Comfy's hidden
-            # UNIQUE_ID. Bind lazy result references and cache-aware selective
-            # dependencies to the actual runtime node immediately before use.
             bind_mixed_runtime_node(plan, unique_id)
-            # Mixed Source Videos are segment-local, not adjacent slices of one
-            # physical source timeline. The standalone five-frame Source Bridge
-            # is therefore semantically invalid for Mixed v1.
             source_overlap_frames = 0
 
         combined, segment_outputs, segment_audios, report = execute_director_plan_core(
@@ -379,6 +381,9 @@ class MiniMaxH3MotionDirector:
             clear_vram_between_segments=clear_vram_between_segments,
             postprocess_config=postprocess_config,
         )
+
+        if bool(getattr(plan, "mixed_mode", False)):
+            report = _append_mixed_dependency_report(plan, report)
 
         outputs = finalize_director_outputs(
             plan,
@@ -417,8 +422,6 @@ class MiniMaxH3MotionDirector:
                         ))
                 report_director_final_ready(unique_id, final_payload)
             except Exception as exc:
-                # Internal VIDEO construction and saving are side channels.  A
-                # completed H3 result must remain usable even if export setup fails.
                 outputs = (*outputs[:-1], outputs[-1] + (
                     "\n\n[Save Video]\nStatus: FAILED (generation result preserved)"
                     f"\nError: {exc}"
