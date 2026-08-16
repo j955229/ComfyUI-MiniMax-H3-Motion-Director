@@ -13,6 +13,7 @@ Object.assign(globalThis, {
     CustomEvent: dom.window.CustomEvent,
     FormData: dom.window.FormData,
     File: dom.window.File,
+    MouseEvent: dom.window.MouseEvent,
 });
 Object.defineProperty(globalThis, "localStorage", {
     value: dom.window.localStorage,
@@ -20,8 +21,10 @@ Object.defineProperty(globalThis, "localStorage", {
 });
 window.confirm = () => true;
 
+const { api } = await import("../../../scripts/api.js");
 const { setLocale } = await import("../minimax_i18n.js");
 const { mountMixedUI } = await import("../minimax_mixed_ui.mjs");
+const { pickMixedMaterial } = await import("../minimax_mixed_material_picker.mjs");
 
 setLocale("zh");
 
@@ -90,6 +93,55 @@ assert.equal(
     null,
     "Mixed must not create a second Material Library modal",
 );
-
 controller.destroy();
+
+// The real existing Material Library controller currently has open/close/layer
+// but no dedicated pick() method. Exercise that compatibility path too: Mixed
+// must capture a card choice from the existing modal instead of building a
+// second window or allowing the standalone allocation click to run.
+const originalFetchApi = api.fetchApi;
+api.fetchApi = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+        items: [{ id: "video-1", type: "video", title: "Existing Fight Clip" }],
+        categories: {},
+    }),
+    text: async () => "",
+});
+
+const existingLayer = document.createElement("div");
+existingLayer.className = "mmx-ml-layer";
+const existingCard = document.createElement("article");
+existingCard.className = "mmx-ml-card";
+existingCard.dataset.id = "video-1";
+existingCard.dataset.type = "video";
+existingLayer.appendChild(existingCard);
+document.body.appendChild(existingLayer);
+let openCount = 0;
+let closeCount = 0;
+let standaloneAllocationRan = false;
+existingCard.addEventListener("click", () => { standaloneAllocationRan = true; });
+const fallbackEditor = {
+    getTaskKey() { return "mixed"; },
+    _materialLibraryController: {
+        layer: existingLayer,
+        state: { activeType: "image" },
+        async open() { openCount += 1; },
+        close() { closeCount += 1; },
+    },
+};
+const pickedPromise = pickMixedMaterial(fallbackEditor, { type: "video" });
+await new Promise((resolve) => setTimeout(resolve, 0));
+existingCard.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+const picked = await pickedPromise;
+assert.equal(picked?.id, "video-1");
+assert.equal(openCount, 1, "Mixed must open the existing Material Library modal");
+assert.equal(closeCount, 1, "selecting a card must close the existing modal through its controller");
+assert.equal(standaloneAllocationRan, false, "picker capture must block standalone allocation mutation");
+assert.ok(existingLayer.isConnected, "the existing Material Library layer is reused, not replaced");
+assert.equal(document.querySelector(".mmx-mixed-picker-layer"), null);
+existingLayer.remove();
+api.fetchApi = originalFetchApi;
+
 console.log("mixed integrated browser contract passed");
