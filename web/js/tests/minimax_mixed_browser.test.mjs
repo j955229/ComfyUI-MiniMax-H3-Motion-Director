@@ -95,10 +95,9 @@ assert.equal(
 );
 controller.destroy();
 
-// The real existing Material Library controller currently has open/close/layer
-// but no dedicated pick() method. Exercise that compatibility path too: Mixed
-// must capture a card choice from the existing modal instead of building a
-// second window or allowing the standalone allocation click to run.
+// Exercise the current real controller shape: existing layer/open/close, no
+// dedicated pick() API. Mixed captures a card choice from that same modal and
+// blocks the normal standalone allocation click.
 const originalFetchApi = api.fetchApi;
 api.fetchApi = async () => ({
     ok: true,
@@ -142,6 +141,33 @@ assert.equal(standaloneAllocationRan, false, "picker capture must block standalo
 assert.ok(existingLayer.isConnected, "the existing Material Library layer is reused, not replaced");
 assert.equal(document.querySelector(".mmx-mixed-picker-layer"), null);
 existingLayer.remove();
+
+// Closing that existing modal by its controller (Escape/backdrop/other owner)
+// must also settle the picker. Otherwise a cancelled picker remains pending and
+// the next Material Library action appears stuck.
+const cancelLayer = document.createElement("div");
+cancelLayer.className = "mmx-ml-layer";
+document.body.appendChild(cancelLayer);
+let cancelCloseCount = 0;
+const cancelEditor = {
+    getTaskKey() { return "mixed"; },
+    _materialLibraryController: {
+        layer: cancelLayer,
+        state: { activeType: "image" },
+        async open() {},
+        close() { cancelCloseCount += 1; },
+    },
+};
+const cancelPromise = pickMixedMaterial(cancelEditor, { type: "image" });
+await new Promise((resolve) => setTimeout(resolve, 0));
+cancelEditor._materialLibraryController.close();
+const cancelled = await Promise.race([
+    cancelPromise,
+    new Promise((resolve) => setTimeout(() => resolve("__timeout__"), 50)),
+]);
+assert.equal(cancelled, null, "external Material Library close must resolve the Mixed picker as cancelled");
+assert.equal(cancelCloseCount, 1);
+cancelLayer.remove();
 api.fetchApi = originalFetchApi;
 
 console.log("mixed integrated browser contract passed");
