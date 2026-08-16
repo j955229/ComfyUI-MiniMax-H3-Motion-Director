@@ -50,7 +50,13 @@ const timeline = normalizeMixedTimeline({
     timelineMode: "mixed",
     segments: [
         { id: "a", mode: "t2v" },
-        { id: "b", mode: "r2v" },
+        {
+            id: "b",
+            mode: "i2v",
+            inputs: {
+                resultRefs: [{ role: "i2v_start", origin: "previous", frame: "last" }],
+            },
+        },
         {
             id: "c",
             mode: "source_video",
@@ -65,19 +71,31 @@ const timeline = normalizeMixedTimeline({
 
 assert.equal(timeline.version, 1);
 assert.equal(timeline.segments[2].backendTask, "rv2v");
+assert.deepEqual(
+    timeline.segments[1].inputs.resultRefs[0],
+    { role: "i2v_start", origin: "segment", segmentId: "a", frame: "last" },
+    "legacy Previous must migrate to the concrete preceding stable segment id",
+);
+assert.deepEqual(
+    timeline.segments[2].inputs.resultRefs[0],
+    { role: "identity", origin: "segment", segmentId: "a", frame: "last" },
+    "legacy Earlier must migrate to canonical Segment Result",
+);
 assert.deepEqual(dependencyIndices(timeline.segments, 2), [0, 1]);
 
 const duplicated = duplicateMixedSegment(timeline.segments, 2, { idFactory });
 assert.notEqual(duplicated[3].id, "c");
+assert.equal(duplicated[3].inputs.resultRefs[0].origin, "segment");
 assert.equal(duplicated[3].inputs.resultRefs[0].segmentId, "a");
 
 const moved = moveMixedSegment(timeline.segments, 0, 2);
 const errors = validateMixedReferences(moved);
 assert.ok(errors.some((e) => e.code === "invalid_reference" && e.consumerId === "c"));
 
-assert.deepEqual(referencedDependents(timeline.segments, "a"), ["c"]);
+assert.deepEqual(referencedDependents(timeline.segments, "a").sort(), ["b", "c"]);
 assert.deepEqual(legalOriginsForSlot("source_video"), ["upload"]);
 assert.deepEqual(legalOriginsForSlot("r2v_reference_video"), ["upload", "library"]);
-assert.deepEqual(legalOriginsForSlot("identity"), ["upload", "library", "previous", "earlier"]);
+assert.deepEqual(legalOriginsForSlot("identity"), ["upload", "library", "segment"]);
+assert.deepEqual(legalOriginsForSlot("i2v_start"), ["upload", "library", "segment"]);
 
 console.log("mixed state tests passed");
