@@ -1,4 +1,5 @@
 import ast
+import unittest
 from pathlib import Path
 
 
@@ -12,13 +13,17 @@ def _function_source(name: str) -> str:
     raise AssertionError(f"{name} not found")
 
 
-def test_mixed_source_images_use_segment_local_source_clip_not_global_timeline():
-    source = _function_source("build_source_images_output")
-    assert "mixed_mode" in source
-    assert "source_clip" in source
-    assert "_mixed_source_images" in source
+class MixedSourceImagesPolicyTests(unittest.TestCase):
+    def test_mixed_source_images_use_segment_local_source_clip_not_global_timeline(self):
+        source = _function_source("build_source_images_output")
+        self.assertIn("mixed_mode", source)
+        self.assertIn("source_clip", source)
+        self.assertIn("_mixed_source_images", source)
+
+    def test_legacy_source_image_path_still_uses_global_timeline_loader(self):
+        source = _function_source("build_source_images_output")
+        self.assertIn("load_timeline_segment", source)
 
 
-def test_legacy_source_image_path_still_uses_global_timeline_loader():
-    source = _function_source("build_source_images_output")
-    assert "load_timeline_segment" in source
+if __name__ == "__main__":
+    unittest.main()
