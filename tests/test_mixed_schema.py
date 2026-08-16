@@ -67,7 +67,7 @@ class MixedSchemaTests(unittest.TestCase):
             {"visual": False, "audio": True},
         )
 
-    def test_previous_result_i2v_start_also_suppresses_visual_context(self):
+    def test_legacy_previous_result_migrates_and_suppresses_i2v_visual_context(self):
         item = seg(
             "seg_b",
             mode="i2v",
@@ -77,33 +77,32 @@ class MixedSchemaTests(unittest.TestCase):
         )
         normalized = normalize_mixed_segments([seg("seg_a"), item])
         self.assertEqual(
+            normalized[1]["inputs"]["resultRefs"],
+            [{"role": "i2v_start", "origin": "segment", "segmentId": "seg_a", "frame": "last"}],
+        )
+        self.assertEqual(
             effective_mixed_continuity(normalized[1], 1),
             {"visual": False, "audio": True},
+        )
+
+    def test_legacy_earlier_result_migrates_to_segment_origin(self):
+        normalized = normalize_mixed_segments([
+            seg("seg_a"),
+            seg("seg_b", refs=[
+                {"role": "identity", "origin": "earlier", "segmentId": "seg_a", "frame": 3},
+            ]),
+        ])
+        self.assertEqual(
+            normalized[1]["inputs"]["resultRefs"],
+            [{"role": "identity", "origin": "segment", "segmentId": "seg_a", "frame": 3}],
         )
 
     def test_duplicate_stable_ids_are_rejected(self):
         with self.assertRaisesRegex(MixedSchemaError, "Duplicate segment id"):
             normalize_mixed_segments([seg("seg_a"), seg("seg_a")])
 
-    def test_previous_reference_is_positional_and_follows_reorder(self):
-        refs = [{"role": "identity", "origin": "previous", "frame": "last"}]
-        original = normalize_mixed_segments([
-            seg("seg_a"),
-            seg("seg_b"),
-            seg("seg_c", refs=refs),
-        ])
-        self.assertEqual(collect_dependency_indices(original, 2), (1,))
-
-        reordered = normalize_mixed_segments([
-            seg("seg_b"),
-            seg("seg_a"),
-            seg("seg_c", refs=refs),
-        ])
-        self.assertEqual(collect_dependency_indices(reordered, 2), (1,))
-        self.assertEqual(reordered[1]["id"], "seg_a")
-
-    def test_earlier_reference_is_stable_id_and_forward_move_becomes_invalid(self):
-        ref = [{"role": "identity", "origin": "earlier", "segmentId": "seg_a", "frame": "last"}]
+    def test_segment_result_is_stable_id_and_forward_move_becomes_invalid(self):
+        ref = [{"role": "identity", "origin": "segment", "segmentId": "seg_a", "frame": "last"}]
         valid = normalize_mixed_segments([
             seg("seg_a"),
             seg("seg_b"),
@@ -119,11 +118,11 @@ class MixedSchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(MixedSchemaError, "Invalid Reference"):
             collect_dependency_indices(invalid, 1)
 
-    def test_missing_earlier_reference_is_explicit(self):
+    def test_missing_segment_result_reference_is_explicit(self):
         segments = normalize_mixed_segments([
             seg("seg_a"),
             seg("seg_b", refs=[
-                {"role": "identity", "origin": "earlier", "segmentId": "gone", "frame": "last"},
+                {"role": "identity", "origin": "segment", "segmentId": "gone", "frame": "last"},
             ]),
         ])
         with self.assertRaisesRegex(MixedSchemaError, "Missing Reference"):
@@ -145,7 +144,7 @@ class MixedSchemaTests(unittest.TestCase):
             seg("seg_d"),
             seg(
                 "seg_e",
-                refs=[{"role": "identity", "origin": "earlier", "segmentId": "seg_c", "frame": "last"}],
+                refs=[{"role": "identity", "origin": "segment", "segmentId": "seg_c", "frame": "last"}],
                 visual=True,
             ),
         ])
@@ -156,7 +155,7 @@ class MixedSchemaTests(unittest.TestCase):
             seg("seg_a"),
             seg(
                 "seg_b",
-                refs=[{"role": "identity", "origin": "earlier", "segmentId": "seg_a", "frame": 7}],
+                refs=[{"role": "identity", "origin": "segment", "segmentId": "seg_a", "frame": 7}],
                 audio=True,
             ),
         ])
@@ -164,7 +163,7 @@ class MixedSchemaTests(unittest.TestCase):
         self.assertEqual(ident["segmentId"], "seg_b")
         self.assertEqual(
             ident["resultRefs"],
-            [{"role": "identity", "origin": "earlier", "segmentId": "seg_a", "frame": 7}],
+            [{"role": "identity", "origin": "segment", "segmentId": "seg_a", "frame": 7}],
         )
         self.assertEqual(ident["continuity"], {"sourceSegmentId": "seg_a", "visual": False, "audio": True})
 
