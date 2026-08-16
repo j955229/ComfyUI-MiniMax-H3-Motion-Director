@@ -9,7 +9,7 @@ on:
       - "web/js/minimax_mixed_*.mjs"
       - "web/js/zz_minimax_mixed_mode.js"
       - "web/js/zzz_minimax_mixed_persistence.js"
-      - "web/js/tests/minimax_mixed_lifecycle.smoke.mjs"
+      - "web/js/tests/minimax_mixed_*.mjs"
       - ".github/workflows/mixed_mode_browser_ci.yml"
 
 permissions:
@@ -52,11 +52,16 @@ jobs:
           };
           EOF
 
-      - name: Check Mixed lifecycle extensions
+      - name: Check Mixed browser modules
         run: |
           node --check web/js/zz_minimax_mixed_mode.js
           node --check web/js/zzz_minimax_mixed_persistence.js
+          node --check web/js/minimax_mixed_ui.mjs
           node --check web/js/tests/minimax_mixed_lifecycle.smoke.mjs
+          node --check web/js/tests/minimax_mixed_browser.test.mjs
 
       - name: Run Mixed workflow lifecycle smoke
         run: node web/js/tests/minimax_mixed_lifecycle.smoke.mjs
+
+      - name: Run Mixed integrated browser contract
+        run: node web/js/tests/minimax_mixed_browser.test.mjs
