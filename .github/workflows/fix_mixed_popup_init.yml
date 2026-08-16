@@ -1,0 +1,60 @@
+name: Fix Mixed Popup Init
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+    paths:
+      - ".github/workflows/fix_mixed_popup_init.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Add missing native Mixed mode predicate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("web/js/minimax_timeline.js")
+          source = path.read_text(encoding="utf-8")
+          anchor = "    _cloneMixedValue(value) {\n"
+          if source.count(anchor) != 1:
+              raise SystemExit(f"expected exactly one _cloneMixedValue anchor, got {source.count(anchor)}")
+          if "    isMixedMode() {\n" in source:
+              raise SystemExit("isMixedMode already exists; refusing an ambiguous rewrite")
+          replacement = (
+              "    isMixedMode() {\n"
+              "        return this.getDirectorMode() === \"mixed\";\n"
+              "    }\n\n"
+              + anchor
+          )
+          path.write_text(source.replace(anchor, replacement, 1), encoding="utf-8")
+          PY
+
+      - name: Verify Director module syntax and predicate contract
+        run: |
+          node --check web/js/minimax_timeline.js
+          test "$(grep -c '^[[:space:]]*isMixedMode() {' web/js/minimax_timeline.js)" -eq 1
+          test "$(grep -c 'this\.isMixedMode()' web/js/minimax_timeline.js)" -ge 1
+          git diff --check
+
+      - name: Commit popup initialization fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/js/minimax_timeline.js
+          git commit -m "fix: restore Director initialization after native Mixed rewrite"
+          git push origin HEAD:feature/mixed-mode
