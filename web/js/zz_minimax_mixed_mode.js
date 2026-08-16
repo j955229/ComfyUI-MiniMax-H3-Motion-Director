@@ -119,10 +119,6 @@ function restoreLegacyWorkspace(editor) {
         return true;
     }
 
-    // A workflow may be loaded while already in Mixed mode, so there may be no
-    // prior standalone workspace to restore. Build the same minimal legacy
-    // shape used by the backend default instead of handing Mixed JSON to the
-    // old six-mode editor.
     const fallback = legacyFallback(editor);
     editor.timeline = fallback;
     editor.selectedIndex = 0;
@@ -147,6 +143,43 @@ function mixedGlobalWidgetCapture(editor, event) {
     if (widget && Number.isFinite(value)) widget.value = value;
 }
 
+function prepareMixedWorkspaceHost(editor) {
+    const mainBody = editor?.mainBody || editor?.root?.querySelector?.(".bd-main");
+    if (!mainBody) return null;
+    if (editor._mmxMixedWorkspaceHost?.isConnected) return editor._mmxMixedWorkspaceHost;
+
+    const keepVisible = new Set(
+        [editor.outputBarEl].filter((item) => item && item.parentElement === mainBody),
+    );
+    editor._mmxMixedHiddenChildren = Array.from(mainBody.children || [])
+        .filter((child) => !keepVisible.has(child))
+        .map((child) => ({ element: child, hidden: !!child.hidden }));
+    for (const item of editor._mmxMixedHiddenChildren) item.element.hidden = true;
+
+    const host = document.createElement("div");
+    host.className = "mmx-mixed-workspace-host";
+    host.dataset.mmxMixedWorkspace = "true";
+    host.style.minWidth = "0";
+    host.style.minHeight = "0";
+    host.style.flex = "1 1 auto";
+    host.style.width = "100%";
+    host.style.overflow = "hidden";
+    const outputBar = editor.outputBarEl;
+    if (outputBar?.parentElement === mainBody) mainBody.insertBefore(host, outputBar);
+    else mainBody.appendChild(host);
+    editor._mmxMixedWorkspaceHost = host;
+    return host;
+}
+
+function restoreMixedWorkspaceHost(editor) {
+    editor?._mmxMixedWorkspaceHost?.remove?.();
+    editor._mmxMixedWorkspaceHost = null;
+    for (const item of editor?._mmxMixedHiddenChildren || []) {
+        if (item?.element) item.element.hidden = !!item.hidden;
+    }
+    editor._mmxMixedHiddenChildren = null;
+}
+
 function enterMixed(editor) {
     if (!editor?._directorModalController?.pages?.generation) return false;
     if (editor._mmxMixedController) return true;
@@ -159,8 +192,8 @@ function enterMixed(editor) {
     editor._mmxMixedWorkspace = clone(state);
     editor.timeline = state;
 
-    const host = editor._directorModalController.pages.generation;
-    editor._mmxLegacyGenerationRoot = editor.root || editor._mmxLegacyGenerationRoot || null;
+    const host = prepareMixedWorkspaceHost(editor);
+    if (!host) return false;
     editor._mmxMixedController = mountMixedUI({
         host,
         editor,
@@ -192,10 +225,7 @@ function leaveMixed(editor) {
     }
     editor._mmxMixedController.destroy();
     editor._mmxMixedController = null;
-    const host = editor._directorModalController?.pages?.generation;
-    if (host && editor._mmxLegacyGenerationRoot) {
-        host.replaceChildren(editor._mmxLegacyGenerationRoot);
-    }
+    restoreMixedWorkspaceHost(editor);
     restoreLegacyWorkspace(editor);
     editor.node?.setDirtyCanvas?.(true, true);
     return true;
@@ -398,6 +428,7 @@ function wrapDirector(nodeType) {
             );
         }
         this._minimaxEditor?._mmxMixedController?.destroy?.();
+        if (this._minimaxEditor) restoreMixedWorkspaceHost(this._minimaxEditor);
         return onRemoved?.apply(this, arguments);
     };
 }
