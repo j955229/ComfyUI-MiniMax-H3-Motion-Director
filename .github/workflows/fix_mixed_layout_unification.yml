@@ -24,7 +24,9 @@ jobs:
           node-version: "22"
 
       - name: Apply patch
-        run: python .github/scripts/fix_mixed_layout_unification.py
+        run: |
+          sed -i 's/timelineSource/timeline/g' .github/scripts/fix_mixed_layout_unification.py
+          python .github/scripts/fix_mixed_layout_unification.py
 
       - name: Verify
         run: |
