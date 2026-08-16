@@ -1,0 +1,74 @@
+name: Apply Mixed Output and Master Controls V2
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+    paths:
+      - '.github/scripts/fix_mixed_output_and_master_v2.py'
+      - '.github/workflows/apply_mixed_output_and_master_v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+          fetch-depth: 0
+
+      - name: Apply patch
+        run: python .github/scripts/fix_mixed_output_and_master_v2.py
+
+      - name: Syntax checks
+        run: |
+          python -m py_compile nodes/director.py
+          node --check web/js/minimax_continuity_ui.mjs
+          node --check web/js/minimax_timeline.js
+          git diff --check
+
+      - name: Mixed continuity contract
+        run: |
+          node --input-type=module <<'NODE'
+          const mod = await import('./web/js/minimax_continuity_ui.mjs');
+          const on = mod.resolveContinuityUiState({
+            taskKey: 'mixed',
+            segmentCount: 4,
+            motionContextEnabled: true,
+            audioMode: 'generate',
+          });
+          if (!on.showMotionContext || !on.motionContextControlEnabled) throw new Error('Mixed Motion Context master must be visible/enabled');
+          if (!on.showContextFrames || !on.contextFramesControlEnabled) throw new Error('Mixed Context Length must be visible/enabled when master is ON');
+          if (!on.showAudioContinuation || !on.audioContextControlEnabled) throw new Error('Mixed Audio Context master must be visible/enabled');
+          const off = mod.resolveContinuityUiState({
+            taskKey: 'mixed',
+            segmentCount: 4,
+            motionContextEnabled: false,
+            audioMode: 'generate',
+          });
+          if (!off.showMotionContext || !off.showContextFrames) throw new Error('Mixed global MC controls must remain visible when master is OFF');
+          if (off.contextFramesControlEnabled || off.colorReanchorControlEnabled || off.pinRenormControlEnabled) throw new Error('Mixed MC tuning must disable when master is OFF');
+          NODE
+
+      - name: Static output contract
+        run: |
+          grep -q 'const useSelector = mixedMode ||' web/js/minimax_timeline.js
+          grep -q 'Mixed has its own state object' web/js/minimax_timeline.js
+          grep -q 'this.isFl2vMode() || this.isMixedMode()' web/js/minimax_timeline.js
+          grep -q 'Mixed boundary toggles are per-link requests' nodes/director.py
+          ! grep -q 'Mixed per-boundary toggles are authoritative' nodes/director.py
+
+      - name: Commit implementation
+        run: |
+          git config user.name 'j955229'
+          git config user.email '120770154+j955229@users.noreply.github.com'
+          git add nodes/director.py web/js/minimax_continuity_ui.mjs web/js/minimax_timeline.js
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+          else
+            git commit -m 'fix: restore Mixed resolution selector and context masters'
+            git push origin HEAD:feature/mixed-mode
+          fi
