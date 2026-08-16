@@ -1,6 +1,6 @@
 """Planner for the Director Mixed meta-mode.
 
-Mixed is deliberately not an H3 task.  This planner validates the versioned
+Mixed is deliberately not an H3 task. This planner validates the versioned
 Mixed timeline and compiles each user-facing segment into the existing
 SegmentPlan task keys used by the normal executor.
 """
@@ -15,7 +15,9 @@ import torch
 from .mixed_schema import (
     backend_task_key,
     dependency_identity,
+    effective_mixed_continuity,
     expand_run_selection,
+    mixed_visible_frame_count,
     normalize_mixed_segments,
 )
 
@@ -53,23 +55,7 @@ def _mixed_root(timeline: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _duration_frames(segment: Mapping[str, Any], fps: float) -> int:
-    """Visible output length; Source Video range is authoritative and un-stretched."""
-    mode = str(segment.get("mode") or "").lower()
-    if mode == "source_video":
-        source = (segment.get("inputs") or {}).get("sourceVideo") or {}
-        source_range = source.get("range") or {}
-        start = float(source_range.get("startSec", 0.0))
-        end = float(source_range.get("endSec", 0.0))
-        return max(4, int(round((end - start) * fps)))
-
-    explicit = int(segment.get("frameCount") or segment.get("frame_count") or 0)
-    if explicit > 0:
-        return explicit
-
-    from .frame_align import minimax_align_frame_count
-
-    seconds = max(0.1, float(segment.get("duration") or 5.0))
-    return minimax_align_frame_count(max(5, int(round(seconds * fps))))
+    return mixed_visible_frame_count(segment, fps)
 
 
 def _static_image_ref(raw: Any, index: int):
@@ -240,22 +226,11 @@ def build_mixed_director_plan(
                 or []
             )
 
-        continuity = spec.get("continuity") or {}
-        visual = bool(continuity.get("visual")) and index > 0
-        audio = bool(continuity.get("audio")) and index > 0
-        # An explicit I2V start frame owns the visual start state.  This applies
-        # equally to uploaded/library frames and lazy Previous/Earlier result
-        # stills. Audio inheritance remains independent.
-        has_explicit_i2v_start = mode == "i2v" and (
-            source_clip is not None
-            or any(str(ref.get("role") or "") == "i2v_start" for ref in result_refs)
-        )
-        if has_explicit_i2v_start:
-            visual = False
+        continuity = effective_mixed_continuity(spec, index)
         context_link = ContextLink(
-            enabled=bool(visual or audio),
-            visual=visual,
-            audio=audio,
+            enabled=bool(continuity["visual"] or continuity["audio"]),
+            visual=bool(continuity["visual"]),
+            audio=bool(continuity["audio"]),
             explicit=True,
         )
 
