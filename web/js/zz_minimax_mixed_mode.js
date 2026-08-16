@@ -57,13 +57,94 @@ function saveLegacyWorkspace(editor) {
     };
 }
 
+function legacyFallback(editor) {
+    const taskType = String(widgetByName(editor?.node, "task_type")?.value || "t2v — 文生视频(Text to Video)");
+    const prompt = String(widgetByName(editor?.node, "global_prompt")?.value || "");
+    const frameRate = Number(widgetByName(editor?.node, "frame_rate")?.value || 24) || 24;
+    const width = Number(widgetByName(editor?.node, "width")?.value || 864) || 864;
+    const height = Number(widgetByName(editor?.node, "height")?.value || 480) || 480;
+    const refMaxSize = Number(widgetByName(editor?.node, "ref_max_size")?.value || 864) || 864;
+    const totalFrames = Number(widgetByName(editor?.node, "total_frames")?.value || 124) || 124;
+    return {
+        version: 4,
+        editMode: "global",
+        totalFrames,
+        frameRate,
+        width,
+        height,
+        refMaxSize,
+        output: {
+            mode: "fixed",
+            longEdge: refMaxSize,
+            width,
+            height,
+            maxExportFrames: 0,
+            exportMode: "all",
+            audioMode: "generate",
+        },
+        videoClips: [],
+        video: {
+            fileName: "",
+            videoFile: "",
+            subfolder: "",
+            type: "input",
+            frames: [],
+            frameMap: [],
+        },
+        global: {
+            taskType,
+            prompt,
+            refs: [],
+            referenceVideo: {},
+            continuousReference: false,
+        },
+        segments: [{
+            id: "s0",
+            start: 0,
+            length: totalFrames,
+            prompt: "",
+            taskType: "",
+            refs: [],
+            referenceVideo: {},
+        }],
+    };
+}
+
 function restoreLegacyWorkspace(editor) {
     const saved = editor._mmxLegacyBeforeMixed;
-    if (!saved) return false;
-    editor.timeline = clone(saved.timeline || {});
-    editor.selectedIndex = Number(saved.selectedIndex || 0);
-    if (editor.timelineWidget && saved.serialized) editor.timelineWidget.value = saved.serialized;
-    return true;
+    if (saved) {
+        editor.timeline = clone(saved.timeline || {});
+        editor.selectedIndex = Number(saved.selectedIndex || 0);
+        if (editor.timelineWidget && saved.serialized) editor.timelineWidget.value = saved.serialized;
+        return true;
+    }
+
+    // A workflow may be loaded while already in Mixed mode, so there may be no
+    // prior standalone workspace to restore. Build the same minimal legacy
+    // shape used by the backend default instead of handing Mixed JSON to the
+    // old six-mode editor.
+    const fallback = legacyFallback(editor);
+    editor.timeline = fallback;
+    editor.selectedIndex = 0;
+    if (editor.timelineWidget) editor.timelineWidget.value = JSON.stringify(fallback);
+    return false;
+}
+
+function mixedGlobalWidgetCapture(editor, event) {
+    const target = event?.target;
+    if (!target || target.tagName !== "INPUT") return;
+    const label = target.closest?.(".mmx-mixed-global label");
+    if (!label) return;
+    const prefix = Array.from(label.childNodes || [])
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => node.textContent || "")
+        .join(" ")
+        .trim();
+    const widgetName = ({ FPS: "frame_rate", Width: "width", Height: "height" })[prefix];
+    if (!widgetName) return;
+    const widget = widgetByName(editor.node, widgetName);
+    const value = Number(target.value);
+    if (widget && Number.isFinite(value)) widget.value = value;
 }
 
 function enterMixed(editor) {
@@ -89,6 +170,9 @@ function enterMixed(editor) {
             writeState(editor, next, { render: false });
         },
     });
+    const capture = (event) => mixedGlobalWidgetCapture(editor, event);
+    editor._mmxMixedGlobalCapture = capture;
+    editor._mmxMixedController.root.addEventListener("change", capture, true);
     writeState(editor, state, { render: false });
     editor.selectedIndex = 0;
     editor.node?.setDirtyCanvas?.(true, true);
@@ -98,6 +182,14 @@ function enterMixed(editor) {
 function leaveMixed(editor) {
     if (!editor?._mmxMixedController) return false;
     editor._mmxMixedWorkspace = stampNodeId(editor, editor._mmxMixedController.state);
+    if (editor._mmxMixedGlobalCapture) {
+        editor._mmxMixedController.root.removeEventListener(
+            "change",
+            editor._mmxMixedGlobalCapture,
+            true,
+        );
+        editor._mmxMixedGlobalCapture = null;
+    }
     editor._mmxMixedController.destroy();
     editor._mmxMixedController = null;
     const host = editor._directorModalController?.pages?.generation;
@@ -257,10 +349,7 @@ function syncNode(node) {
     patchEditor(editor);
     const mixed = currentTaskKey(node, editor) === "mixed";
     if (mixed && !editor._mmxMixedController) enterMixed(editor);
-    if (!mixed && editor._mmxMixedController) {
-        leaveMixed(editor);
-        editor._mmxMixedOriginal?.applyTaskLayout?.();
-    }
+    if (!mixed && editor._mmxMixedController) editor.applyTaskLayout?.();
     return true;
 }
 
@@ -301,6 +390,13 @@ function wrapDirector(nodeType) {
     nodeType.prototype.onRemoved = function () {
         for (const timer of this._mmxMixedTimers || []) clearTimeout(timer);
         this._mmxMixedTimers?.clear?.();
+        if (this._minimaxEditor?._mmxMixedController && this._minimaxEditor._mmxMixedGlobalCapture) {
+            this._minimaxEditor._mmxMixedController.root.removeEventListener(
+                "change",
+                this._minimaxEditor._mmxMixedGlobalCapture,
+                true,
+            );
+        }
         this._minimaxEditor?._mmxMixedController?.destroy?.();
         return onRemoved?.apply(this, arguments);
     };
