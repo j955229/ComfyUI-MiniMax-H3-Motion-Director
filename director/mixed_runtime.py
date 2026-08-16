@@ -1,4 +1,4 @@
-"""Runtime materialization of Mixed previous/earlier segment still references."""
+"""Runtime materialization of Mixed Segment Result still references."""
 
 from __future__ import annotations
 
@@ -126,14 +126,29 @@ class MixedResultRef:
 
 
 def _source_id_for_ref(plan, consumer_index: int, ref: dict[str, Any]) -> str:
-    origin = str(ref.get("origin") or "")
-    if origin == "previous":
-        if consumer_index <= 0:
-            raise ValueError("Missing Reference: first Mixed segment has no Previous Segment.")
-        return str(getattr(plan.segments[consumer_index - 1], "stable_id", ""))
+    # Legacy Previous/Earlier compatibility is deliberately handled only by
+    # mixed_schema.normalize_mixed_segments(). Runtime receives one stable-ID
+    # representation so reorder/delete/selective-run cannot diverge by origin.
+    if str(ref.get("origin") or "") != "segment":
+        raise ValueError("Invalid Mixed result reference: non-canonical origin reached runtime.")
     source_id = str(ref.get("segmentId") or "").strip()
     if not source_id:
-        raise ValueError("Missing Reference: Earlier Segment reference has no stable segment id.")
+        raise ValueError("Missing Reference: Segment Result has no stable segment id.")
+
+    source_index = next(
+        (
+            index
+            for index, segment in enumerate(plan.segments)
+            if str(getattr(segment, "stable_id", "")) == source_id
+        ),
+        None,
+    )
+    if source_index is None:
+        raise ValueError(f"Missing Reference: Mixed source segment {source_id!r} no longer exists.")
+    if source_index >= int(consumer_index):
+        raise ValueError(
+            f"Invalid Reference: Mixed Segment Result {source_id!r} is not earlier than its consumer."
+        )
     return source_id
 
 
