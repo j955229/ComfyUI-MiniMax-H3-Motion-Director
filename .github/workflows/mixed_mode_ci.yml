@@ -59,6 +59,7 @@ jobs:
           python -m unittest \
             tests.test_mixed_schema \
             tests.test_mixed_selection \
+            tests.test_mixed_source_images_policy \
             tests.test_cache_path \
             tests.test_context_identity_seed
 
