@@ -11,7 +11,6 @@ Object.assign(globalThis, {
     HTMLElement: dom.window.HTMLElement,
     Event: dom.window.Event,
     CustomEvent: dom.window.CustomEvent,
-    navigator: dom.window.navigator,
 });
 window.confirm = () => true;
 
