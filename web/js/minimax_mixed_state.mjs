@@ -28,23 +28,44 @@ function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function normalizeResultRef(ref = {}) {
-    const originRaw = String(ref.origin || "").trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_");
-    const origin = ["previous_segment", "prev"].includes(originRaw)
-        ? "previous"
-        : ["earlier_segment", "segment", "specific_segment"].includes(originRaw)
-            ? "earlier"
-            : originRaw;
+function normalizeFrame(value) {
+    const raw = value ?? "last";
+    return String(raw).toLowerCase() === "last"
+        ? "last"
+        : Math.max(0, Number.parseInt(raw, 10) || 0);
+}
+
+function normalizeResultRef(ref = {}, consumerIndex, segments) {
+    const originRaw = String(ref.origin || "")
+        .trim()
+        .toLowerCase()
+        .replaceAll("-", "_")
+        .replaceAll(" ", "_");
     const role = String(ref.role || "identity").trim().toLowerCase().replaceAll("-", "_");
-    const frameRaw = ref.frame ?? ref.frameIndex ?? "last";
-    const frame = String(frameRaw).toLowerCase() === "last" ? "last" : Math.max(0, Number.parseInt(frameRaw, 10) || 0);
-    const out = { role, origin, frame };
-    if (origin === "earlier") out.segmentId = String(ref.segmentId || ref.segment_id || ref.sourceSegmentId || "").trim();
-    return out;
+    let segmentId = String(ref.segmentId || ref.segment_id || ref.sourceSegmentId || "").trim();
+
+    // Compatibility migration only. New Mixed state persists one explicit
+    // Segment Result concept keyed by stable segment id.
+    if (["previous", "previous_segment", "prev"].includes(originRaw)) {
+        segmentId = consumerIndex > 0 ? String(segments[consumerIndex - 1]?.id || "") : "";
+    } else if (!["earlier", "earlier_segment", "specific_segment", "segment"].includes(originRaw)) {
+        throw new Error(`Unsupported Mixed result reference origin: ${ref.origin}`);
+    }
+
+    return {
+        role,
+        origin: "segment",
+        segmentId,
+        frame: normalizeFrame(ref.frame ?? ref.frameIndex),
+    };
 }
 
 function identityCount(inputs = {}) {
-    const staticCount = Array.isArray(inputs.identityPictures) ? inputs.identityPictures.length : 0;
+    const staticCount = Array.isArray(inputs.identityPictures)
+        ? inputs.identityPictures.length
+        : Array.isArray(inputs.pictures)
+            ? inputs.pictures.length
+            : 0;
     const dynamicCount = Array.isArray(inputs.resultRefs)
         ? inputs.resultRefs.filter((r) => r?.role === "identity").length
         : 0;
@@ -64,19 +85,24 @@ export function newMixedSegment({ idFactory = () => `seg_${crypto.randomUUID()}`
     };
 }
 
-function normalizeSegment(raw, index, { idFactory }) {
+function prepareSegment(raw, { idFactory }) {
     const seg = clone(raw || {});
     seg.id = String(seg.id || seg.segmentId || idFactory());
     seg.mode = normalizeMode(seg.mode);
     seg.prompt = String(seg.prompt || "");
     seg.duration = Number(seg.duration ?? 5) || 5;
     seg.inputs = clone(seg.inputs || {});
+    return seg;
+}
+
+function finalizeSegment(seg, index, segments) {
     seg.inputs.resultRefs = Array.isArray(seg.inputs.resultRefs)
-        ? seg.inputs.resultRefs.map(normalizeResultRef)
+        ? seg.inputs.resultRefs.map((ref) => normalizeResultRef(ref, index, segments))
         : [];
     seg.inputs.identityPictures = Array.isArray(seg.inputs.identityPictures)
         ? seg.inputs.identityPictures.map(clone)
         : [];
+    if (Array.isArray(seg.inputs.pictures)) seg.inputs.pictures = seg.inputs.pictures.map(clone);
     const continuity = seg.continuity || {};
     seg.continuity = {
         visual: index > 0 && !!continuity.visual,
@@ -91,12 +117,13 @@ export function normalizeMixedTimeline(raw = {}, { idFactory = () => `seg_${cryp
     const segmentsRaw = Array.isArray(source.segments) && source.segments.length
         ? source.segments
         : [newMixedSegment({ idFactory })];
-    const segments = segmentsRaw.map((seg, index) => normalizeSegment(seg, index, { idFactory }));
+    const prepared = segmentsRaw.map((seg) => prepareSegment(seg, { idFactory }));
     const seen = new Set();
-    for (const seg of segments) {
+    for (const seg of prepared) {
         if (seen.has(seg.id)) throw new Error(`Duplicate segment id: ${seg.id}`);
         seen.add(seg.id);
     }
+    const segments = prepared.map((seg, index) => finalizeSegment(seg, index, prepared));
     return {
         ...source,
         version: 1,
@@ -111,7 +138,7 @@ export function duplicateMixedSegment(segments, index, { idFactory = () => `seg_
     const copy = clone(out[index]);
     copy.id = String(idFactory());
     out.splice(index + 1, 0, copy);
-    return out.map((seg, i) => normalizeSegment(seg, i, { idFactory }));
+    return normalizeMixedTimeline({ timelineMode: "mixed", segments: out }, { idFactory }).segments;
 }
 
 export function moveMixedSegment(segments, fromIndex, toIndex) {
@@ -130,12 +157,9 @@ export function dependencyIndices(segments, consumerIndex) {
     const seg = segments[consumerIndex];
     const deps = new Set();
     for (const ref of seg.inputs?.resultRefs || []) {
-        if (ref.origin === "previous") {
-            if (consumerIndex > 0) deps.add(consumerIndex - 1);
-        } else if (ref.origin === "earlier") {
-            const idx = ids.get(String(ref.segmentId || ""));
-            if (idx != null && idx < consumerIndex) deps.add(idx);
-        }
+        if (ref.origin !== "segment") continue;
+        const idx = ids.get(String(ref.segmentId || ""));
+        if (idx != null && idx < consumerIndex) deps.add(idx);
     }
     if (consumerIndex > 0 && (seg.continuity?.visual || seg.continuity?.audio)) deps.add(consumerIndex - 1);
     return [...deps].sort((a, b) => a - b);
@@ -146,19 +170,13 @@ export function validateMixedReferences(segments) {
     const errors = [];
     segments.forEach((seg, consumerIndex) => {
         for (const ref of seg.inputs?.resultRefs || []) {
-            if (ref.origin === "previous") {
-                if (consumerIndex === 0) {
-                    errors.push({ code: "missing_reference", consumerId: seg.id, message: "Previous Segment does not exist." });
-                }
-                continue;
-            }
-            if (ref.origin !== "earlier") continue;
+            if (ref.origin !== "segment") continue;
             const sourceId = String(ref.segmentId || "");
             const sourceIndex = ids.get(sourceId);
             if (sourceIndex == null) {
                 errors.push({ code: "missing_reference", consumerId: seg.id, sourceId, message: "Referenced segment is missing." });
             } else if (sourceIndex >= consumerIndex) {
-                errors.push({ code: "invalid_reference", consumerId: seg.id, sourceId, message: "Earlier Segment reference points forward after reorder." });
+                errors.push({ code: "invalid_reference", consumerId: seg.id, sourceId, message: "Segment Result reference points forward after reorder." });
             }
         }
     });
@@ -166,28 +184,22 @@ export function validateMixedReferences(segments) {
 }
 
 export function referencedDependents(segments, sourceId) {
-    const ids = new Map(segments.map((seg, index) => [String(seg.id), index]));
-    const sourceIndex = ids.get(String(sourceId));
-    if (sourceIndex == null) return [];
-    const out = [];
-    segments.forEach((seg, index) => {
-        if (index <= sourceIndex) return;
-        const explicit = (seg.inputs?.resultRefs || []).some(
-            (ref) => ref.origin === "earlier" && String(ref.segmentId || "") === String(sourceId),
-        );
-        if (explicit) out.push(String(seg.id));
-    });
-    return out;
+    const source = String(sourceId);
+    return (segments || [])
+        .filter((seg) => (seg.inputs?.resultRefs || []).some(
+            (ref) => ref.origin === "segment" && String(ref.segmentId || "") === source,
+        ))
+        .map((seg) => String(seg.id));
 }
 
 const SLOT_ORIGINS = {
     source_video: ["upload"],
     r2v_reference_video: ["upload", "library"],
     r2v_reference_audio: ["upload", "library"],
-    identity: ["upload", "library", "previous", "earlier"],
-    i2v_start: ["upload", "library", "previous", "earlier"],
-    fl2v_first: ["upload", "library", "previous", "earlier"],
-    fl2v_last: ["upload", "library", "previous", "earlier"],
+    identity: ["upload", "library", "segment"],
+    i2v_start: ["upload", "library", "segment"],
+    fl2v_first: ["upload", "library", "segment"],
+    fl2v_last: ["upload", "library", "segment"],
 };
 
 export function legalOriginsForSlot(slot) {
