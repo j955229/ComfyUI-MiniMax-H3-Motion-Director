@@ -75,6 +75,13 @@ assert.equal(
 assert.ok(controller.root.querySelector(".bd-panel"), "Mixed panels must reuse Director .bd-panel styling");
 assert.ok(controller.root.querySelector(".bd-btn"), "Mixed buttons must reuse Director .bd-btn styling");
 assert.ok(controller.root.querySelector(".bd-select"), "Mixed selects must reuse Director .bd-select styling");
+const mixedStyle = document.getElementById("mmx-mixed-mode-integrated-styles")?.textContent || "";
+assert.match(mixedStyle, /\.mmx-mixed-cards\{[^}]*overflow-x:auto;overflow-y:hidden/,
+    "Mixed segment strip must scroll horizontally only");
+assert.match(mixedStyle, /\.mmx-mixed-card\{[^}]*flex:1 0 190px;min-width:190px/,
+    "a small number of Mixed segment cards must expand to use available width");
+assert.doesNotMatch(mixedStyle, /\.mmx-mixed-cards\{[^}]*overflow:auto/,
+    "Mixed segment strip must not enable an unnecessary vertical scrollbar");
 
 const addButton = controller.root.querySelector('[data-mmx-i18n="mixed.addSegment"]');
 assert.ok(addButton, "Mixed controls must expose stable i18n keys");

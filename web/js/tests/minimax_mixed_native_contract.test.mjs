@@ -18,4 +18,11 @@ assert.doesNotMatch(timeline, /_mmxLegacyBeforeMixed/);
 assert.match(gen, /const NO_REF_IMAGE_TASKS = new Set\(\["v2v", "mv2v", "ads2v", "t2v", "i2v", "fl2v"\]\)/);
 assert.match(gen, /return taskKey === "r2v" \|\| taskKey === "r2i" \|\| taskKey === "rv2v"/);
 
+assert.match(timeline, /parent\.insertBefore\(this\.outputBarEl, parent\.firstChild\);\s*this\.outputBarEl\.after\(host\);/,
+    "Mixed output controls must occupy the same top position as standalone Director modes");
+assert.match(timeline, /child\.classList\?\.toggle\("hidden", !!active\)/,
+    "Mixed must isolate legacy Director bodies with the project hidden class");
+assert.match(timeline, /this\.globalPanel, this\.segmentPanel/,
+    "standalone prompt/reference panels must be explicitly isolated from Mixed");
+
 console.log("native Mixed integration contract passed");

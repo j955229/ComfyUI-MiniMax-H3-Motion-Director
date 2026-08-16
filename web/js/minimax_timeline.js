@@ -4196,12 +4196,17 @@ class MiniMaxH3MotionDirectorEditor {
         const host = this._mixedPanelHost;
         for (const child of Array.from(this.mainBody?.children || [])) {
             if (child === host || child === this.outputBarEl) continue;
-            child.hidden = !!active;
+            child.classList?.toggle("hidden", !!active);
         }
         for (const element of this.root?.querySelectorAll?.(
             ".bd-actions, .bd-smart-split-msg, .bd-external-groups-msg",
         ) || []) {
-            element.hidden = !!active;
+            element.classList?.toggle("hidden", !!active);
+        }
+        // Legacy prompt/reference panels are nested in some standalone modes,
+        // so direct-child isolation alone is insufficient.
+        for (const element of [this.globalPanel, this.segmentPanel]) {
+            element?.classList?.toggle("hidden", !!active);
         }
         const continuity = this.segmentContinuityWrap
             || this.root?.querySelector?.('[data-r="segment-continuity-wrap"]');
@@ -4209,10 +4214,11 @@ class MiniMaxH3MotionDirectorEditor {
             || this.root?.querySelector?.('[data-a="r2v-common-toggle"]');
         const audio = this.outAudioWrap
             || this.root?.querySelector?.('[data-r="out-audio-wrap"]');
-        if (continuity) continuity.hidden = !!active;
-        if (common) common.hidden = !!active;
-        if (audio) audio.hidden = !!active;
-        if (this._mixedPanelHost) this._mixedPanelHost.hidden = !active;
+        continuity?.classList?.toggle("hidden", !!active);
+        common?.classList?.toggle("hidden", !!active);
+        audio?.classList?.toggle("hidden", !!active);
+        this.outputBarEl?.classList?.remove("hidden");
+        this._mixedPanelHost?.classList?.toggle("hidden", !active);
     }
 
     _ensureMixedPanelHost() {
@@ -4225,8 +4231,13 @@ class MiniMaxH3MotionDirectorEditor {
         host.style.width = "100%";
         const parent = this.mainBody || this.root?.querySelector?.(".bd-main");
         if (!parent) return null;
-        if (this.outputBarEl?.parentElement === parent) parent.insertBefore(host, this.outputBarEl);
-        else parent.appendChild(host);
+        if (this.outputBarEl?.parentElement === parent) {
+            // Match the standalone Director hierarchy: toolbar -> output -> body.
+            parent.insertBefore(this.outputBarEl, parent.firstChild);
+            this.outputBarEl.after(host);
+        } else {
+            parent.appendChild(host);
+        }
         this._mixedPanelHost = host;
         return host;
     }
