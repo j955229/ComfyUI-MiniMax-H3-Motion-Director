@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import {
+    desiredDirectorInputSockets,
+    resolveDirectorTaskKey,
+} from "../minimax_director_inputs_core.mjs";
+import {
     MIXED_SEGMENT_MODES,
     backendTaskPreview,
     dependencyIndices,
@@ -11,6 +15,9 @@ import {
     referencedDependents,
     validateMixedReferences,
 } from "../minimax_mixed_state.mjs";
+
+assert.equal(resolveDirectorTaskKey("mixed — 混合模式(Mixed)"), "mixed");
+assert.deepEqual(desiredDirectorInputSockets("mixed", 6), []);
 
 assert.deepEqual(MIXED_SEGMENT_MODES, ["t2v", "i2v", "fl2v", "r2v", "source_video"]);
 assert.equal(backendTaskPreview("source_video", 0), "v2v");
