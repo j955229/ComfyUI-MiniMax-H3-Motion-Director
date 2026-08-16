@@ -1,0 +1,58 @@
+name: Apply Mixed Native UI Alignment
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+    paths:
+      - ".github/scripts/apply_mixed_native_ui_v2.py"
+      - ".github/workflows/apply_mixed_native_ui_v2.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Apply production patch
+        run: python .github/scripts/apply_mixed_native_ui_v2.py
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check web/js/minimax_mixed_native_inputs.mjs
+          node --check web/js/minimax_mixed_i18n.mjs
+          node --check web/js/minimax_mixed_ui_v2.mjs
+          node --check web/js/minimax_mixed_ui.mjs
+          node --check web/js/minimax_material_library_modal.mjs
+          node --check web/js/minimax_material_library.js
+          node --check web/js/minimax_timeline.js
+
+      - name: Commit production files
+        run: |
+          git config user.name "j955229"
+          git config user.email "120770154+j955229@users.noreply.github.com"
+          git add \
+            web/js/minimax_mixed_i18n.mjs \
+            web/js/minimax_mixed_ui_v2.mjs \
+            web/js/minimax_mixed_ui.mjs \
+            web/js/minimax_material_library_modal.mjs \
+            web/js/minimax_material_library.js \
+            web/js/minimax_timeline.js
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m "ui: align Mixed segments with native Director layouts"
+          git push origin HEAD:feature/mixed-mode
