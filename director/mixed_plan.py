@@ -100,6 +100,7 @@ def build_mixed_director_plan(
     width: int,
     height: int,
     ref_max_size: int,
+    node_id: str | None = None,
 ):
     """Validate Mixed state and compile it to the existing DirectorPlan model."""
     from ..lib.image_prep import resolve_output_dimensions
@@ -205,8 +206,6 @@ def build_mixed_director_plan(
             source_clip=source_clip,
             context_link=context_link,
         )
-        # Append-only runtime metadata: SegmentPlan has no slots, so standalone
-        # workflows remain binary/schema compatible.
         seg.stable_id = str(spec["id"])
         seg.mixed_mode = mode
         seg.mixed_result_refs = copy.deepcopy(inputs.get("resultRefs") or [])
@@ -250,9 +249,11 @@ def build_mixed_director_plan(
     plan.mixed_segments = normalized
     plan.mixed_dependency_closure = frozenset(dependency_closure)
     plan.mixed_requested_run_indices = run_indices
-    # Explicit invariant: Mixed v1 never owns a Source Bridge.  Runtime bridge
-    # helpers additionally reject SegmentPlan objects marked with mixed_mode.
     plan.source_overlap_frames = 0
+
+    from .mixed_runtime import attach_mixed_result_refs
+
+    attach_mixed_result_refs(plan, node_id=node_id)
     return plan
 
 
