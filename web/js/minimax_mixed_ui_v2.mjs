@@ -27,8 +27,9 @@ function ensureStyles() {
     style.textContent = `
 .mmx-mixed-root{min-height:0;display:flex;flex-direction:column;gap:8px;padding:0;box-sizing:border-box;font-family:inherit;color:inherit}
 .mmx-mixed-timeline-panel{flex:0 0 auto;min-height:0;overflow:hidden}.mmx-mixed-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.mmx-mixed-toolbar .mmx-spacer{flex:1}
-.mmx-mixed-cards{display:flex;gap:7px;overflow-x:auto;overflow-y:hidden;min-height:0;padding:2px;align-items:stretch}.mmx-mixed-card{flex:1 0 190px;min-width:190px;min-height:112px;cursor:pointer;position:relative}.mmx-mixed-card.selected{outline:1px solid #4fff8f}.mmx-mixed-card.invalid{outline:1px solid #e46d6d}.mmx-mixed-card-head{display:flex;align-items:center;gap:6px}.mmx-mixed-card-head b{white-space:nowrap}.mmx-mixed-card-prompt{min-height:34px;max-height:38px;overflow:hidden;white-space:pre-wrap}.mmx-mixed-card-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:auto}.mmx-mixed-card-actions .bd-btn{padding:3px 6px;font-size:10px}
-.mmx-mixed-editor-grid{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px}.mmx-mixed-editor-panel{min-height:0;overflow:visible}.mmx-mixed-continuity-panel{min-height:28px;display:flex;align-items:center;justify-content:center;gap:8px;padding:4px 8px!important;overflow:visible}.mmx-mixed-continuity-panel>b{font-size:11px;color:#999;font-weight:500}.mmx-mixed-continuity-panel .mmx-mixed-toggle{border:1px solid #444;border-radius:999px;padding:5px 9px;background:#171717}.mmx-mixed-field{display:flex;flex-direction:column;gap:4px}.mmx-mixed-field-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.mmx-mixed-field-row>.grow{flex:1 1 180px;min-width:120px}.mmx-mixed-field input[type=number],.mmx-mixed-field input[type=text]{background:#181818;border:1px solid #333;border-radius:4px;color:#eee;padding:5px 7px;box-sizing:border-box}.mmx-mixed-field input[type=text]{width:100%}.mmx-mixed-media-block{display:flex;flex-direction:column;gap:6px;padding-top:7px;border-top:1px solid #333}.mmx-mixed-media-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.mmx-mixed-media-head b{margin-right:auto}.mmx-mixed-media-row{display:flex;align-items:center;gap:6px;min-width:0}.mmx-mixed-media-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmx-mixed-media-row .bd-select{max-width:180px}.mmx-mixed-source-preview{height:150px;background:#111;border:1px solid #333;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center}.mmx-mixed-source-preview video{width:100%;height:100%;object-fit:contain}.mmx-mixed-status{min-height:18px}.mmx-mixed-status.error{color:#ff9090}.mmx-mixed-status.ok{color:#72d99b}.mmx-mixed-warning{color:#f5b55f}.mmx-mixed-toggle{display:flex;align-items:center;gap:7px}.mmx-mixed-toggle input{accent-color:#4fff8f}.mmx-mixed-result-row,.mmx-mixed-native-result-row{display:grid;grid-template-columns:minmax(130px,1fr) 110px auto;gap:6px;align-items:center}.mmx-mixed-native-card{width:100%;box-sizing:border-box}.mmx-mixed-native-slot-actions,.mmx-mixed-native-section-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}.mmx-mixed-native-slot-actions .mmx-mixed-native-result-row{flex:1 1 320px}.mmx-mixed-source-range{margin-top:8px}.mmx-mixed-source-range input{width:70px}.mmx-mixed-editor-panel>.bd-seg-head{margin-bottom:6px}
+.mmx-mixed-cards{display:flex;gap:0;overflow-x:auto;overflow-y:hidden;min-height:0;padding:2px;align-items:stretch}.mmx-mixed-card{flex:1 0 190px;min-width:190px;min-height:112px;cursor:pointer;position:relative}.mmx-mixed-card.selected{outline:1px solid #4fff8f}.mmx-mixed-card.invalid{outline:1px solid #e46d6d}.mmx-mixed-card-head{display:flex;align-items:center;gap:6px}.mmx-mixed-card-head b{white-space:nowrap}.mmx-mixed-card-prompt{min-height:34px;max-height:38px;overflow:hidden;white-space:pre-wrap}.mmx-mixed-card-actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:auto}.mmx-mixed-card-actions .bd-btn{padding:3px 6px;font-size:10px}
+.mmx-mixed-boundary{flex:0 0 58px;min-width:58px;position:relative;display:flex;align-items:center;justify-content:center;align-self:stretch;min-height:112px}.mmx-mixed-boundary::before{content:"";position:absolute;left:50%;top:5px;bottom:5px;width:1px;background:#3d3d3d;transform:translateX(-50%)}.mmx-mixed-boundary-controls{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:5px;padding:4px 3px;background:#121212;border:1px solid #333;border-radius:16px}.mmx-mixed-boundary-label{font-size:9px;line-height:1;color:#777;white-space:nowrap;padding:0 2px}.mmx-mixed-boundary-btn{width:28px;height:28px;min-width:28px;padding:0;border-radius:50%;border:1px solid #4a4a4a;background:#1b1b1b;color:#aaa;display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;cursor:pointer}.mmx-mixed-boundary-btn:hover{border-color:#777;color:#ddd}.mmx-mixed-boundary-btn.active{border-color:#4fff8f;background:#153922;color:#4fff8f;box-shadow:0 0 0 1px rgba(79,255,143,.12)}
+.mmx-mixed-editor-grid{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:8px}.mmx-mixed-editor-panel{min-height:0;overflow:visible}.mmx-mixed-field{display:flex;flex-direction:column;gap:4px}.mmx-mixed-field-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.mmx-mixed-field-row>.grow{flex:1 1 180px;min-width:120px}.mmx-mixed-field input[type=number],.mmx-mixed-field input[type=text]{background:#181818;border:1px solid #333;border-radius:4px;color:#eee;padding:5px 7px;box-sizing:border-box}.mmx-mixed-field input[type=text]{width:100%}.mmx-mixed-media-block{display:flex;flex-direction:column;gap:6px;padding-top:7px;border-top:1px solid #333}.mmx-mixed-media-head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.mmx-mixed-media-head b{margin-right:auto}.mmx-mixed-media-row{display:flex;align-items:center;gap:6px;min-width:0}.mmx-mixed-media-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmx-mixed-media-row .bd-select{max-width:180px}.mmx-mixed-source-preview{height:150px;background:#111;border:1px solid #333;border-radius:6px;overflow:hidden;display:flex;align-items:center;justify-content:center}.mmx-mixed-source-preview video{width:100%;height:100%;object-fit:contain}.mmx-mixed-status{min-height:18px}.mmx-mixed-status.error{color:#ff9090}.mmx-mixed-status.ok{color:#72d99b}.mmx-mixed-warning{color:#f5b55f}.mmx-mixed-toggle{display:flex;align-items:center;gap:7px}.mmx-mixed-toggle input{accent-color:#4fff8f}.mmx-mixed-result-row,.mmx-mixed-native-result-row{display:grid;grid-template-columns:minmax(130px,1fr) 110px auto;gap:6px;align-items:center}.mmx-mixed-native-card{width:100%;box-sizing:border-box}.mmx-mixed-native-slot-actions,.mmx-mixed-native-section-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}.mmx-mixed-native-slot-actions .mmx-mixed-native-result-row{flex:1 1 320px}.mmx-mixed-source-range{margin-top:8px}.mmx-mixed-source-range input{width:70px}.mmx-mixed-editor-panel>.bd-seg-head{margin-bottom:6px}
 @media(max-width:768px){.mmx-mixed-card{flex-basis:165px;min-width:165px}.mmx-mixed-result-row,.mmx-mixed-native-result-row{grid-template-columns:1fr 90px auto}}
 `;
     document.head.appendChild(style);
@@ -694,6 +695,50 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
         }
     }
 
+    function renderBoundaryConnector(container, leftIndex) {
+        const rightIndex = leftIndex + 1;
+        const rightSeg = state.segments[rightIndex];
+        if (!rightSeg) return;
+        rightSeg.continuity = rightSeg.continuity || { visual: false, audio: false };
+
+        const boundary = document.createElement("div");
+        boundary.className = "mmx-mixed-boundary";
+        boundary.dataset.mmxBoundary = `${leftIndex}-${rightIndex}`;
+
+        const controls = document.createElement("div");
+        controls.className = "mmx-mixed-boundary-controls";
+
+        const edge = document.createElement("div");
+        edge.className = "mmx-mixed-boundary-label";
+        edge.textContent = `S${leftIndex + 1}→S${rightIndex + 1}`;
+        controls.appendChild(edge);
+
+        for (const [key, textKey, glyph] of [
+            ["visual", "mixed.visualContext", "↔"],
+            ["audio", "mixed.audioContext", "♪"],
+        ]) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `mmx-mixed-boundary-btn${rightSeg.continuity?.[key] ? " active" : ""}`;
+            button.textContent = glyph;
+            button.title = mt(textKey);
+            button.setAttribute("aria-label", mt(textKey));
+            button.setAttribute("aria-pressed", rightSeg.continuity?.[key] ? "true" : "false");
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                mutate(() => {
+                    rightSeg.continuity = rightSeg.continuity || {};
+                    rightSeg.continuity[key] = !rightSeg.continuity[key];
+                });
+            });
+            controls.appendChild(button);
+        }
+
+        boundary.appendChild(controls);
+        container.appendChild(boundary);
+    }
+
     function renderTimeline(panel) {
         const toolbar = document.createElement("div");
         toolbar.className = "mmx-mixed-toolbar";
@@ -782,11 +827,12 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
             }, { disabled: state.segments.length <= 1 });
             card.append(head, prompt, actions);
             cards.appendChild(card);
+            if (index < state.segments.length - 1) renderBoundaryConnector(cards, index);
         });
         panel.appendChild(cards);
     }
 
-    function renderEditor(panel, continuityPanel) {
+    function renderEditor(panel) {
         const seg = selectedSegment();
         if (!seg) return;
         seg.inputs = seg.inputs || { resultRefs: [] };
@@ -840,37 +886,12 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
             frameRate: state.frameRate || 24,
         });
 
-        const continuityTitle = document.createElement("b");
-        setI18n(continuityTitle, "mixed.continuity");
-        continuityPanel.appendChild(continuityTitle);
-        if (selectedIndex === 0) {
-            const note = document.createElement("div");
-            note.className = "bd-meta";
-            setI18n(note, "mixed.rootNoContinuity");
-            continuityPanel.appendChild(note);
-        } else {
-            for (const [key, textKey] of [["visual", "mixed.visualContext"], ["audio", "mixed.audioContext"]]) {
-                const label = document.createElement("label");
-                label.className = "mmx-mixed-toggle";
-                const input = document.createElement("input");
-                input.type = "checkbox";
-                input.checked = !!seg.continuity?.[key];
-                input.onchange = () => mutate(() => {
-                    seg.continuity = seg.continuity || {};
-                    seg.continuity[key] = input.checked;
-                });
-                const text = document.createElement("span");
-                setI18n(text, textKey);
-                label.append(input, text);
-                continuityPanel.appendChild(label);
-            }
-        }
         const errors = validateMixedReferences(state.segments, state.frameRate || 24).filter((error) => String(error.consumerId) === String(seg.id));
         for (const _error of errors) {
             const warning = document.createElement("div");
             warning.className = "bd-meta mmx-mixed-warning";
             setI18n(warning, "mixed.referenceMissing");
-            continuityPanel.appendChild(warning);
+            panel.appendChild(warning);
         }
     }
 
@@ -884,10 +905,7 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
         grid.className = "mmx-mixed-editor-grid";
         const editorPanel = document.createElement("section");
         editorPanel.className = "bd-panel mmx-mixed-editor-panel";
-        const continuityPanel = document.createElement("section");
-        continuityPanel.className = "bd-panel mmx-mixed-continuity-panel";
-        renderEditor(editorPanel, continuityPanel);
-        if (selectedIndex > 0) grid.appendChild(continuityPanel);
+        renderEditor(editorPanel);
         grid.appendChild(editorPanel);
         root.append(timeline, grid);
         const statusEl = document.createElement("div");
