@@ -66,6 +66,11 @@ def source_bridge_enabled(task_key: str, frames: int) -> bool:
 
 def source_bridge_boundary_enabled(left_segment, right_segment, frames: int) -> bool:
     """Return whether this exact boundary opted into the Source Bridge strategy."""
+    # Mixed v1 uses independent segment-local Source Videos.  The existing
+    # bridge assumes a shared physical source timeline, so it is intentionally
+    # unavailable even though the compiled backend keys are v2v/rv2v.
+    if getattr(left_segment, "mixed_mode", None) or getattr(right_segment, "mixed_mode", None):
+        return False
     if not (
         source_bridge_enabled(getattr(left_segment, "task_key", ""), frames)
         and source_bridge_enabled(getattr(right_segment, "task_key", ""), frames)
