@@ -10,6 +10,7 @@ on:
       - "web/js/minimax_timeline.js"
       - "web/js/minimax_gen_timeline.js"
       - "web/js/tests/minimax_mixed_*.mjs"
+      - "web/js/tests/minimax_director_module_load.test.mjs"
       - ".github/workflows/mixed_mode_browser_ci.yml"
 
 permissions:
@@ -62,9 +63,13 @@ jobs:
           node --check web/js/minimax_mixed_i18n.mjs
           node --check web/js/minimax_mixed_material_picker.mjs
           node --check web/js/minimax_mixed_state.mjs
+          node --check web/js/tests/minimax_director_module_load.test.mjs
           node --check web/js/tests/minimax_mixed_native_contract.test.mjs
           node --check web/js/tests/minimax_mixed_mode_inputs.test.mjs
           node --check web/js/tests/minimax_mixed_browser.test.mjs
+
+      - name: Load real Director module
+        run: node web/js/tests/minimax_director_module_load.test.mjs
 
       - name: Run native Mixed integration contract
         run: node web/js/tests/minimax_mixed_native_contract.test.mjs
