@@ -1,0 +1,48 @@
+name: Repair Director Group Widget Load
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+    paths:
+      - ".github/scripts/repair_director_group_widget_load.py"
+      - ".github/workflows/repair_director_group_widget_load.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Apply repair
+        run: python .github/scripts/repair_director_group_widget_load.py
+      - name: Syntax check
+        run: |
+          node --check web/js/minimax_sampling_ui.js
+          node --check web/js/minimax_timeline.js
+      - name: Verify repair hooks
+        run: |
+          grep -q 'repairDirectorGroupWidgetWorkflow' web/js/minimax_sampling_ui.js
+          grep -q 'repairDirectorGroupWidgetWorkflow(graphData)' web/js/minimax_timeline.js
+          grep -q 'bd_grp_sample' web/js/minimax_sampling_ui.js
+          grep -q 'bd_grp_experimental' web/js/minimax_sampling_ui.js
+      - name: Commit repair
+        run: |
+          git config user.name "j955229"
+          git config user.email "120770154+j955229@users.noreply.github.com"
+          git add web/js/minimax_sampling_ui.js web/js/minimax_timeline.js
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m "fix: repair persisted Director group widget slots"
+          git push origin HEAD:feature/mixed-mode
