@@ -26,6 +26,7 @@ import folder_paths
 
 from ..lib.image_prep import H3_SPATIAL_PIPELINE
 from ..lib.tensor_fingerprint import tensor_fingerprint
+from .cache_path import cache_root
 from .frame_align import H3_REFERENCE_VIDEO_PIPELINE, H3_SOURCE_BRIDGE_PIPELINE
 from .color_reanchor import COLOR_REANCHOR_PIPELINE
 from .context_identity import context_producer_fingerprint
@@ -37,9 +38,11 @@ log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.cache")
 
 def _cache_root(node_id: str) -> Path | None:
     try:
-        root = Path(folder_paths.get_output_directory()) / "minimax_seg_cache" / str(node_id)
-        root.mkdir(parents=True, exist_ok=True)
-        return root
+        return cache_root(
+            folder_paths.get_output_directory(),
+            "minimax_seg_cache",
+            node_id,
+        )
     except OSError as exc:
         log.warning("Segment cache dir unavailable (%s); cache disabled for this run.", exc)
         return None
