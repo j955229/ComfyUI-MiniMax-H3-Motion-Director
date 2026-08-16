@@ -12,6 +12,8 @@ from __future__ import annotations
 import torch
 from comfy.utils import common_upscale
 
+from .frame_assembly import assemble_frame_chunks
+
 
 H3_SPATIAL_STRIDE = 32
 H3_CONDITIONING_SPATIAL_STRIDE = H3_SPATIAL_STRIDE
@@ -126,18 +128,8 @@ def pad_frames_to_canvas(
 
 
 def cat_frames_variable_size(clips: list[torch.Tensor], *, fill: float = 0.5) -> torch.Tensor:
-    """Concatenate frame clips along time, padding spatial dims when aspect ratios differ."""
-    if not clips:
-        raise ValueError("No clips to concatenate.")
-    if len(clips) == 1:
-        return clips[0]
-    shapes = {(int(c.shape[1]), int(c.shape[2])) for c in clips}
-    if len(shapes) == 1:
-        return torch.cat(clips, dim=0)
-    max_h = max(c.shape[1] for c in clips)
-    max_w = max(c.shape[2] for c in clips)
-    padded = [pad_frames_to_canvas(c, max_w, max_h, fill=fill) for c in clips]
-    return torch.cat(padded, dim=0)
+    """Concatenate clips, using file-backed storage for multi-GiB final outputs."""
+    return assemble_frame_chunks(clips, fill=fill)
 
 
 def resolve_output_dimensions(
