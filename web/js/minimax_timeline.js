@@ -13,7 +13,7 @@ import {
     globalRefineSummary,
     mountPostprocessUI,
 } from "./minimax_postprocess_ui.mjs?boot=postprocess_output_v5";
-import { mountOutputUI } from "./minimax_output_ui.mjs?boot=live_results_v1";
+import { mountOutputUI } from "./minimax_output_ui.mjs?boot=live_results_v2";
 import { resolveExternalGroupTerminal } from "./minimax_external_groups.mjs";
 import {
     CUSTOM_ASPECT_RATIO,

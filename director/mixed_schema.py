@@ -98,18 +98,11 @@ def effective_mixed_continuity(
     visual = bool(continuity.get("visual", False))
     audio = bool(continuity.get("audio", False))
 
-    # A newly uploaded/static I2V start image is an explicit visual reset.
-    # A Mixed Segment Result start frame is different: it is sampled from an
-    # earlier generated segment and may intentionally be combined with that
-    # previous segment's Motion Context. Runtime materialization clears
-    # ``source_clip`` for result-backed I2V, so the executor preserves the
-    # requested visual ContextLink for that continuation case.
-    if normalize_mixed_mode(segment.get("mode")) == "i2v":
-        inputs = segment.get("inputs") or {}
-        has_static_start = bool(inputs.get("startFrame") or inputs.get("start_frame"))
-        if has_static_start:
-            visual = False
-
+    # Preserve the user's per-boundary request here. Runtime owns task-specific
+    # compatibility decisions so REPORT can distinguish requested ON from actual
+    # OFF. In particular, result-backed I2V may combine the predecessor's last
+    # frame with Motion Context, while an independently uploaded I2V start image
+    # is reported as an explicit visual reset by resolve_context_link().
     return {"visual": visual, "audio": audio}
 
 

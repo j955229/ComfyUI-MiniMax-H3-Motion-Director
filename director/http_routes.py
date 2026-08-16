@@ -273,7 +273,12 @@ async def minimax_save_final_video(request):
     if not node_id or not run_id:
         return web.json_response({"ok": False, "error": "Missing node_id or run_id"}, status=400)
     try:
-        result = FINAL_VIDEO_REGISTRY.save(node_id, run_id, body.get("save") or body)
+        result = FINAL_VIDEO_REGISTRY.save(
+            node_id,
+            run_id,
+            body.get("save") or body,
+            segment_range=body.get("segment_range"),
+        )
         return web.json_response(result)
     except StaleFinalVideoRun as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=409)

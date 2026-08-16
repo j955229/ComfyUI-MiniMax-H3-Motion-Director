@@ -18,6 +18,8 @@ const OUTPUT_TEXT = {
 
         generated_segment: "Generated Segment",
         available_range: "Available generated range",
+        range_start: "Start Segment",
+        range_end: "End Segment",
         final_pipeline: "Final pipeline result",
 
         play: "▶ Play",
@@ -95,6 +97,8 @@ const OUTPUT_TEXT = {
 
         generated_segment: "已生成片段",
         available_range: "当前有效片段范围",
+        range_start: "起始段",
+        range_end: "结束段",
         final_pipeline: "最终管线成果",
 
         play: "▶ 播放",
@@ -285,6 +289,23 @@ function ensureStyles() {
     border-radius:4px;
     background:#222;
     color:#ddd
+}
+
+.mmx-result-range{
+    display:flex;
+    align-items:center;
+    gap:6px
+}
+
+.mmx-result-range label{
+    display:flex;
+    align-items:center;
+    gap:5px;
+    white-space:nowrap
+}
+
+.mmx-result-range select{
+    min-width:82px
 }
 
 .mmx-result-controls{
@@ -787,6 +808,22 @@ export function mountOutputUI(
             data-segment-select
           ></select>
 
+          <div
+            class="mmx-result-range"
+            data-multi-range
+            hidden
+          >
+            <label>
+              <span data-output-text="range_start">起始段</span>
+              <select data-range-start></select>
+            </label>
+            <span>→</span>
+            <label>
+              <span data-output-text="range_end">结束段</span>
+              <select data-range-end></select>
+            </label>
+          </div>
+
           <span
             data-range-label
             hidden
@@ -1040,6 +1077,9 @@ export function mountOutputUI(
         },
 
         tab: "segment",
+        multiStart: null,
+        multiEnd: null,
+        multiRangeUserSet: false,
 
         segments: new Map(),
         final: null,
@@ -1093,6 +1133,18 @@ export function mountOutputUI(
 
     const segmentSelect =
         resultsRoot.querySelector("[data-segment-select]");
+
+    const multiRange =
+        resultsRoot.querySelector("[data-multi-range]");
+
+    const rangeStart =
+        resultsRoot.querySelector("[data-range-start]");
+
+    const rangeEnd =
+        resultsRoot.querySelector("[data-range-end]");
+
+    const rangeLabel =
+        resultsRoot.querySelector("[data-range-label]");
 
     const audio =
         resultsRoot.querySelector("[data-result-audio]");
@@ -1480,6 +1532,39 @@ export function mountOutputUI(
             );
         });
 
+    const availableSegmentIndices = () =>
+        [...state.segments.keys()].sort((a, b) => a - b);
+
+    const syncMultiRangeControls = () => {
+        const keys = availableSegmentIndices();
+        if (!keys.length) {
+            state.multiStart = null;
+            state.multiEnd = null;
+            rangeStart.replaceChildren();
+            rangeEnd.replaceChildren();
+            rangeLabel.textContent = tx("no_valid");
+            return;
+        }
+        const first = keys[0];
+        const last = keys.at(-1);
+        if (!state.multiRangeUserSet) {
+            state.multiStart = first;
+            state.multiEnd = last;
+        } else {
+            if (!keys.includes(state.multiStart)) state.multiStart = first;
+            if (!keys.includes(state.multiEnd)) state.multiEnd = last;
+            if (state.multiStart > state.multiEnd) state.multiEnd = state.multiStart;
+        }
+        const options = keys.map(
+            (index) => `<option value="${index}">${tx("segment_word")} ${index + 1}</option>`,
+        ).join("");
+        rangeStart.innerHTML = options;
+        rangeEnd.innerHTML = options;
+        rangeStart.value = String(state.multiStart);
+        rangeEnd.value = String(state.multiEnd);
+        rangeLabel.textContent = `S${state.multiStart + 1} → S${state.multiEnd + 1}`;
+    };
+
     const activeResult = () => {
         if (state.tab === "final") {
             return state.final;
@@ -1496,16 +1581,15 @@ export function mountOutputUI(
             );
         }
 
-        const ordered =
+        const entries =
             [...state.segments.entries()]
-                .sort(
-                    (a, b) =>
-                        a[0] - b[0],
-                )
-                .map(
-                    (entry) =>
-                        entry[1],
-                );
+                .sort((a, b) => a[0] - b[0])
+                .filter(([index]) => (
+                    state.multiStart == null
+                    || state.multiEnd == null
+                    || (index >= state.multiStart && index <= state.multiEnd)
+                ));
+        const ordered = entries.map((entry) => entry[1]);
 
         const frames =
             ordered.flatMap(
@@ -1529,7 +1613,7 @@ export function mountOutputUI(
                 height:
                     ordered[0]?.height,
                 stage:
-                    "Multi Segment",
+                    `Multi Segment S${(state.multiStart ?? entries[0]?.[0] ?? 0) + 1}-S${(state.multiEnd ?? entries.at(-1)?.[0] ?? 0) + 1}`,
             }
             : null;
     };
@@ -1795,15 +1879,15 @@ export function mountOutputUI(
         segmentSelect.hidden =
             tab !== "segment";
 
-        resultsRoot
-            .querySelector(
-                "[data-range-label]",
-            )
-            .hidden =
-                tab !== "multi";
+        multiRange.hidden =
+            tab !== "multi";
+
+        rangeLabel.hidden = true;
+
+        if (tab === "multi") syncMultiRangeControls();
 
         saveCard.hidden =
-            tab !== "final";
+            !["multi", "final"].includes(tab);
 
         resultsRoot
             .querySelector(
@@ -1847,6 +1931,30 @@ export function mountOutputUI(
             renderFrame();
         },
     );
+
+    rangeStart.addEventListener("change", () => {
+        stop();
+        state.multiRangeUserSet = true;
+        state.multiStart = Number(rangeStart.value);
+        if (state.multiEnd == null || state.multiStart > state.multiEnd) {
+            state.multiEnd = state.multiStart;
+        }
+        state.index = 0;
+        syncMultiRangeControls();
+        renderFrame();
+    });
+
+    rangeEnd.addEventListener("change", () => {
+        stop();
+        state.multiRangeUserSet = true;
+        state.multiEnd = Number(rangeEnd.value);
+        if (state.multiStart == null || state.multiEnd < state.multiStart) {
+            state.multiStart = state.multiEnd;
+        }
+        state.index = 0;
+        syncMultiRangeControls();
+        renderFrame();
+    });
 
     seek.addEventListener(
         "input",
@@ -2099,14 +2207,11 @@ export function mountOutputUI(
                             a - b,
                     );
 
-            resultsRoot
-                .querySelector(
-                    "[data-range-label]",
-                )
-                .textContent =
-                    keys.length
-                        ? `S${keys[0] + 1} → S${keys.at(-1) + 1}`
-                        : tx("no_valid");
+            rangeLabel.textContent =
+                keys.length
+                    ? `S${keys[0] + 1} → S${keys.at(-1) + 1}`
+                    : tx("no_valid");
+            syncMultiRangeControls();
         }
 
         renderFrame();
@@ -2190,6 +2295,10 @@ export function mountOutputUI(
         };
 
         state.segments.clear();
+        state.multiStart = null;
+        state.multiEnd = null;
+        state.multiRangeUserSet = false;
+        syncMultiRangeControls();
 
         state.final =
             null;
@@ -2391,6 +2500,13 @@ export function mountOutputUI(
                                         state.finalRecord.run_id,
                                     save:
                                         store.get().save,
+                                    segment_range:
+                                        state.tab === "multi"
+                                            ? {
+                                                start: state.multiStart,
+                                                end: state.multiEnd,
+                                            }
+                                            : null,
                                 }),
                         },
                     );
@@ -2496,12 +2612,11 @@ export function mountOutputUI(
                             : "final_pipeline",
                 );
 
-        for (
-            const option
-            of segmentSelect.options
-        ) {
-            option.textContent =
-                `${tx("segment_word")} ${Number(option.value) + 1}`;
+        for (const select of [segmentSelect, rangeStart, rangeEnd]) {
+            for (const option of select.options) {
+                option.textContent =
+                    `${tx("segment_word")} ${Number(option.value) + 1}`;
+            }
         }
 
         playButton.textContent =

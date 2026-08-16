@@ -355,6 +355,15 @@ class MiniMaxH3MotionDirector:
         if bool(getattr(plan, "mixed_mode", False)):
             bind_mixed_runtime_node(plan, unique_id)
             source_overlap_frames = 0
+            # Mixed per-boundary toggles are authoritative. The legacy node-level
+            # masters are hidden in Mixed mode and must never silently gate a link.
+            links = [getattr(segment, "context_link", None) for segment in plan.segments]
+            motion_context_enabled = any(
+                bool(link and link.visual_enabled) for link in links
+            )
+            audio_context_enabled = any(
+                bool(link and link.audio_enabled) for link in links
+            )
 
         combined, segment_outputs, segment_audios, report = execute_director_plan_core(
             plan,
@@ -406,6 +415,36 @@ class MiniMaxH3MotionDirector:
                     save_config=save_config,
                     prompt=prompt,
                     extra_pnginfo=extra_pnginfo,
+                    segment_indices=[
+                        int(getattr(segment, "timeline_index", segment.index))
+                        for segment in (
+                            plan.segments
+                            if plan.export_mode == "all"
+                            else [
+                                plan.segments[index]
+                                for index in sorted(
+                                    plan.run_indices
+                                    if plan.run_indices is not None
+                                    else range(len(plan.segments))
+                                )
+                            ]
+                        )
+                    ],
+                    segment_frame_counts=[
+                        int(segment.frame_count)
+                        for segment in (
+                            plan.segments
+                            if plan.export_mode == "all"
+                            else [
+                                plan.segments[index]
+                                for index in sorted(
+                                    plan.run_indices
+                                    if plan.run_indices is not None
+                                    else range(len(plan.segments))
+                                )
+                            ]
+                        )
+                    ],
                 )
                 final_payload = record.info()
                 if auto_result is not None:
