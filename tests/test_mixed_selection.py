@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
+from director.mixed_schema import MixedSchemaError
 from director.mixed_selection import MixedRunSelection
 
 
@@ -14,7 +15,7 @@ class MixedSelectionTests(unittest.TestCase):
                 "mode": "source_video",
                 "inputs": {
                     "resultRefs": [
-                        {"role": "identity", "origin": "earlier", "segmentId": "a", "frame": "last"}
+                        {"role": "identity", "origin": "segment", "segmentId": "a", "frame": "last"}
                     ]
                 },
                 "continuity": {"visual": True, "audio": False},
@@ -79,12 +80,16 @@ class MixedSelectionTests(unittest.TestCase):
             {"id": "a", "inputs": {"resultRefs": []}, "continuity": {}},
             {
                 "id": "b",
-                "inputs": {"resultRefs": [{"role": "identity", "origin": "previous", "frame": "last"}]},
+                "inputs": {"resultRefs": [
+                    {"role": "identity", "origin": "segment", "segmentId": "a", "frame": "last"}
+                ]},
                 "continuity": {},
             },
             {
                 "id": "c",
-                "inputs": {"resultRefs": [{"role": "identity", "origin": "previous", "frame": "last"}]},
+                "inputs": {"resultRefs": [
+                    {"role": "identity", "origin": "segment", "segmentId": "b", "frame": "last"}
+                ]},
                 "continuity": {},
             },
         ]
@@ -99,6 +104,20 @@ class MixedSelectionTests(unittest.TestCase):
         selection._full_segment_hit = lambda index: False
         selection._context_hit = lambda index, **kwargs: False
         self.assertEqual(tuple(selection), (0, 1, 2))
+
+    def test_noncanonical_previous_origin_is_rejected_after_schema_boundary(self):
+        segments = [
+            {"id": "a", "inputs": {"resultRefs": []}, "continuity": {}},
+            {
+                "id": "b",
+                "inputs": {"resultRefs": [{"role": "identity", "origin": "previous", "frame": "last"}]},
+                "continuity": {},
+            },
+        ]
+        plan = SimpleNamespace(cache_settings={"seed": 1}, segments=[SimpleNamespace(index=0), SimpleNamespace(index=1)])
+        selection = MixedRunSelection(plan=plan, segments=segments, requested={1}, node_id="7")
+        with self.assertRaisesRegex(MixedSchemaError, "non-canonical"):
+            tuple(selection)
 
     def test_visual_master_off_removes_visual_only_dependency(self):
         segments = [
@@ -151,7 +170,9 @@ class MixedSelectionTests(unittest.TestCase):
             {"id": "a", "inputs": {"resultRefs": []}, "continuity": {}},
             {
                 "id": "b",
-                "inputs": {"resultRefs": [{"role": "identity", "origin": "previous", "frame": "last"}]},
+                "inputs": {"resultRefs": [
+                    {"role": "identity", "origin": "segment", "segmentId": "a", "frame": "last"}
+                ]},
                 "continuity": {"visual": True, "audio": True},
             },
         ]
