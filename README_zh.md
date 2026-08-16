@@ -120,7 +120,9 @@ Results 页面包括：
 - `最终结果`：完整成片与编码/保存设置。
 
 https://github.com/user-attachments/assets/a7a510f0-3214-48ec-bb4e-e6bdeea1a955
+
 https://github.com/user-attachments/assets/5fe0ee9c-2822-462c-8a50-63adfb008e8a
+
 https://github.com/user-attachments/assets/a9b1e6b1-7f59-4147-ac38-985fe3810659
 
 <img width="1536" height="2730" alt="mat_9627ae4460244d498e13f870c9176b9a" src="https://github.com/user-attachments/assets/59939a5d-db6a-4f96-96b6-f3fcb77c1847" />
