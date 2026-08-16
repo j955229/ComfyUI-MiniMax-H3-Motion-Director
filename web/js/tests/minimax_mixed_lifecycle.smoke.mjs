@@ -80,6 +80,27 @@ const serializedMixed = {
 const generation = document.createElement("div");
 const legacyRoot = document.createElement("div");
 legacyRoot.id = "legacy-root";
+const toolbar = document.createElement("div");
+toolbar.className = "bd-toolbar-wrap";
+const globalTask = document.createElement("select");
+globalTask.dataset.r = "global-task";
+for (const value of [
+    "mixed — 混合模式(Mixed)",
+    "t2v — 文生视频(Text to Video)",
+]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    globalTask.appendChild(option);
+}
+globalTask.value = "mixed — 混合模式(Mixed)";
+toolbar.appendChild(globalTask);
+const legacyBody = document.createElement("div");
+legacyBody.className = "bd-main";
+legacyRoot.append(toolbar, legacyBody);
+generation.appendChild(legacyRoot);
+document.body.appendChild(generation);
+
 const taskWidget = {
     name: "task_type",
     value: "mixed — 混合模式(Mixed)",
@@ -109,8 +130,9 @@ node._minimaxEditor = {
     timeline: structuredClone(serializedMixed),
     selectedIndex: 0,
     root: legacyRoot,
+    mainBody: legacyBody,
     _directorModalController: { pages: { generation } },
-    globalTask: taskWidget,
+    globalTask,
     getDirectorMode: () => "video",
     applyTaskLayout() {},
     buildTimelinePayload() {
@@ -143,19 +165,31 @@ assert.equal(
     "original_mixed",
     "legacy configure must not erase serialized Mixed state",
 );
+assert.ok(
+    globalTask.isConnected,
+    "the existing Director mode selector must remain mounted while Mixed is active",
+);
+assert.ok(
+    legacyRoot.isConnected,
+    "Mixed must reuse the existing Director root instead of replacing the Generation page",
+);
 
 // Switching out must restore a standalone-shaped timeline, while switching
 // back must recover the independent Mixed workspace unchanged.
-taskWidget.value = "t2v — 文生视频(Text to Video)";
+globalTask.value = "t2v — 文生视频(Text to Video)";
+taskWidget.value = globalTask.value;
 node.onWidgetChanged("task_type", taskWidget.value);
 await new Promise((resolve) => setTimeout(resolve, 0));
 assert.equal(node._minimaxEditor._mmxMixedController, null);
+assert.ok(globalTask.isConnected, "mode selector must still exist after leaving Mixed");
 assert.notEqual(JSON.parse(timelineWidget.value).timelineMode, "mixed");
 
-taskWidget.value = "mixed — 混合模式(Mixed)";
+globalTask.value = "mixed — 混合模式(Mixed)";
+taskWidget.value = globalTask.value;
 node.onWidgetChanged("task_type", taskWidget.value);
 await new Promise((resolve) => setTimeout(resolve, 0));
 assert.ok(node._minimaxEditor._mmxMixedController);
+assert.ok(globalTask.isConnected, "mode selector must survive Mixed re-entry");
 assert.equal(
     node._minimaxEditor._mmxMixedController.state.segments[0].id,
     "original_mixed",
