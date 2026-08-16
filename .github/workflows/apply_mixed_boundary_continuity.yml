@@ -1,0 +1,46 @@
+name: Apply Mixed Boundary Continuity
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+    paths:
+      - '.github/scripts/move_mixed_continuity_to_boundaries.py'
+      - '.github/workflows/apply_mixed_boundary_continuity.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+          fetch-depth: 0
+      - name: Apply patch
+        run: python .github/scripts/move_mixed_continuity_to_boundaries.py
+      - name: Syntax check
+        run: |
+          node --check web/js/minimax_mixed_ui_v2.mjs
+          node --check web/js/minimax_mixed_ui.mjs
+          node --check web/js/minimax_timeline.js
+      - name: Contract check
+        run: |
+          grep -q 'mmx-mixed-boundary' web/js/minimax_mixed_ui_v2.mjs
+          grep -q 'S${leftIndex + 1}→S${rightIndex + 1}' web/js/minimax_mixed_ui_v2.mjs
+          grep -q 'mixed_native_v7' web/js/minimax_mixed_ui.mjs
+          grep -q 'mixed_native_v7' web/js/minimax_timeline.js
+          ! grep -q 'mmx-mixed-continuity-panel' web/js/minimax_mixed_ui_v2.mjs
+      - name: Commit patch
+        run: |
+          git config user.name 'j955229'
+          git config user.email '120770154+j955229@users.noreply.github.com'
+          git add web/js/minimax_mixed_ui_v2.mjs web/js/minimax_mixed_ui.mjs web/js/minimax_timeline.js
+          if git diff --cached --quiet; then
+            echo 'No changes to commit'
+          else
+            git commit -m 'feat: move Mixed continuity controls between segments'
+            git push origin HEAD:feature/mixed-mode
+          fi
