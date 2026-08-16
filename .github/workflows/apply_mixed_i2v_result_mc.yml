@@ -1,0 +1,40 @@
+name: Apply Mixed I2V Result MC Fix
+
+on:
+  push:
+    branches:
+      - feature/mixed-mode
+    paths:
+      - '.github/scripts/fix_mixed_i2v_result_mc.py'
+      - '.github/workflows/apply_mixed_i2v_result_mc.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Apply policy fix
+        run: python .github/scripts/fix_mixed_i2v_result_mc.py
+      - name: Verify syntax and policy
+        run: |
+          python -m py_compile director/mixed_schema.py
+          grep -q 'A Mixed Segment Result start frame is different' director/mixed_schema.py
+          ! grep -q 'if has_static_start or has_result_start' director/mixed_schema.py
+      - name: Commit fix
+        run: |
+          git config user.name 'j955229'
+          git config user.email '120770154+j955229@users.noreply.github.com'
+          git add director/mixed_schema.py
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: allow Mixed I2V result frame with Motion Context'
+          git push origin HEAD:feature/mixed-mode
