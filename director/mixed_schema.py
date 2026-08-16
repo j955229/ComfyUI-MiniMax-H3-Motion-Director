@@ -110,6 +110,20 @@ def _normalize_source_video(inputs: dict) -> None:
     if not isinstance(source, Mapping):
         raise MixedSchemaError("Source Video required for Mixed Source Video segment.")
     source = copy.deepcopy(dict(source))
+
+    # The material library deliberately owns Reference Video assets only. Even
+    # if a library item has already been materialized into ComfyUI input, its
+    # stable asset/library identity must not silently change its semantics into
+    # a Mixed Source Video.
+    if any(
+        source.get(key) not in (None, "")
+        for key in ("assetId", "asset_id", "libraryId", "library_id", "materialId", "material_id")
+    ):
+        raise MixedSchemaError(
+            "Material Library Video cannot be used as Mixed Source Video; "
+            "upload/select a segment-local Source Video instead."
+        )
+
     has_source = bool(
         str(
             source.get("videoFile")
