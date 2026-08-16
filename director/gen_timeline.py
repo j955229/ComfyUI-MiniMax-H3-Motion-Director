@@ -13,6 +13,7 @@ import logging
 
 import torch
 
+from ..lib.generation_source_policy import is_source_free_generation_task
 from ..lib.image_prep import fit_canvas, fit_video_long_edge, cat_frames_variable_size, resolve_output_dimensions
 from ..lib.task_prompts import resolve_task_key
 from .effective_refs import (
@@ -211,6 +212,9 @@ def _build_gen_source_clips(
         frame_count = end - _start
         if frame_count <= 0:
             continue
+        if is_source_free_generation_task(task_key):
+            chunks.append(None)
+            continue
         if submode == "gen_blank":
             clip = torch.full((frame_count, height, width, 3), 0.5, dtype=torch.float32)
         else:
@@ -277,20 +281,22 @@ def _build_gen_source_video(
     output_mode: str,
     ref_max_size: int,
 ) -> torch.Tensor:
-    return cat_frames_variable_size(
-        _build_gen_source_clips(
-            ranges,
-            task_key=task_key,
-            submode=submode,
-            edit_mode=edit_mode,
-            global_block=global_block,
-            height=height,
-            width=width,
-            output_mode=output_mode,
-            ref_max_size=ref_max_size,
-            motion_context_enabled=False,
-        )
+    clips = _build_gen_source_clips(
+        ranges,
+        task_key=task_key,
+        submode=submode,
+        edit_mode=edit_mode,
+        global_block=global_block,
+        height=height,
+        width=width,
+        output_mode=output_mode,
+        ref_max_size=ref_max_size,
+        motion_context_enabled=False,
     )
+    materialized = [clip for clip in clips if clip is not None]
+    if not materialized:
+        return torch.zeros((0, 16, 16, 3), dtype=torch.float32)
+    return cat_frames_variable_size(materialized)
 
 
 def _paired_video_audio_entries(video_list: list[dict]) -> list[dict]:
@@ -474,12 +480,17 @@ def build_gen_director_plan(
         motion_context_enabled=motion_context_enabled,
     )
     attach_source_clips = is_prompt_batch_timeline(timeline, task_key) and task_key in ("i2i", "i2v")
-    if attach_source_clips:
+    if is_source_free_generation_task(task_key):
+        source_video = torch.zeros((0, 16, 16, 3), dtype=torch.float32)
+    elif attach_source_clips:
         # Placeholder timeline index only; spatial data comes from each segment's source_clip.
         source_video = torch.full((len(source_clips), 16, 16, 3), 0.5, dtype=torch.float32)
     else:
-        source_video = cat_frames_variable_size(
-            [clip for clip in source_clips if clip is not None]
+        materialized_source_clips = [clip for clip in source_clips if clip is not None]
+        source_video = (
+            cat_frames_variable_size(materialized_source_clips)
+            if materialized_source_clips
+            else torch.zeros((0, 16, 16, 3), dtype=torch.float32)
         )
 
     segments: list[SegmentPlan] = []
