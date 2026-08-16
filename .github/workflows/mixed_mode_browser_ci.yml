@@ -7,8 +7,8 @@ on:
   pull_request:
     paths:
       - "web/js/minimax_mixed_*.mjs"
-      - "web/js/zz_minimax_mixed_mode.js"
-      - "web/js/zzz_minimax_mixed_persistence.js"
+      - "web/js/minimax_timeline.js"
+      - "web/js/minimax_gen_timeline.js"
       - "web/js/tests/minimax_mixed_*.mjs"
       - ".github/workflows/mixed_mode_browser_ci.yml"
 
@@ -55,18 +55,22 @@ jobs:
 
       - name: Check Mixed browser modules
         run: |
-          node --check web/js/zz_minimax_mixed_mode.js
-          node --check web/js/zzz_minimax_mixed_persistence.js
+          node --check web/js/minimax_timeline.js
+          node --check web/js/minimax_gen_timeline.js
           node --check web/js/minimax_mixed_ui.mjs
           node --check web/js/minimax_mixed_ui_v2.mjs
           node --check web/js/minimax_mixed_i18n.mjs
           node --check web/js/minimax_mixed_material_picker.mjs
           node --check web/js/minimax_mixed_state.mjs
-          node --check web/js/tests/minimax_mixed_lifecycle.smoke.mjs
+          node --check web/js/tests/minimax_mixed_native_contract.test.mjs
+          node --check web/js/tests/minimax_mixed_mode_inputs.test.mjs
           node --check web/js/tests/minimax_mixed_browser.test.mjs
 
-      - name: Run Mixed workflow lifecycle smoke
-        run: node web/js/tests/minimax_mixed_lifecycle.smoke.mjs
+      - name: Run native Mixed integration contract
+        run: node web/js/tests/minimax_mixed_native_contract.test.mjs
+
+      - name: Run Mixed per-mode input contract
+        run: node web/js/tests/minimax_mixed_mode_inputs.test.mjs
 
       - name: Run Mixed integrated browser contract
         run: node web/js/tests/minimax_mixed_browser.test.mjs
