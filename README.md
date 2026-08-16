@@ -55,10 +55,12 @@ The actual Source Video is **segment-local and upload-only**. A Material Library
 
 `Start sec` and `End sec` define the source range. The selected range determines the generated segment duration; Mixed does not arbitrarily time-stretch the source clip.
 
-> **Media slot M2 — Source Video + Identity example.<img width="1699" height="902" alt="螢幕擷取畫面 2026-08-17 060155" src="https://github.com/user-attachments/assets/4e66feed-76d9-48e0-bc65-ca7c2b7ef6df" />
- It shows Segment 2 with Source Range `2.5 -> 7.5` and the orange-clothed identity reference.
+> Source Video + Identity example.
+<img width="1699" height="902" alt="螢幕擷取畫面 2026-08-17 060155" src="https://github.com/user-attachments/assets/4e66feed-76d9-48e0-bc65-ca7c2b7ef6df" />
+It shows Segment 2 with Source Range `2.5 -> 7.5` and the orange-clothed identity reference.
 
-> **Media slot M3 — Additional Source Video identities.<img width="1694" height="922" alt="螢幕擷取畫面 2026-08-17 060214" src="https://github.com/user-attachments/assets/b39ae93f-f0ae-4585-8529-f5f5ae8f3564" />
+> Additional Source Video identities.
+<img width="1694" height="922" alt="螢幕擷取畫面 2026-08-17 060214" src="https://github.com/user-attachments/assets/b39ae93f-f0ae-4585-8529-f5f5ae8f3564" />
 <img width="1724" height="924" alt="螢幕擷取畫面 2026-08-17 060204" src="https://github.com/user-attachments/assets/fd67a6d4-1ea4-4914-b23c-b346b9665769" />
 side by side here. They show two more Source Video segments using different source ranges and identity references.
 
