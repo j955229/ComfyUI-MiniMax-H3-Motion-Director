@@ -13,19 +13,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: feature/mixed-mode
-      - name: Count target snippets
+      - name: Locate duplicate target
         run: |
           python - <<'PY'
           from pathlib import Path
           t = Path('web/js/minimax_timeline.js').read_text(encoding='utf-8')
-          patterns = {
-            'import_v4': 'from "./minimax_continuity_ui.mjs?boot=director_ui_v4";',
-            'update_mode': '    updateOutputModeUI() {\n        const taskKey = this.getTaskKey();\n        const useSelector = this.isImageBatch() || this.isGenMode() || this.isFl2vMode()',
-            'preview_branch': '        if (this.isGenBlank() || this.isImageBatch() || this.isFl2vMode()) {\n            const out = this.timeline.output || {};',
-            'export_mode': '        const exportMode = this.timeline.output?.exportMode === "segments"\n            ? t("output.preview.segmentExport")\n            : "";',
-            'mixed_output': '        if (this.isMixedMode()) {\n            const state = this._ensureMixedTimeline();\n            state.output = state.output || {};\n            state.output[key] = key === "audioMode" ? "generate" : value;',
-            'mixed_shared': '    _applyMixedSharedControls() {\n        const state = this._ensureMixedTimeline();\n        const output = state.output || {};',
-          }
-          for name, pattern in patterns.items():
-              print(name, t.count(pattern))
+          pattern = '        if (this.isGenBlank() || this.isImageBatch() || this.isFl2vMode()) {\n            const out = this.timeline.output || {};'
+          start = 0
+          while True:
+              pos = t.find(pattern, start)
+              if pos < 0:
+                  break
+              line = t.count('\n', 0, pos) + 1
+              print('preview_branch line', line)
+              print(t[pos-180:pos+260])
+              start = pos + 1
           PY
