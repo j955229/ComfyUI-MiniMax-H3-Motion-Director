@@ -23,149 +23,10 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Apply Mixed layout unification fixes
-        run: |
-          python - <<'PY'
-          from pathlib import Path
+      - name: Apply patch
+        run: python .github/scripts/fix_mixed_layout_unification.py
 
-          ui = Path("web/js/minimax_mixed_ui_v2.mjs")
-          s = ui.read_text(encoding="utf-8")
-          old = '''.mmx-mixed-root{height:100%;min-height:0;display:grid;grid-template-rows:minmax(160px,34%) minmax(0,1fr);gap:8px;padding:8px;box-sizing:border-box;font-family:inherit;color:inherit}
-.mmx-mixed-timeline-panel{min-height:0;overflow:hidden}.mmx-mixed-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.mmx-mixed-toolbar .mmx-spacer{flex:1}
-.mmx-mixed-cards{display:flex;gap:7px;overflow:auto;min-height:0;padding:2px;align-items:stretch}.mmx-mixed-card{flex:0 0 190px;min-height:112px;cursor:pointer;position:relative}'''
-          new = '''.mmx-mixed-root{min-height:0;display:flex;flex-direction:column;gap:8px;padding:0;box-sizing:border-box;font-family:inherit;color:inherit}
-.mmx-mixed-timeline-panel{flex:0 0 auto;min-height:0;overflow:hidden}.mmx-mixed-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.mmx-mixed-toolbar .mmx-spacer{flex:1}
-.mmx-mixed-cards{display:flex;gap:7px;overflow-x:auto;overflow-y:hidden;min-height:0;padding:2px;align-items:stretch}.mmx-mixed-card{flex:1 0 190px;min-width:190px;min-height:112px;cursor:pointer;position:relative}'''
-          if s.count(old) != 1:
-              raise SystemExit(f"Mixed CSS anchor count={s.count(old)}")
-          s = s.replace(old, new, 1)
-          s = s.replace(
-              '.mmx-mixed-editor-grid{min-height:0;display:grid;',
-              '.mmx-mixed-editor-grid{flex:1 1 auto;min-height:0;display:grid;',
-              1,
-          )
-          s = s.replace(
-              '@media(max-width:768px){.mmx-mixed-editor-grid{grid-template-columns:1fr}.mmx-mixed-root{grid-template-rows:minmax(145px,30%) minmax(0,1fr)}.mmx-mixed-card{flex-basis:165px}',
-              '@media(max-width:768px){.mmx-mixed-editor-grid{grid-template-columns:1fr}.mmx-mixed-card{flex-basis:165px;min-width:165px}',
-              1,
-          )
-          ui.write_text(s, encoding="utf-8")
-
-          timeline = Path("web/js/minimax_timeline.js")
-          s = timeline.read_text(encoding="utf-8")
-          old = '''    _setMixedBodiesActive(active) {
-        const host = this._mixedPanelHost;
-        for (const child of Array.from(this.mainBody?.children || [])) {
-            if (child === host || child === this.outputBarEl) continue;
-            child.hidden = !!active;
-        }
-        for (const element of this.root?.querySelectorAll?.(
-            ".bd-actions, .bd-smart-split-msg, .bd-external-groups-msg",
-        ) || []) {
-            element.hidden = !!active;
-        }
-        const continuity = this.segmentContinuityWrap
-            || this.root?.querySelector?.('[data-r="segment-continuity-wrap"]');
-        const common = this.r2vCommonToggle
-            || this.root?.querySelector?.('[data-a="r2v-common-toggle"]');
-        const audio = this.outAudioWrap
-            || this.root?.querySelector?.('[data-r="out-audio-wrap"]');
-        if (continuity) continuity.hidden = !!active;
-        if (common) common.hidden = !!active;
-        if (audio) audio.hidden = !!active;
-        if (this._mixedPanelHost) this._mixedPanelHost.hidden = !active;
-    }
-'''
-          new = '''    _setMixedBodiesActive(active) {
-        const host = this._mixedPanelHost;
-        for (const child of Array.from(this.mainBody?.children || [])) {
-            if (child === host || child === this.outputBarEl) continue;
-            child.classList?.toggle("hidden", !!active);
-        }
-        for (const element of this.root?.querySelectorAll?.(
-            ".bd-actions, .bd-smart-split-msg, .bd-external-groups-msg",
-        ) || []) {
-            element.classList?.toggle("hidden", !!active);
-        }
-        // These mode bodies are not guaranteed to be direct mainBody children.
-        // Explicitly isolate them so standalone prompt/reference/help UI cannot
-        // leak into Mixed even when their own CSS sets display.
-        for (const element of [this.globalPanel, this.segmentPanel]) {
-            element?.classList?.toggle("hidden", !!active);
-        }
-        const continuity = this.segmentContinuityWrap
-            || this.root?.querySelector?.('[data-r="segment-continuity-wrap"]');
-        const common = this.r2vCommonToggle
-            || this.root?.querySelector?.('[data-a="r2v-common-toggle"]');
-        const audio = this.outAudioWrap
-            || this.root?.querySelector?.('[data-r="out-audio-wrap"]');
-        continuity?.classList?.toggle("hidden", !!active);
-        common?.classList?.toggle("hidden", !!active);
-        audio?.classList?.toggle("hidden", !!active);
-        this.outputBarEl?.classList?.remove("hidden");
-        this._mixedPanelHost?.classList?.toggle("hidden", !active);
-    }
-'''
-          if s.count(old) != 1:
-              raise SystemExit(f"Mixed body visibility anchor count={s.count(old)}")
-          s = s.replace(old, new, 1)
-
-          old = '''        if (this.outputBarEl?.parentElement === parent) parent.insertBefore(host, this.outputBarEl);
-        else parent.appendChild(host);
-'''
-          new = '''        if (this.outputBarEl?.parentElement === parent) {
-            // Keep the same Director hierarchy as standalone modes:
-            // mode toolbar -> output controls -> mode-specific body.
-            parent.insertBefore(this.outputBarEl, parent.firstChild);
-            this.outputBarEl.after(host);
-        } else {
-            parent.appendChild(host);
-        }
-'''
-          if s.count(old) != 1:
-              raise SystemExit(f"Mixed host placement anchor count={s.count(old)}")
-          s = s.replace(old, new, 1)
-          timeline.write_text(s, encoding="utf-8")
-
-          test = Path("web/js/tests/minimax_mixed_browser.test.mjs")
-          s = test.read_text(encoding="utf-8")
-          anchor = 'assert.ok(controller.root.querySelector(".bd-select"), "Mixed selects must reuse Director .bd-select styling");\n'
-          addition = '''assert.ok(controller.root.querySelector(".bd-select"), "Mixed selects must reuse Director .bd-select styling");
-const mixedStyle = document.getElementById("mmx-mixed-mode-integrated-styles")?.textContent || "";
-assert.match(mixedStyle, /\\.mmx-mixed-cards\\{[^}]*overflow-x:auto;overflow-y:hidden/,
-    "Mixed segment strip must scroll horizontally only");
-assert.match(mixedStyle, /\\.mmx-mixed-card\\{[^}]*flex:1 0 190px;min-width:190px/,
-    "a small number of Mixed segment cards must expand to use available width");
-assert.doesNotMatch(mixedStyle, /\\.mmx-mixed-cards\\{[^}]*overflow:auto/,
-    "Mixed segment strip must not enable an unnecessary vertical scrollbar");
-'''
-          if s.count(anchor) != 1:
-              raise SystemExit(f"browser layout test anchor count={s.count(anchor)}")
-          s = s.replace(anchor, addition, 1)
-          test.write_text(s, encoding="utf-8")
-
-          contract = Path("web/js/tests/minimax_mixed_native_contract.test.mjs")
-          s = contract.read_text(encoding="utf-8")
-          marker = 'console.log("native Mixed integration contract passed");\n'
-          checks = '''assert.match(timelineSource, /parent\\.insertBefore\\(this\\.outputBarEl, parent\\.firstChild\\);\\s*this\\.outputBarEl\\.after\\(host\\);/,
-    "Mixed output controls must occupy the same top position as standalone Director modes");
-assert.match(timelineSource, /child\\.classList\\?\\.toggle\\(\"hidden\", !!active\\)/,
-    "Mixed must isolate legacy Director bodies with the project hidden class");
-assert.match(timelineSource, /this\\.globalPanel, this\\.segmentPanel/,
-    "standalone prompt/reference panels must be explicitly isolated from Mixed");
-
-console.log("native Mixed integration contract passed");
-'''
-          if s.count(marker) != 1:
-              raise SystemExit(f"native contract marker count={s.count(marker)}")
-          # Ensure the source variable name used by this test really exists.
-          if 'timelineSource' not in s:
-              raise SystemExit('native contract test has no timelineSource variable')
-          s = s.replace(marker, checks, 1)
-          contract.write_text(s, encoding="utf-8")
-          PY
-
-      - name: Verify layout contracts
+      - name: Verify
         run: |
           node --check web/js/minimax_timeline.js
           node --check web/js/minimax_mixed_ui_v2.mjs
@@ -173,22 +34,13 @@ console.log("native Mixed integration contract passed");
           node --check web/js/tests/minimax_mixed_native_contract.test.mjs
           npm install --no-save --ignore-scripts jsdom@26
           mkdir -p scripts
-          cat > scripts/app.js <<'EOF'
-          export const __extensions = [];
-          export const app = { registerExtension(extension) { __extensions.push(extension); } };
-          EOF
-          cat > scripts/api.js <<'EOF'
-          export const api = {
-            apiURL: (value) => value,
-            fetchApi: async () => ({ ok: true, status: 200, json: async () => ({ items: [] }), text: async () => "" }),
-            addEventListener: () => {}, removeEventListener: () => {},
-          };
-          EOF
+          printf '%s\n' 'export const __extensions = [];' 'export const app = { registerExtension(extension) { __extensions.push(extension); } };' > scripts/app.js
+          printf '%s\n' 'export const api = {' '  apiURL: (value) => value,' '  fetchApi: async () => ({ ok: true, status: 200, json: async () => ({ items: [] }), text: async () => "" }),' '  addEventListener: () => {}, removeEventListener: () => {},' '};' > scripts/api.js
           node web/js/tests/minimax_mixed_native_contract.test.mjs
           node web/js/tests/minimax_mixed_browser.test.mjs
           git diff --check
 
-      - name: Commit layout unification fix
+      - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
