@@ -7,6 +7,12 @@ on:
   pull_request:
     paths:
       - "director/mixed_*.py"
+      - "director/segment_runtime.py"
+      - "director/source_bridge.py"
+      - "nodes/director.py"
+      - "nodes/director_common.py"
+      - "lib/task_prompts.py"
+      - "web/js/minimax_director_inputs_core.mjs"
       - "web/js/minimax_mixed_*.mjs"
       - "web/js/zz_minimax_mixed_mode.js"
       - "tests/test_mixed_*.py"
@@ -32,6 +38,7 @@ jobs:
             director/mixed_plan.py \
             director/mixed_runtime.py \
             director/mixed_selection.py \
+            director/segment_runtime.py \
             director/source_bridge.py \
             nodes/director.py \
             nodes/director_common.py \
@@ -49,6 +56,7 @@ jobs:
 
       - name: Check Mixed JavaScript syntax
         run: |
+          node --check web/js/minimax_director_inputs_core.mjs
           node --check web/js/minimax_mixed_state.mjs
           node --check web/js/minimax_mixed_ui.mjs
           node --check web/js/zz_minimax_mixed_mode.js
