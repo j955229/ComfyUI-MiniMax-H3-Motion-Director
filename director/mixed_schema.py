@@ -7,6 +7,7 @@ and in frontend-adjacent tooling without loading model/runtime code.
 from __future__ import annotations
 
 import copy
+import math
 from typing import Iterable, Mapping, Sequence
 
 MIXED_SCHEMA_VERSION = 1
@@ -46,6 +47,64 @@ def backend_task_key(mode: object, *, identity_count: int = 0) -> str:
     if normalized == "source_video":
         return "rv2v" if max(0, int(identity_count or 0)) > 0 else "v2v"
     return normalized
+
+
+def _align_minimax_visible_frames(frame_count: int) -> int:
+    """Small pure copy of H3's 17k+5 visible-generation grid."""
+    count = max(1, int(frame_count))
+    if count <= 5:
+        return 5
+    return 5 + 17 * int(math.ceil((count - 5) / 17.0))
+
+
+def mixed_visible_frame_count(segment: Mapping[str, object], fps: float) -> int:
+    """Compile user duration/range to visible output frames.
+
+    Source Video is intentionally *not* stretched onto the H3 grid: its selected
+    source range defines the visible segment duration. The executor may
+    internally over-generate/pad to a legal H3 length and trims back to this
+    visible count, matching standalone source-video behavior.
+    """
+    mode = normalize_mixed_mode(segment.get("mode"))
+    rate = max(0.001, float(fps or 24.0))
+    if mode == "source_video":
+        source = (segment.get("inputs") or {}).get("sourceVideo") or {}
+        source_range = source.get("range") or {}
+        try:
+            start = float(source_range.get("startSec", 0.0))
+            end = float(source_range.get("endSec", 0.0))
+        except (TypeError, ValueError) as exc:
+            raise MixedSchemaError("Source Video range must contain numeric startSec/endSec.") from exc
+        if start < 0 or end <= start:
+            raise MixedSchemaError("Source Video range must satisfy 0 <= startSec < endSec.")
+        return max(4, int(round((end - start) * rate)))
+
+    explicit = int(segment.get("frameCount") or segment.get("frame_count") or 0)
+    if explicit > 0:
+        return explicit
+    seconds = max(0.1, float(segment.get("duration") or 5.0))
+    return _align_minimax_visible_frames(max(5, int(round(seconds * rate))))
+
+
+def effective_mixed_continuity(segment: Mapping[str, object], segment_index: int) -> dict[str, bool]:
+    """Compile per-segment continuity before global runtime masters are applied."""
+    if int(segment_index) <= 0:
+        return {"visual": False, "audio": False}
+    continuity = segment.get("continuity") or {}
+    visual = bool(continuity.get("visual", False))
+    audio = bool(continuity.get("audio", False))
+
+    if normalize_mixed_mode(segment.get("mode")) == "i2v":
+        inputs = segment.get("inputs") or {}
+        has_static_start = bool(inputs.get("startFrame") or inputs.get("start_frame"))
+        has_result_start = any(
+            str(ref.get("role") or "") == "i2v_start"
+            for ref in (inputs.get("resultRefs") or inputs.get("result_refs") or [])
+            if isinstance(ref, Mapping)
+        )
+        if has_static_start or has_result_start:
+            visual = False
+    return {"visual": visual, "audio": audio}
 
 
 def _normalize_frame(value: object) -> str | int:
