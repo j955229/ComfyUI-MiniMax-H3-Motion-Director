@@ -10,7 +10,7 @@ import logging
 from collections.abc import Iterator, Set
 from typing import Any, Mapping, Sequence
 
-from .mixed_schema import MixedSchemaError
+from .mixed_schema import MixedSchemaError, effective_mixed_continuity
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.mixed_selection")
 
@@ -43,31 +43,30 @@ class MixedRunSelection(Set[int]):
         consumer = self.segments[consumer_index]
         ids = self._id_index()
         relations: list[tuple[int, str]] = []
+
         for ref in ((consumer.get("inputs") or {}).get("resultRefs") or []):
-            origin = str(ref.get("origin") or "")
-            if origin == "previous":
-                if consumer_index <= 0:
-                    raise MixedSchemaError("Missing Reference: first Mixed segment has no Previous Segment.")
-                source_index = consumer_index - 1
-            else:
-                source_id = str(ref.get("segmentId") or "")
-                source_index = ids.get(source_id, -1)
-                if source_index < 0:
-                    raise MixedSchemaError(
-                        f"Missing Reference: Segment {consumer.get('id')} references {source_id!r}."
-                    )
-                if source_index >= consumer_index:
-                    raise MixedSchemaError(
-                        f"Invalid Reference: Segment {consumer.get('id')} references non-earlier {source_id!r}."
-                    )
+            if str(ref.get("origin") or "") != "segment":
+                raise MixedSchemaError(
+                    f"Invalid Reference: Segment {consumer.get('id')} contains a non-canonical result ref."
+                )
+            source_id = str(ref.get("segmentId") or "").strip()
+            source_index = ids.get(source_id, -1)
+            if source_index < 0:
+                raise MixedSchemaError(
+                    f"Missing Reference: Segment {consumer.get('id')} references {source_id!r}."
+                )
+            if source_index >= consumer_index:
+                raise MixedSchemaError(
+                    f"Invalid Reference: Segment {consumer.get('id')} references non-earlier {source_id!r}."
+                )
             relations.append((source_index, "result"))
 
         visual_master, audio_master = self._continuity_masters()
-        continuity = consumer.get("continuity") or {}
+        continuity = effective_mixed_continuity(consumer, consumer_index)
         if consumer_index > 0:
-            if visual_master and bool(continuity.get("visual")):
+            if visual_master and continuity["visual"]:
                 relations.append((consumer_index - 1, "visual_context"))
-            if audio_master and bool(continuity.get("audio")):
+            if audio_master and continuity["audio"]:
                 relations.append((consumer_index - 1, "audio_context"))
         return relations
 
