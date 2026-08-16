@@ -36,7 +36,16 @@ def _mixed_root(timeline: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(nested, Mapping):
         merged = copy.deepcopy(dict(timeline))
         mixed = copy.deepcopy(dict(nested))
-        for key in ("output", "frameRate", "width", "height", "refMaxSize", "runSelectEnabled", "runSelection"):
+        for key in (
+            "output",
+            "frameRate",
+            "width",
+            "height",
+            "refMaxSize",
+            "runSelectEnabled",
+            "runSelection",
+            "nodeId",
+        ):
             if key not in mixed and key in merged:
                 mixed[key] = copy.deepcopy(merged[key])
         return mixed
@@ -74,17 +83,32 @@ def _static_image_ref(raw: Any, index: int):
     return SegmentRef(
         index=int(index),
         tensor=tensor[:1],
-        asset_id=str(raw.get("assetId") or raw.get("asset_id") or raw.get("id") or f"mixed-picture-{index}"),
+        asset_id=str(
+            raw.get("assetId")
+            or raw.get("asset_id")
+            or raw.get("id")
+            or f"mixed-picture-{index}"
+        ),
     )
 
 
-def _load_source_clip(source: Mapping[str, Any], timeline: dict, frame_count: int, fps: float) -> torch.Tensor:
+def _load_source_clip(
+    source: Mapping[str, Any],
+    timeline: dict,
+    frame_count: int,
+    fps: float,
+) -> torch.Tensor:
     from ..lib.video_io import load_reference_video_clip
 
     source_range = source.get("range") or {}
     start_sec = max(0.0, float(source_range.get("startSec") or 0.0))
     start_frame = max(0, int(round(start_sec * fps)))
-    clip = load_reference_video_clip(dict(source), timeline, frame_count, start_frame=start_frame)
+    clip = load_reference_video_clip(
+        dict(source),
+        timeline,
+        frame_count,
+        start_frame=start_frame,
+    )
     if clip is None or int(clip.shape[0]) <= 0:
         raise ValueError("Source Video required: selected source range could not be decoded.")
     return clip
@@ -117,6 +141,11 @@ def build_mixed_director_plan(
     )
 
     mixed = _mixed_root(timeline)
+    effective_node_id = (
+        str(node_id).strip()
+        if node_id not in (None, "")
+        else str(mixed.get("nodeId") or mixed.get("node_id") or "").strip()
+    ) or None
     normalized = normalize_mixed_segments(mixed.get("segments") or [])
     fps = float(mixed.get("frameRate") or frame_rate or 24.0)
 
@@ -126,7 +155,13 @@ def build_mixed_director_plan(
         output_mode = "fixed"
     requested_w = int(output.get("width") or mixed.get("width") or width or 864)
     requested_h = int(output.get("height") or mixed.get("height") or height or 480)
-    long_edge = int(output.get("longEdge") or output.get("long_edge") or mixed.get("refMaxSize") or ref_max_size or 864)
+    long_edge = int(
+        output.get("longEdge")
+        or output.get("long_edge")
+        or mixed.get("refMaxSize")
+        or ref_max_size
+        or 864
+    )
     out_w, out_h, resolved_ref_max, output_mode = resolve_output_dimensions(
         requested_w,
         requested_h,
@@ -141,6 +176,7 @@ def build_mixed_director_plan(
     for index, spec in enumerate(normalized):
         mode = str(spec["mode"])
         inputs = spec.get("inputs") or {}
+        result_refs = list(inputs.get("resultRefs") or [])
         frame_count = _duration_frames(spec, fps)
         start = cursor
         end = start + frame_count
@@ -154,37 +190,68 @@ def build_mixed_director_plan(
         source_clip = None
 
         if mode == "i2v":
-            start_ref = _static_image_ref(inputs.get("startFrame") or inputs.get("start_frame"), 0)
+            start_ref = _static_image_ref(
+                inputs.get("startFrame") or inputs.get("start_frame"),
+                0,
+            )
             if start_ref is not None:
                 source_clip = start_ref.tensor[:1].clone()
 
         elif mode == "fl2v":
-            first = _static_image_ref(inputs.get("firstFrame") or inputs.get("first_frame"), 0)
-            last = _static_image_ref(inputs.get("lastFrame") or inputs.get("last_frame"), 1)
+            first = _static_image_ref(
+                inputs.get("firstFrame") or inputs.get("first_frame"),
+                0,
+            )
+            last = _static_image_ref(
+                inputs.get("lastFrame") or inputs.get("last_frame"),
+                1,
+            )
             refs = [item for item in (first, last) if item is not None]
 
         elif mode == "r2v":
             refs = _load_refs(inputs.get("pictures") or inputs.get("refs") or [])
             ref_videos = _load_ref_videos(
-                inputs.get("referenceVideos") or inputs.get("refVideos") or inputs.get("ref_videos") or [],
+                inputs.get("referenceVideos")
+                or inputs.get("refVideos")
+                or inputs.get("ref_videos")
+                or [],
                 mixed,
                 max(5, frame_count),
             )
             ref_audios = _load_ref_audios(
-                inputs.get("referenceAudios") or inputs.get("refAudios") or inputs.get("ref_audios") or []
+                inputs.get("referenceAudios")
+                or inputs.get("refAudios")
+                or inputs.get("ref_audios")
+                or []
             )
 
         elif mode == "source_video":
             source = inputs.get("sourceVideo") or {}
             source_clip = _load_source_clip(source, mixed, frame_count, fps)
-            refs = _load_refs(inputs.get("identityPictures") or inputs.get("identity_pictures") or [])
+            refs = _load_refs(
+                inputs.get("identityPictures")
+                or inputs.get("identity_pictures")
+                or []
+            )
             ref_audios = _load_ref_audios(
-                inputs.get("referenceAudios") or inputs.get("refAudios") or inputs.get("ref_audios") or []
+                inputs.get("referenceAudios")
+                or inputs.get("refAudios")
+                or inputs.get("ref_audios")
+                or []
             )
 
         continuity = spec.get("continuity") or {}
         visual = bool(continuity.get("visual")) and index > 0
         audio = bool(continuity.get("audio")) and index > 0
+        # An explicit I2V start frame owns the visual start state.  This applies
+        # equally to uploaded/library frames and lazy Previous/Earlier result
+        # stills. Audio inheritance remains independent.
+        has_explicit_i2v_start = mode == "i2v" and (
+            source_clip is not None
+            or any(str(ref.get("role") or "") == "i2v_start" for ref in result_refs)
+        )
+        if has_explicit_i2v_start:
+            visual = False
         context_link = ContextLink(
             enabled=bool(visual or audio),
             visual=visual,
@@ -208,7 +275,7 @@ def build_mixed_director_plan(
         )
         seg.stable_id = str(spec["id"])
         seg.mixed_mode = mode
-        seg.mixed_result_refs = copy.deepcopy(inputs.get("resultRefs") or [])
+        seg.mixed_result_refs = copy.deepcopy(result_refs)
         seg.mixed_dependency_identity = dependency_identity(normalized, index)
         segments.append(seg)
 
@@ -218,9 +285,15 @@ def build_mixed_director_plan(
     raw["totalFrames"] = cursor
     raw["frameRate"] = fps
     raw["output"] = copy.deepcopy(output)
+    if effective_node_id:
+        raw["nodeId"] = effective_node_id
 
-    run_indices = _parse_run_selection(raw, len(segments))
-    selected = set(run_indices) if run_indices is not None else set(range(len(segments)))
+    parsed_run_indices = _parse_run_selection(raw, len(segments))
+    selected = (
+        set(parsed_run_indices)
+        if parsed_run_indices is not None
+        else set(range(len(segments)))
+    )
     dependency_closure = expand_run_selection(normalized, selected)
 
     plan = DirectorPlan(
@@ -241,19 +314,30 @@ def build_mixed_director_plan(
         edit_mode="segment",
         raw=raw,
         export_mode=_resolve_export_mode(output),
-        run_indices=run_indices,
+        run_indices=parsed_run_indices,
         run_select_enabled=_run_selection_enabled(raw),
     )
     plan.mixed_mode = True
     plan.mixed_schema_version = 1
     plan.mixed_segments = normalized
     plan.mixed_dependency_closure = frozenset(dependency_closure)
-    plan.mixed_requested_run_indices = run_indices
+    plan.mixed_requested_run_indices = parsed_run_indices
+    plan.mixed_node_id = effective_node_id
     plan.source_overlap_frames = 0
+
+    if parsed_run_indices is not None:
+        from .mixed_selection import MixedRunSelection
+
+        plan.run_indices = MixedRunSelection(
+            plan=plan,
+            segments=normalized,
+            requested=set(parsed_run_indices),
+            node_id=effective_node_id,
+        )
 
     from .mixed_runtime import attach_mixed_result_refs
 
-    attach_mixed_result_refs(plan, node_id=node_id)
+    attach_mixed_result_refs(plan, node_id=effective_node_id)
     return plan
 
 
