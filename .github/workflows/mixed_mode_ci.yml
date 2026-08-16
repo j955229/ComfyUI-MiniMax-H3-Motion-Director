@@ -58,14 +58,14 @@ jobs:
 
       - name: Verify canonical Mixed test checkout
         run: |
-          grep -F 'test_previous_segment_reference_normalizes_to_stable_segment_id' tests/test_mixed_schema.py
+          grep -F 'test_legacy_previous_result_migrates_and_suppresses_i2v_visual_context' tests/test_mixed_schema.py
+          grep -F '"origin": "segment"' tests/test_mixed_schema.py
           ! grep -F 'test_previous_segment_reference_tracks_reorder' tests/test_mixed_schema.py
 
       - name: Run pure Python Mixed and synced-main tests
         run: |
-          # Use unittest discovery from the repository tests directory rather than
-          # importing tests.* as a package. Some Python environments ship an
-          # unrelated top-level `tests` package, which can shadow this repo.
+          # Discover directly from this repository's tests directory. This avoids
+          # an unrelated installed top-level `tests` package shadowing the repo.
           python -m unittest discover -v -s tests -p 'test_mixed_*.py'
           python -m unittest discover -v -s tests -p 'test_cache_path.py'
           python -m unittest discover -v -s tests -p 'test_context_identity_seed.py'
