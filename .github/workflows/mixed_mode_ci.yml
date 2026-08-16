@@ -7,6 +7,8 @@ on:
   pull_request:
     paths:
       - "director/mixed_*.py"
+      - "director/cache_path.py"
+      - "director/context_identity.py"
       - "director/segment_runtime.py"
       - "director/source_bridge.py"
       - "nodes/director.py"
@@ -16,6 +18,8 @@ on:
       - "web/js/minimax_mixed_*.mjs"
       - "web/js/zz_minimax_mixed_mode.js"
       - "tests/test_mixed_*.py"
+      - "tests/test_cache_path.py"
+      - "tests/test_context_identity_seed.py"
       - ".github/workflows/mixed_mode_ci.yml"
 
 permissions:
@@ -31,6 +35,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Verify synchronized main baseline
+        run: |
+          grep -F 'version = "1.0.3"' pyproject.toml
+
       - name: Compile Python modules
         run: |
           python -m py_compile \
@@ -38,17 +46,21 @@ jobs:
             director/mixed_plan.py \
             director/mixed_runtime.py \
             director/mixed_selection.py \
+            director/cache_path.py \
+            director/context_identity.py \
             director/segment_runtime.py \
             director/source_bridge.py \
             nodes/director.py \
             nodes/director_common.py \
             lib/task_prompts.py
 
-      - name: Run pure Python Mixed tests
+      - name: Run pure Python Mixed and synced-main tests
         run: |
           python -m unittest \
             tests.test_mixed_schema \
-            tests.test_mixed_selection
+            tests.test_mixed_selection \
+            tests.test_cache_path \
+            tests.test_context_identity_seed
 
       - uses: actions/setup-node@v4
         with:
@@ -59,6 +71,9 @@ jobs:
           node --check web/js/minimax_director_inputs_core.mjs
           node --check web/js/minimax_mixed_state.mjs
           node --check web/js/minimax_mixed_ui.mjs
+          node --check web/js/minimax_mixed_ui_v2.mjs
+          node --check web/js/minimax_mixed_i18n.mjs
+          node --check web/js/minimax_mixed_material_picker.mjs
           node --check web/js/zz_minimax_mixed_mode.js
 
       - name: Run Mixed frontend state tests
