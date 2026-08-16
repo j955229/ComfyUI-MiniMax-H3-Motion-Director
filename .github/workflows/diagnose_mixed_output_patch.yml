@@ -1,0 +1,31 @@
+name: Diagnose Mixed Patch Matches
+
+on:
+  push:
+    branches: [feature/mixed-mode]
+    paths:
+      - '.github/workflows/diagnose_mixed_output_patch.yml'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/mixed-mode
+      - name: Count target snippets
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          t = Path('web/js/minimax_timeline.js').read_text(encoding='utf-8')
+          patterns = {
+            'import_v4': 'from "./minimax_continuity_ui.mjs?boot=director_ui_v4";',
+            'update_mode': '    updateOutputModeUI() {\n        const taskKey = this.getTaskKey();\n        const useSelector = this.isImageBatch() || this.isGenMode() || this.isFl2vMode()',
+            'preview_branch': '        if (this.isGenBlank() || this.isImageBatch() || this.isFl2vMode()) {\n            const out = this.timeline.output || {};',
+            'export_mode': '        const exportMode = this.timeline.output?.exportMode === "segments"\n            ? t("output.preview.segmentExport")\n            : "";',
+            'mixed_output': '        if (this.isMixedMode()) {\n            const state = this._ensureMixedTimeline();\n            state.output = state.output || {};\n            state.output[key] = key === "audioMode" ? "generate" : value;',
+            'mixed_shared': '    _applyMixedSharedControls() {\n        const state = this._ensureMixedTimeline();\n        const output = state.output || {};',
+          }
+          for name, pattern in patterns.items():
+              print(name, t.count(pattern))
+          PY
