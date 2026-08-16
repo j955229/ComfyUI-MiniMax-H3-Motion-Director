@@ -2,6 +2,52 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
+---
+
+# Credits / License
+
+This project is distributed as a whole under **GNU GPL v3.0**. See [`NOTICE`](NOTICE), [`LICENSE`](LICENSE), and [`LICENSES`](LICENSES) for third-party attribution and derivative-work details.
+
+This project contains or modifies code / algorithms from:
+
+- [AIMixer / ComfyUI_MiniMaxH3_Director](https://github.com/AIMixer/ComfyUI_MiniMaxH3_Director) — Apache-2.0
+- [NikoDemon80 / ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) — GPL-3.0
+- [Carasibana / ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine) — MIT
+- [Kijai / ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) — GPL-3.0; portions of packed-latent preview / TAEHV behavior were informed by its implementation.
+
+Thanks to all upstream projects and contributors.
+
+## Why use Director?
+
+A normal H3 workflow is great for generating a single clip. Once a project grows to 30 seconds, one minute, or longer, the workflow quickly becomes harder to manage:
+
+- Every segment needs its own Prompt and assets.
+- If only a few segments fail, you should not have to regenerate the whole video.
+- A later segment may need to inherit motion, image state, or generated audio from the previous segment.
+- The same character, scene, prop, or voice may appear across many segments.
+- R2V / RV2V can involve many reference assets and quickly turn the node graph into a wiring problem.
+- After generation you may still need upscaling, face refinement, live preview, and final encoding.
+
+Motion Director puts those jobs back into one production interface while keeping ComfyUI's node graph composable.
+
+## Core features
+
+- Six standalone MiniMax H3 task modes: `T2V / I2V / FL2V / R2V / V2V / RV2V`.
+- Native `Mixed` meta-mode with per-segment `T2V / I2V / FL2V / R2V / Source Video`.
+- Multi-segment timeline with independent Prompt, mode, duration/range, and assets per segment.
+- **Selective Run**: rerun selected segments instead of regenerating the entire sequence.
+- Cross-segment Motion Context and generated-audio continuation.
+- Segment Result frame reuse between earlier and later Mixed segments.
+- Source Bridge for standalone V2V / RV2V source-video boundaries.
+- Common Assets and persistent Material Library.
+- Unified external `Director Inputs` / `Director Assets` architecture for standalone modes.
+- Built-in sampling or external ComfyUI `SAMPLER + SIGMAS`.
+- Global Refine and Face Refine post-processing.
+- Director Live Preview.
+- Results page with Segment / Multi-range / Final views and final video saving.
+- Main node is an `OUTPUT_NODE` and still exposes `images / audio / fps` for downstream ComfyUI processing.
+
+---
 **Current version: v1.1.0**
 
 A ComfyUI Director node for **multi-segment MiniMax H3 video production**.
@@ -139,51 +185,6 @@ https://github.com/user-attachments/assets/7590e2db-0a49-43e7-b51d-d7a6faa21dc5
 - Source Bridge is not used by Mixed v1.
 - Source Video itself is not supplied from the Material Library.
 - Arbitrary Segment Result references are backward-only.
-
----
-
-# Credits / License
-
-This project is distributed as a whole under **GNU GPL v3.0**. See [`NOTICE`](NOTICE), [`LICENSE`](LICENSE), and [`LICENSES`](LICENSES) for third-party attribution and derivative-work details.
-
-This project contains or modifies code / algorithms from:
-
-- [AIMixer / ComfyUI_MiniMaxH3_Director](https://github.com/AIMixer/ComfyUI_MiniMaxH3_Director) — Apache-2.0
-- [NikoDemon80 / ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context) — GPL-3.0
-- [Carasibana / ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine) — MIT
-- [Kijai / ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) — GPL-3.0; portions of packed-latent preview / TAEHV behavior were informed by its implementation.
-
-Thanks to all upstream projects and contributors.
-
-## Why use Director?
-
-A normal H3 workflow is great for generating a single clip. Once a project grows to 30 seconds, one minute, or longer, the workflow quickly becomes harder to manage:
-
-- Every segment needs its own Prompt and assets.
-- If only a few segments fail, you should not have to regenerate the whole video.
-- A later segment may need to inherit motion, image state, or generated audio from the previous segment.
-- The same character, scene, prop, or voice may appear across many segments.
-- R2V / RV2V can involve many reference assets and quickly turn the node graph into a wiring problem.
-- After generation you may still need upscaling, face refinement, live preview, and final encoding.
-
-Motion Director puts those jobs back into one production interface while keeping ComfyUI's node graph composable.
-
-## Core features
-
-- Six standalone MiniMax H3 task modes: `T2V / I2V / FL2V / R2V / V2V / RV2V`.
-- Native `Mixed` meta-mode with per-segment `T2V / I2V / FL2V / R2V / Source Video`.
-- Multi-segment timeline with independent Prompt, mode, duration/range, and assets per segment.
-- **Selective Run**: rerun selected segments instead of regenerating the entire sequence.
-- Cross-segment Motion Context and generated-audio continuation.
-- Segment Result frame reuse between earlier and later Mixed segments.
-- Source Bridge for standalone V2V / RV2V source-video boundaries.
-- Common Assets and persistent Material Library.
-- Unified external `Director Inputs` / `Director Assets` architecture for standalone modes.
-- Built-in sampling or external ComfyUI `SAMPLER + SIGMAS`.
-- Global Refine and Face Refine post-processing.
-- Director Live Preview.
-- Results page with Segment / Multi-range / Final views and final video saving.
-- Main node is an `OUTPUT_NODE` and still exposes `images / audio / fps` for downstream ComfyUI processing.
 
 ---
 
