@@ -28,11 +28,12 @@ DIRECTOR_PHASES = (
     "decode",
     "assemble",
     "face_refine",
+    "rtx_deblur",
     "finalize",
 )
 
 SEGMENT_PHASES = ("prepare", "context_encode", "sample", "global_upscale", "global_refine", "decode")
-GLOBAL_PHASES = ("assemble", "face_refine", "finalize")
+GLOBAL_PHASES = ("assemble", "face_refine", "rtx_deblur", "finalize")
 PHASE_WEIGHTS = {
     "prepare": 1.0,
     "context_encode": 1.5,
@@ -42,6 +43,7 @@ PHASE_WEIGHTS = {
     "decode": 2.0,
     "assemble": 1.0,
     "face_refine": 8.0,
+    "rtx_deblur": 4.0,
     "finalize": 1.0,
 }
 _RUN_STARTED: dict[str, float] = {}
@@ -56,6 +58,7 @@ PHASE_LABELS = {
     "decode": "AV 解码",
     "assemble": "多段组合",
     "face_refine": "人脸精修",
+    "rtx_deblur": "NVIDIA RTX Deblur",
     "finalize": "最终结果 / 导出",
     "plan": "解析时间轴 / 加载视频",
     "finish": "全部完成",
