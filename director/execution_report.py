@@ -19,6 +19,7 @@ SECTION_ORDER = (
     "Generation",
     "Global Refine",
     "Face Refine",
+    "RTX Deblur",
     "Timing",
     "Preview",
     "Warnings",
@@ -62,6 +63,16 @@ def append_report_section_lines(report: str, section: str, lines) -> str:
     payload = "\n".join(clean)
     start = text.find(marker)
     if start < 0:
+        if section in SECTION_ORDER:
+            section_index = SECTION_ORDER.index(section)
+            for next_name in SECTION_ORDER[section_index + 1 :]:
+                next_marker = f"[{next_name}]"
+                next_start = text.find(next_marker)
+                if next_start < 0:
+                    continue
+                prefix = text[:next_start].rstrip()
+                suffix = text[next_start:].lstrip()
+                return prefix + f"\n\n{marker}\n{payload}\n\n" + suffix
         return text + f"\n\n{marker}\n{payload}"
     next_section = text.find("\n\n[", start + len(marker))
     if next_section < 0:
