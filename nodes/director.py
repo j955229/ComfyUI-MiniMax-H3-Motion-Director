@@ -19,9 +19,12 @@ from ..director.mixed_runtime import bind_mixed_runtime_node
 from ..director.postprocess_config import normalize_postprocess_config
 from ..director.progress import (
     report_director_audio_preview,
+    report_director_complete,
     report_director_final_ready,
+    report_director_progress,
     report_director_report,
 )
+from ..director.rtx_deblur import apply_rtx_deblur
 from ..director.video_export import FINAL_VIDEO_REGISTRY
 from .director_common import (
     finalize_director_outputs,
@@ -393,6 +396,80 @@ class MiniMaxH3MotionDirector:
         if bool(getattr(plan, "mixed_mode", False)):
             report = _append_mixed_dependency_report(plan, report)
 
+        postprocess = normalize_postprocess_config(postprocess_config)
+        deblur_config = postprocess["global_refine"]
+        progress_total = max(
+            1,
+            len(plan.run_indices) if plan.run_indices is not None else len(plan.segments),
+        )
+        deblur_total = max(1, int(combined.shape[0]))
+
+        def _report_deblur_progress(done: int, total: int) -> None:
+            report_director_progress(
+                unique_id,
+                segment_index=max(0, progress_total - 1),
+                segment_total=progress_total,
+                phase="rtx_deblur",
+                phase_value=int(done),
+                phase_max=max(1, int(total)),
+            )
+
+        _report_deblur_progress(0, deblur_total)
+        deblur_outcome = apply_rtx_deblur(
+            deblur_config,
+            images=combined,
+            on_progress=_report_deblur_progress if deblur_config.get("rtx_deblur_enabled") else None,
+        )
+        _report_deblur_progress(deblur_total, deblur_total)
+
+        if deblur_outcome.succeeded:
+            combined = deblur_outcome.images
+            lengths = [int(chunk.shape[0]) for chunk in segment_outputs]
+            if sum(lengths) == int(combined.shape[0]):
+                refined_segments = []
+                cursor = 0
+                for length in lengths:
+                    refined_segments.append(combined[cursor : cursor + length])
+                    cursor += length
+                segment_outputs = refined_segments
+
+        report = append_report_section_lines(
+            report,
+            "RTX Deblur",
+            [
+                f"Enabled: {'ON' if deblur_config.get('rtx_deblur_enabled') else 'OFF'}",
+                f"Quality: {str(deblur_outcome.quality).title()}",
+                f"Frames: {int(deblur_outcome.frames)}",
+                (
+                    f"Resolution: {int(deblur_outcome.width)}x{int(deblur_outcome.height)}"
+                    if deblur_outcome.width and deblur_outcome.height
+                    else "Resolution: n/a"
+                ),
+                f"Status: {deblur_outcome.status}",
+                f"Timing: {fmt_seconds(deblur_outcome.seconds)}",
+                f"Error: {deblur_outcome.error}" if deblur_outcome.error else "",
+                (
+                    "Fallback: PRE_DEBLUR_RESULT"
+                    if deblur_outcome.status in {"FAILED", "UNAVAILABLE"}
+                    else ""
+                ),
+            ],
+        )
+        if deblur_outcome.status in {"FAILED", "UNAVAILABLE"}:
+            report = append_report_section_lines(
+                report,
+                "Warnings",
+                [
+                    f"- RTX Deblur {deblur_outcome.status}; pre-Deblur frames preserved — "
+                    f"{deblur_outcome.error or 'unknown error'}"
+                ],
+            )
+            report = report.replace(
+                "[Final]\nStatus: SUCCESS",
+                "[Final]\nStatus: SUCCESS_WITH_WARNING",
+                1,
+            )
+
         outputs = finalize_director_outputs(
             plan,
             combined,
@@ -404,7 +481,7 @@ class MiniMaxH3MotionDirector:
         pipeline_seconds = time.perf_counter() - run_started
         if final_run_id is not None:
             try:
-                save_config = normalize_postprocess_config(postprocess_config)["save"]
+                save_config = postprocess["save"]
                 _save_started = time.perf_counter()
                 record, auto_result = FINAL_VIDEO_REGISTRY.register_final(
                     unique_id,
@@ -473,7 +550,10 @@ class MiniMaxH3MotionDirector:
                     "ready": False,
                     "error": str(exc),
                 })
-        timing_lines = [f"Pipeline Total: {fmt_seconds(pipeline_seconds)}"]
+        timing_lines = [
+            f"RTX Deblur: {fmt_seconds(deblur_outcome.seconds)}",
+            f"Pipeline Total: {fmt_seconds(pipeline_seconds)}",
+        ]
         if auto_save_seconds is not None:
             timing_lines.append(f"Video Encode / Auto Save: {fmt_seconds(auto_save_seconds)}")
             timing_lines.append(f"End-to-end Total: {fmt_seconds(time.perf_counter() - run_started)}")
@@ -483,4 +563,5 @@ class MiniMaxH3MotionDirector:
         outputs = (*outputs[:-1], append_report_section_lines(outputs[-1], "Timing", timing_lines))
         report_director_report(unique_id, outputs[-1])
         report_director_audio_preview(unique_id, outputs[1])
+        report_director_complete(unique_id, progress_total)
         return outputs
