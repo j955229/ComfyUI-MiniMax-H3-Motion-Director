@@ -34,6 +34,8 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "megapixels": 1.0,
         "width": 1376,
         "height": 768,
+        "rtx_deblur_enabled": False,
+        "rtx_deblur_quality": "medium",
     },
     "face_refine": {
         "enabled": False,
@@ -183,6 +185,10 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g["megapixels"] = _float(g_raw.get("megapixels"), 1.0, 0.1, 16.0)
     g["width"] = _snap(_int(g_raw.get("width"), 1376, 32, 8192))
     g["height"] = _snap(_int(g_raw.get("height"), 768, 32, 8192))
+    g["rtx_deblur_enabled"] = _bool(g_raw.get("rtx_deblur_enabled"), False)
+    g["rtx_deblur_quality"] = _choice(
+        g_raw.get("rtx_deblur_quality"), {"low", "medium", "high", "ultra"}, "medium"
+    )
 
     raw_version = _int(raw.get("version"), 0, 0, 10000)
     if 0 < raw_version < 4:
@@ -340,7 +346,9 @@ def resolve_upscale_target(config: dict[str, Any], director_width: int, director
 
 def postprocess_cache_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
     """Only per-segment Global Refine affects segment/continuity caches."""
-    g = normalize_postprocess_config(config)["global_refine"]
+    g = dict(normalize_postprocess_config(config)["global_refine"])
+    g.pop("rtx_deblur_enabled", None)
+    g.pop("rtx_deblur_quality", None)
     return {"global_refine": g if g["enabled"] else False}
 
 
