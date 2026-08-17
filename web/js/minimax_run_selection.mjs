@@ -8,13 +8,21 @@ function normalizedSelection(value) {
         .sort((left, right) => left - right);
 }
 
+function activeRunSelectionTimeline(editor) {
+    if (editor?.isMixedMode?.()) {
+        return editor?.mixedTimeline ?? editor?.timeline;
+    }
+    return editor?.timeline;
+}
+
 function memoryRunSelectionState(editor) {
-    const enabled = !!editor?.timeline?.runSelectEnabled;
+    const timeline = activeRunSelectionTimeline(editor);
+    const enabled = !!timeline?.runSelectEnabled;
     return {
         enabled,
         // When Run Selection is off, runSelection is remembered UI state only.
         // Execution serialization intentionally canonicalizes it to [].
-        selection: enabled ? normalizedSelection(editor?.timeline?.runSelection) : [],
+        selection: enabled ? normalizedSelection(timeline?.runSelection) : [],
     };
 }
 
