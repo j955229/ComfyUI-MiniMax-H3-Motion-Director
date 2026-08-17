@@ -9,7 +9,9 @@ on:
       - "web/js/minimax_mixed_*.mjs"
       - "web/js/minimax_timeline.js"
       - "web/js/minimax_gen_timeline.js"
+      - "web/js/minimax_run_selection.mjs"
       - "web/js/tests/minimax_mixed_*.mjs"
+      - "web/js/tests/minimax_run_selection.test.mjs"
       - "web/js/tests/minimax_director_module_load.test.mjs"
       - ".github/workflows/mixed_mode_browser_ci.yml"
 
@@ -58,6 +60,7 @@ jobs:
         run: |
           node --check web/js/minimax_timeline.js
           node --check web/js/minimax_gen_timeline.js
+          node --check web/js/minimax_run_selection.mjs
           node --check web/js/minimax_mixed_ui.mjs
           node --check web/js/minimax_mixed_ui_v2.mjs
           node --check web/js/minimax_mixed_i18n.mjs
@@ -67,6 +70,10 @@ jobs:
           node --check web/js/tests/minimax_mixed_native_contract.test.mjs
           node --check web/js/tests/minimax_mixed_mode_inputs.test.mjs
           node --check web/js/tests/minimax_mixed_browser.test.mjs
+          node --check web/js/tests/minimax_run_selection.test.mjs
+
+      - name: Run Run Selection regression contract
+        run: node web/js/tests/minimax_run_selection.test.mjs
 
       - name: Load real Director module
         run: node web/js/tests/minimax_director_module_load.test.mjs
