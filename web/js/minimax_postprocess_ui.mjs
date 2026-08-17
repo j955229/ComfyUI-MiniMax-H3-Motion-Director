@@ -1,9 +1,10 @@
 const DEFAULT_CONFIG = Object.freeze({
-    version: 2,
+    version: 3,
     global_refine: {
         enabled: false, mode: "refine", denoise: 0.25, steps: 0,
         seed_mode: "inherit", seed_offset: 1, skip_fl2v: false,
         upscale_method: "lanczos", upscale_model: "",
+        vsr_source: "clean", vsr_quality: "high",
         resolution_mode: "follow_director", aspect: "16:9", megapixels: 1,
         width: 1376, height: 768,
     },
@@ -28,29 +29,42 @@ const DEFAULT_CONFIG = Object.freeze({
 });
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const inChoice = (value, choices, fallback) => choices.includes(value) ? value : fallback;
 
 const POST_TEXT = {
     en: {
         global_title: "Global Refine", face_title: "Face Refine", sampling: "Second Sampling",
-        upscale: "Upscale", detection_canvas: "Detection / Canvas", tracking_denoise: "Tracking / Per-frame Denoise",
+        upscale: "Upscale", output_resolution: "Output Resolution",
+        detection_canvas: "Detection / Canvas", tracking_denoise: "Tracking / Per-frame Denoise",
         stitch: "Stitch", advanced: "Advanced Tracking / SAM", enabled: "ON / OFF", disabled: "Disabled",
-        ready: "Ready", missing_no_downgrade: "Not installed (stage will fail without downgrade)",
+        runtime_detected: "Runtime detected (validated when generation starts)",
+        missing_no_downgrade: "Not installed (stage will fail without downgrade)",
     },
     zh: {
         global_title: "全局精修", face_title: "人脸精修", sampling: "二次采样",
-        upscale: "放大", detection_canvas: "检测 / 画布", tracking_denoise: "跟踪 / 逐帧降噪",
+        upscale: "放大", output_resolution: "输出分辨率",
+        detection_canvas: "检测 / 画布", tracking_denoise: "跟踪 / 逐帧降噪",
         stitch: "回贴", advanced: "高级跟踪 / SAM", enabled: "开 / 关", disabled: "已停用",
-        ready: "可用", missing_no_downgrade: "未安装（此阶段会失败，不会自动降级）",
+        runtime_detected: "已检测到运行库（生成时验证）",
+        missing_no_downgrade: "未安装（此阶段会失败，不会自动降级）",
     },
 };
 
 const POST_LABELS = {
-    "global_refine.mode": ["Mode", "模式"], "global_refine.denoise": ["Denoise", "降噪强度"],
-    "global_refine.steps": ["Steps (0=Auto)", "步数（0=自动）"], "global_refine.seed_mode": ["Seed Mode", "种子模式"],
-    "global_refine.skip_fl2v": ["Skip FL2V", "跳过 FL2V"], "global_refine.upscale_method": ["Method", "放大方法"],
-    "global_refine.upscale_model": ["Model", "模型"], "global_refine.resolution_mode": ["Resolution", "分辨率模式"],
-    "global_refine.aspect": ["Aspect", "画幅比"], "global_refine.megapixels": ["Megapixels", "百万像素"],
-    "global_refine.width": ["Width", "宽度"], "global_refine.height": ["Height", "高度"],
+    "global_refine.denoise": ["Denoise", "降噪强度"],
+    "global_refine.steps": ["Steps (0=Auto)", "步数（0=自动）"],
+    "global_refine.seed_mode": ["Refine Randomness", "精修随机性"],
+    "global_refine.seed_offset": ["Seed Offset", "Seed 偏移"],
+    "global_refine.skip_fl2v": ["Skip FL2V", "跳过 FL2V"],
+    "global_refine.upscale_method": ["Method", "放大方法"],
+    "global_refine.upscale_model": ["Model", "模型"],
+    "global_refine.vsr_source": ["Source Type", "内容类型"],
+    "global_refine.vsr_quality": ["VSR Quality", "VSR 质量"],
+    "global_refine.resolution_mode": ["Resolution", "分辨率模式"],
+    "global_refine.aspect": ["Aspect", "画幅比"],
+    "global_refine.megapixels": ["Megapixels", "百万像素"],
+    "global_refine.width": ["Width", "宽度"],
+    "global_refine.height": ["Height", "高度"],
     "face_refine.detector": ["Detector", "检测器"], "face_refine.detector_model": ["Model", "模型"],
     "face_refine.confidence": ["Confidence", "置信度"], "face_refine.select": ["Select", "目标选择"],
     "face_refine.crop_factor": ["Crop Factor", "裁切倍率"], "face_refine.canvas_mode": ["Canvas", "画布模式"],
@@ -72,11 +86,20 @@ const POST_LABELS = {
 };
 
 const POST_OPTION_LABELS = {
-    "global_refine.mode": { refine: ["Refine", "精修"], upscale: ["Upscale", "放大"] },
-    "global_refine.seed_mode": { inherit: ["Inherit", "继承"], offset: ["Offset", "偏移"] },
+    "global_refine.seed_mode": {
+        inherit: ["Keep original Seed (recommended)", "保持原 Seed（推荐）"],
+        offset: ["Use Seed offset", "使用 Seed 偏移"],
+    },
     "global_refine.upscale_method": {
         lanczos: ["Lanczos", "Lanczos"], upscale_model: ["Upscale Model", "放大模型"],
         nvidia_rtx_vsr: ["NVIDIA RTX VSR", "NVIDIA RTX VSR"],
+    },
+    "global_refine.vsr_source": {
+        clean: ["AI / high-quality source", "AI生成 / 高质量源"],
+        compressed: ["Compressed video", "普通压缩视频"],
+    },
+    "global_refine.vsr_quality": {
+        low: ["Low", "Low"], medium: ["Medium", "Medium"], high: ["High", "High"], ultra: ["Ultra", "Ultra"],
     },
     "global_refine.resolution_mode": {
         follow_director: ["Follow Director", "跟随 Director"],
@@ -109,7 +132,18 @@ export function normalizePostprocessConfig(raw) {
         Object.assign(result[key], legacy || {}, raw[key] || {});
     }
     if (raw.liveTaePreview === false || raw.live_tae_preview === false) result.preview.enabled = false;
-    result.global_refine.enabled = !!result.global_refine.enabled;
+    const global = result.global_refine;
+    global.enabled = !!global.enabled;
+    global.mode = inChoice(global.mode, ["refine", "upscale"], "refine");
+    global.seed_mode = inChoice(global.seed_mode, ["inherit", "offset"], "inherit");
+    const seedOffset = Number(global.seed_offset);
+    global.seed_offset = Number.isFinite(seedOffset)
+        ? Math.max(-2147483648, Math.min(2147483647, Math.trunc(seedOffset)))
+        : 1;
+    global.upscale_method = inChoice(global.upscale_method, ["lanczos", "upscale_model", "nvidia_rtx_vsr"], "lanczos");
+    global.vsr_source = inChoice(global.vsr_source, ["clean", "compressed"], "clean");
+    global.vsr_quality = inChoice(global.vsr_quality, ["low", "medium", "high", "ultra"], "high");
+    global.resolution_mode = inChoice(global.resolution_mode, ["follow_director", "aspect_megapixels", "custom"], "follow_director");
     result.face_refine.enabled = !!result.face_refine.enabled;
     result.preview.enabled = result.preview.enabled !== false;
     result.save.auto_save = !!result.save.auto_save;
@@ -118,6 +152,7 @@ export function normalizePostprocessConfig(raw) {
     result.save.codec = String(result.save.codec || "auto").trim().toLowerCase().slice(0, 64) || "auto";
     result.save.encoding = result.save.encoding === "re-encode" ? "re-encode" : "auto";
     result.save.crf = Math.max(0, Math.min(51, Math.round(Number(result.save.crf) || 23)));
+    result.version = 3;
     return result;
 }
 
@@ -137,17 +172,44 @@ export function resolveGlobalTarget(config, directorWidth = 864, directorHeight 
     return [snap(aw * scale), snap(ah * scale)];
 }
 
+export function setGlobalUpscaleEnabled(config, enabled) {
+    const next = normalizePostprocessConfig(config);
+    next.global_refine.mode = enabled ? "upscale" : "refine";
+    return next;
+}
+
+export function globalRefineVisibility(config) {
+    const global = normalizePostprocessConfig(config).global_refine;
+    const upscaleEnabled = global.mode === "upscale";
+    return {
+        upscaleEnabled,
+        seedOffset: global.seed_mode === "offset",
+        upscaleModel: upscaleEnabled && global.upscale_method === "upscale_model",
+        vsr: upscaleEnabled && global.upscale_method === "nvidia_rtx_vsr",
+        aspectMegapixels: upscaleEnabled && global.resolution_mode === "aspect_megapixels",
+        customSize: upscaleEnabled && global.resolution_mode === "custom",
+    };
+}
+
 export function globalRefineSummary(config, width = 864, height = 480, locale = "en") {
     const global = normalizePostprocessConfig(config).global_refine;
     const zh = locale === "zh";
     if (!global.enabled) return POST_TEXT[zh ? "zh" : "en"].disabled;
     const steps = Number(global.steps) > 0 ? `${global.steps} ${zh ? "步" : "Steps"}` : (zh ? "自动步数" : "Auto Steps");
+    const seed = global.seed_mode === "offset"
+        ? `${zh ? "Seed 偏移" : "Seed Offset"} ${Number(global.seed_offset) >= 0 ? "+" : ""}${Number(global.seed_offset)}`
+        : (zh ? "保持原 Seed" : "Keep original Seed");
+    const parts = [zh ? "二次采样" : "Second Sampling", `D${Number(global.denoise).toFixed(2)}`, steps, seed];
     if (global.mode === "upscale") {
         const [targetW, targetH] = resolveGlobalTarget(config, width, height);
-        const methods = { lanczos: "Lanczos", upscale_model: global.upscale_model || "Upscale Model", nvidia_rtx_vsr: "NVIDIA RTX VSR" };
-        return `${zh ? "放大" : "Upscale"} · ${targetW}×${targetH} · ${methods[global.upscale_method] || global.upscale_method} · D${Number(global.denoise).toFixed(2)} · ${steps}`;
+        let method = global.upscale_method === "upscale_model" ? (global.upscale_model || (zh ? "放大模型" : "Upscale Model")) : "Lanczos";
+        if (global.upscale_method === "nvidia_rtx_vsr") {
+            const quality = String(global.vsr_quality || "high");
+            method = `RTX VSR ${quality.charAt(0).toUpperCase()}${quality.slice(1)}`;
+        }
+        parts.push(`${method} → ${targetW}×${targetH}`);
     }
-    return `${zh ? "精修" : "Refine"} · D${Number(global.denoise).toFixed(2)} · ${steps} · ${global.seed_mode === "offset" ? (zh ? "种子偏移" : "Seed Offset") : (zh ? "继承种子" : "Seed Inherit")}`;
+    return parts.join(" · ");
 }
 
 export function faceRefineSummary(config, locale = "en") {
@@ -177,9 +239,6 @@ export class PostprocessConfigStore {
             try {
                 this.widget.callback?.(serialized);
             } catch (error) {
-                // A third-party widget callback must never prevent the
-                // Director launcher/modal from mounting.  The serialized
-                // widget value is already the workflow source of truth.
                 console.warn("[MiniMax H3 Motion Director] postprocess widget callback failed:", error);
             }
         }
@@ -217,12 +276,16 @@ function ensureStyles() {
     style.textContent = `
 .mmx-postprocess{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;height:100%;min-height:0;box-sizing:border-box}
 .mmx-post-column{min-width:0;overflow:auto;border:1px solid #343434;border-radius:8px;background:#181818;padding:10px;box-sizing:border-box}
-.mmx-post-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.mmx-post-head h3{margin:0;font-size:15px}
-.mmx-post-enable{display:flex;align-items:center;gap:6px;color:#4fff8f;font-weight:650}.mmx-post-summary{min-height:18px;margin:0 0 8px;color:#aaa;font-size:11px}
+.mmx-post-head,.mmx-post-section-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.mmx-post-head{margin-bottom:8px}.mmx-post-head h3{margin:0;font-size:15px}
+.mmx-post-section-head h4{margin:0;font-size:12px;color:#ddd}.mmx-post-enable,.mmx-post-subenable{display:flex;align-items:center;gap:6px;color:#4fff8f;font-weight:650}
+.mmx-post-summary{min-height:18px;margin:0 0 8px;color:#aaa;font-size:11px}
 .mmx-post-section{margin:7px 0;padding:7px;border:1px solid #2d2d2d;border-radius:6px;background:#1d1d1d}.mmx-post-section>h4{margin:0 0 6px;font-size:12px;color:#ddd}
+.mmx-post-section-body{margin-top:7px}.mmx-post-divider-title{margin:10px 0 6px;padding-top:8px;border-top:1px solid #303030;font-size:11px;font-weight:650;color:#bbb}
 .mmx-post-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px 8px}.mmx-post-field{display:grid;grid-template-columns:minmax(82px,.9fr) minmax(0,1.2fr);align-items:center;gap:6px;min-width:0;font-size:11px;color:#aaa}
 .mmx-post-field input,.mmx-post-field select{min-width:0;width:100%;height:26px;border:1px solid #3b3b3b;border-radius:4px;background:#242424;color:#ddd;padding:2px 5px;box-sizing:border-box}
-.mmx-post-field input[type=checkbox]{width:auto;height:auto;justify-self:start}.mmx-post-wide{grid-column:1/-1}.mmx-post-advanced>summary{cursor:pointer;color:#bbb;font-size:12px;font-weight:650;padding:3px}
+.mmx-post-field input[type=checkbox]{width:auto;height:auto;justify-self:start}.mmx-post-wide{grid-column:1/-1}.mmx-post-conditional{min-width:0}.mmx-post-conditional[hidden],.mmx-post-section-body[hidden]{display:none!important}
+.mmx-post-result{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 7px;border-radius:4px;background:#202020}.mmx-post-result b{color:#ddd;font-size:12px}
+.mmx-post-advanced>summary{cursor:pointer;color:#bbb;font-size:12px;font-weight:650;padding:3px}
 .mmx-post-disabled{opacity:.52}.mmx-post-capability{font-size:10px;color:#999}.mmx-post-capability.bad{color:#ff8d8d}
 @media(max-width:980px){.mmx-postprocess{grid-template-columns:1fr}.mmx-post-column{overflow:visible}.mmx-post-grid{grid-template-columns:1fr}}
 `;
@@ -235,6 +298,7 @@ function field(label, path, type = "number", extra = "") {
     if (type === "checkbox") return `<label class="mmx-post-field"><span data-field-label="${path}">${label}</span><input type="checkbox" data-path="${path}"></label>`;
     return `<label class="mmx-post-field"><span data-field-label="${path}">${label}</span><input type="${type}" data-path="${path}" ${extra}></label>`;
 }
+function conditional(name, content) { return `<div class="mmx-post-conditional" data-conditional="${name}">${content}</div>`; }
 
 export function mountPostprocessUI(container, store, { fetchApi, directorSize = () => [864, 480], locale = () => "zh" } = {}) {
     ensureStyles();
@@ -245,23 +309,33 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
         <div class="mmx-post-head"><h3 data-post-text="global_title">全局精修</h3><label class="mmx-post-enable"><input type="checkbox" data-path="global_refine.enabled"> <span data-post-text="enabled">ON / OFF</span></label></div>
         <p class="mmx-post-summary" data-summary="global_refine"></p>
         <div class="mmx-post-section"><h4 data-post-text="sampling">二次采样</h4><div class="mmx-post-grid">
-          ${field("Mode", "global_refine.mode", "select", options([["refine","Refine"],["upscale","Upscale"]]))}
           ${field("Denoise", "global_refine.denoise", "number", 'min="0.01" max="1" step="0.01"')}
           ${field("Steps (0=Auto)", "global_refine.steps", "number", 'min="0" max="200" step="1"')}
-          ${field("Seed Mode", "global_refine.seed_mode", "select", options([["inherit","Inherit"],["offset","Offset"]]))}
+          ${field("Refine Randomness", "global_refine.seed_mode", "select", options([["inherit","Keep original Seed (recommended)"],["offset","Use Seed offset"]]))}
+          ${conditional("seed_offset", field("Seed Offset", "global_refine.seed_offset", "number", 'min="-2147483648" max="2147483647" step="1"'))}
           ${field("Skip FL2V", "global_refine.skip_fl2v", "checkbox")}
         </div></div>
-        <div class="mmx-post-section" data-upscale><h4 data-post-text="upscale">Upscale</h4><div class="mmx-post-grid">
-          ${field("Method", "global_refine.upscale_method", "select", options([["lanczos","Lanczos"],["upscale_model","Upscale Model"],["nvidia_rtx_vsr","NVIDIA RTX VSR"]]))}
-          ${field("Model", "global_refine.upscale_model", "select", '<option value="">—</option>')}
-          ${field("Resolution", "global_refine.resolution_mode", "select", options([["follow_director","Follow Director"],["aspect_megapixels","Aspect + Megapixels"],["custom","Custom"]]))}
-          ${field("Aspect", "global_refine.aspect", "select", options([["1:1","1:1"],["4:3","4:3"],["3:4","3:4"],["16:9","16:9"],["9:16","9:16"],["21:9","21:9"]]))}
-          ${field("Megapixels", "global_refine.megapixels", "number", 'min="0.1" max="16" step="0.1"')}
-          ${field("Width", "global_refine.width", "number", 'min="32" max="8192" step="32"')}
-          ${field("Height", "global_refine.height", "number", 'min="32" max="8192" step="32"')}
-          <div class="mmx-post-field mmx-post-wide"><span data-field-label="resolved_target">Resolved Target</span><b data-resolved-target></b></div>
-          <div class="mmx-post-capability mmx-post-wide" data-capability="nvidia_rtx_vsr"></div>
-        </div></div>
+        <div class="mmx-post-section" data-upscale-section>
+          <div class="mmx-post-section-head"><h4 data-post-text="upscale">Upscale</h4><label class="mmx-post-subenable"><input type="checkbox" data-upscale-enabled> <span data-post-text="enabled">ON / OFF</span></label></div>
+          <div class="mmx-post-section-body" data-upscale-body>
+            <div class="mmx-post-grid">
+              ${field("Method", "global_refine.upscale_method", "select", options([["lanczos","Lanczos"],["upscale_model","Upscale Model"],["nvidia_rtx_vsr","NVIDIA RTX VSR"]]))}
+              ${conditional("upscale_model", field("Model", "global_refine.upscale_model", "select", '<option value="">—</option>'))}
+              ${conditional("vsr_source", field("Source Type", "global_refine.vsr_source", "select", options([["clean","AI / high-quality source"],["compressed","Compressed video"]])))}
+              ${conditional("vsr_quality", field("VSR Quality", "global_refine.vsr_quality", "select", options([["low","Low"],["medium","Medium"],["high","High"],["ultra","Ultra"]])))}
+              <div class="mmx-post-capability mmx-post-wide" data-conditional="vsr_status" data-capability="nvidia_rtx_vsr"></div>
+            </div>
+            <div class="mmx-post-divider-title" data-post-text="output_resolution">Output Resolution</div>
+            <div class="mmx-post-grid">
+              ${field("Resolution", "global_refine.resolution_mode", "select", options([["follow_director","Follow Director"],["aspect_megapixels","Aspect + Megapixels"],["custom","Custom"]]))}
+              ${conditional("aspect", field("Aspect", "global_refine.aspect", "select", options([["1:1","1:1"],["4:3","4:3"],["3:4","3:4"],["16:9","16:9"],["9:16","9:16"],["21:9","21:9"]])))}
+              ${conditional("megapixels", field("Megapixels", "global_refine.megapixels", "number", 'min="0.1" max="16" step="0.1"'))}
+              ${conditional("width", field("Width", "global_refine.width", "number", 'min="32" max="8192" step="32"'))}
+              ${conditional("height", field("Height", "global_refine.height", "number", 'min="32" max="8192" step="32"'))}
+              <div class="mmx-post-result mmx-post-wide"><span data-field-label="resolved_target">Resolved Target</span><b data-resolved-target></b></div>
+            </div>
+          </div>
+        </div>
       </section>
       <section class="mmx-post-column" data-section="face_refine">
         <div class="mmx-post-head"><h3 data-post-text="face_title">人脸精修</h3><label class="mmx-post-enable"><input type="checkbox" data-path="face_refine.enabled"> <span data-post-text="enabled">ON / OFF</span></label></div>
@@ -316,20 +390,28 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
     const readInput = (element) => element.type === "checkbox" ? element.checked
         : element.type === "number" ? Number(element.value) : element.value;
     root.addEventListener("change", (event) => {
-        const input = event.target.closest?.("[data-path]") || event.target;
+        const target = event.target;
+        if (target?.matches?.("[data-upscale-enabled]")) {
+            store.set(setGlobalUpscaleEnabled(store.get(), target.checked));
+            return;
+        }
+        const input = target?.closest?.("[data-path]") || target;
         const path = input?.dataset?.path;
         if (!path) return;
         const [section, key] = path.split(".");
         store.patch(section, key, readInput(input));
     });
     let capabilities = null;
+    const setConditional = (name, hidden) => {
+        root.querySelectorAll(`[data-conditional="${name}"]`).forEach((element) => { element.hidden = hidden; });
+    };
     const updateLocale = (language = locale()) => {
         const lang = language === "en" ? "en" : "zh";
         root.querySelectorAll("[data-post-text]").forEach((element) => {
             element.textContent = POST_TEXT[lang][element.dataset.postText] || element.textContent;
         });
         root.querySelectorAll("[data-field-label]").forEach((element) => {
-            const pair = element.dataset.fieldLabel === "resolved_target" ? ["Resolved Target", "解析目标尺寸"] : POST_LABELS[element.dataset.fieldLabel];
+            const pair = element.dataset.fieldLabel === "resolved_target" ? ["Final Size", "最终尺寸"] : POST_LABELS[element.dataset.fieldLabel];
             if (pair) element.textContent = pair[lang === "zh" ? 1 : 0];
         });
         root.querySelectorAll("select[data-path]").forEach((select) => {
@@ -343,7 +425,7 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
         const vsr = root.querySelector('[data-capability="nvidia_rtx_vsr"]');
         if (vsr && capabilities) {
             const ready = !!capabilities.dependencies?.nvidia_rtx_vsr;
-            vsr.textContent = `RTX VSR: ${POST_TEXT[lang][ready ? "ready" : "missing_no_downgrade"]}`;
+            vsr.textContent = `RTX VSR: ${POST_TEXT[lang][ready ? "runtime_detected" : "missing_no_downgrade"]}`;
         }
         render(store.get());
     };
@@ -354,12 +436,23 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
             if (input.type === "checkbox") input.checked = !!value;
             else if (String(input.value) !== String(value ?? "")) input.value = value ?? "";
         });
+        const visible = globalRefineVisibility(config);
+        root.querySelector("[data-upscale-enabled]").checked = visible.upscaleEnabled;
+        root.querySelector("[data-upscale-body]").hidden = !visible.upscaleEnabled;
+        setConditional("seed_offset", !visible.seedOffset);
+        setConditional("upscale_model", !visible.upscaleModel);
+        setConditional("vsr_source", !visible.vsr);
+        setConditional("vsr_quality", !visible.vsr);
+        setConditional("vsr_status", !visible.vsr);
+        setConditional("aspect", !visible.aspectMegapixels);
+        setConditional("megapixels", !visible.aspectMegapixels);
+        setConditional("width", !visible.customSize);
+        setConditional("height", !visible.customSize);
         const [w, h] = directorSize();
         root.querySelector('[data-summary="global_refine"]').textContent = globalRefineSummary(config, w, h, locale());
         root.querySelector('[data-summary="face_refine"]').textContent = faceRefineSummary(config, locale());
         const [tw, th] = resolveGlobalTarget(config, w, h);
         root.querySelector("[data-resolved-target]").textContent = `${tw}×${th}`;
-        root.querySelector("[data-upscale]").hidden = config.global_refine.mode !== "upscale";
         root.querySelector('[data-section="global_refine"]').classList.toggle("mmx-post-disabled", !config.global_refine.enabled);
         root.querySelector('[data-section="face_refine"]').classList.toggle("mmx-post-disabled", !config.face_refine.enabled);
     };
@@ -380,8 +473,8 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
         fill("face_refine.sam_model", caps.sam_models);
         capabilities = caps;
         const vsr = root.querySelector('[data-capability="nvidia_rtx_vsr"]');
-        vsr.textContent = caps.dependencies?.nvidia_rtx_vsr ? "RTX VSR dependency: Ready" : "RTX VSR dependency: Not installed (stage will fail without downgrade)";
-        vsr.classList.toggle("bad", !caps.dependencies?.nvidia_rtx_vsr);
+        const ready = !!caps.dependencies?.nvidia_rtx_vsr;
+        vsr.classList.toggle("bad", !ready);
         updateLocale(locale());
     }).catch(() => {});
     return { root, render, updateLocale, destroy: unsubscribe };

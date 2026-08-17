@@ -14,7 +14,12 @@ from typing import Any, Callable
 import torch
 
 from .core_sampling import sample_single_stage
-from .postprocess_config import refine_seed_for, refine_steps_for, resolve_upscale_target
+from .postprocess_config import (
+    refine_seed_for,
+    refine_steps_for,
+    resolve_upscale_target,
+    resolve_vsr_quality_name,
+)
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.refine")
 
@@ -61,7 +66,6 @@ def _join_av(video_latent: dict, audio_latent, template: dict) -> dict:
         out["samples"] = joined
         return out
     except (ImportError, AttributeError):
-        # Older ComfyUI builds do not expose the concat node.
         import comfy.nested_tensor
 
         out["samples"] = comfy.nested_tensor.NestedTensor((video, audio)) if audio is not None else video
@@ -275,7 +279,31 @@ def _upscale_model_exact(
     return output
 
 
-def _upscale_rtx_vsr_exact(images: torch.Tensor, width: int, height: int) -> torch.Tensor:
+def _nvvfx_quality_level(nvvfx, enum_name: str):
+    """Resolve the selected quality without silently downgrading it."""
+    video_super_res = getattr(nvvfx, "VideoSuperRes", None)
+    quality_enum = getattr(video_super_res, "QualityLevel", None)
+    if quality_enum is None:
+        quality_enum = getattr(nvvfx, "QualityLevel", None)
+    if quality_enum is None:
+        quality_enum = getattr(getattr(nvvfx, "effects", None), "QualityLevel", None)
+    level = getattr(quality_enum, enum_name, None) if quality_enum is not None else None
+    if level is None:
+        raise RuntimeError(
+            f"NVIDIA RTX VSR quality mode {enum_name} is unavailable in the installed nvvfx runtime."
+        )
+    return level
+
+
+def _upscale_rtx_vsr_exact(
+    images: torch.Tensor,
+    width: int,
+    height: int,
+    *,
+    source_mode: str = "clean",
+    quality_name: str = "high",
+    on_progress: Callable[[float], None] | None = None,
+) -> torch.Tensor:
     try:
         import nvvfx
     except ImportError as exc:
@@ -283,19 +311,24 @@ def _upscale_rtx_vsr_exact(images: torch.Tensor, width: int, height: int) -> tor
             "NVIDIA RTX VSR requires the optional nvidia-vfx package and a compatible NVIDIA GPU."
         ) from exc
 
-    quality = getattr(getattr(nvvfx, "effects", None), "QualityLevel", None)
-    level = getattr(quality, "ULTRA", None) if quality is not None else None
-    context = nvvfx.VideoSuperRes(level) if level is not None else nvvfx.VideoSuperRes()
+    enum_name = resolve_vsr_quality_name({"vsr_source": source_mode, "vsr_quality": quality_name})
+    level = _nvvfx_quality_level(nvvfx, enum_name)
+    context = nvvfx.VideoSuperRes(level)
     processor = context.__enter__()
     try:
         processor.output_width = max(8, round(int(width) / 8) * 8)
         processor.output_height = max(8, round(int(height) / 8) * 8)
         if hasattr(processor, "load"):
             processor.load()
-        source = images[..., :3].movedim(-1, 1).contiguous()
+        source = images[..., :3].movedim(-1, 1).float().contiguous()
         if source.device.type != "cuda":
             source = source.cuda()
-        frames = [torch.from_dlpack(processor.run(frame).image).clone() for frame in source]
+        frames = []
+        total = int(source.shape[0])
+        for index, frame in enumerate(source):
+            frames.append(torch.from_dlpack(processor.run(frame).image).clone())
+            if on_progress is not None:
+                on_progress((index + 1) / max(1, total))
         return torch.stack(frames).movedim(1, -1)
     finally:
         context.__exit__(None, None, None)
@@ -308,6 +341,8 @@ def upscale_image_batch_strict(
     height: int,
     method: str,
     model_name: str = "",
+    vsr_source: str = "clean",
+    vsr_quality: str = "high",
     on_progress: Callable[[float], None] | None = None,
 ) -> torch.Tensor:
     """Run exactly the selected method; errors propagate to the stage fallback."""
@@ -323,12 +358,17 @@ def upscale_image_batch_strict(
             on_progress=on_progress,
         )
     elif selected == "nvidia_rtx_vsr":
-        result = _upscale_rtx_vsr_exact(images, width, height)
+        result = _upscale_rtx_vsr_exact(
+            images,
+            width,
+            height,
+            source_mode=vsr_source,
+            quality_name=vsr_quality,
+            on_progress=on_progress,
+        )
     else:
         raise ValueError(f"Unsupported Global Refine upscale method: {method}")
     if int(result.shape[2]) != int(width) or int(result.shape[1]) != int(height):
-        # Exact target fitting after a successful chosen algorithm is not a
-        # failure fallback and never hides an exception from that algorithm.
         result = _resize_lanczos(result, width, height)
     return result
 
@@ -403,6 +443,8 @@ def apply_global_refine(
                 height=height,
                 method=config.get("upscale_method") or "lanczos",
                 model_name=config.get("upscale_model") or "",
+                vsr_source=config.get("vsr_source") or "clean",
+                vsr_quality=config.get("vsr_quality") or "high",
                 on_progress=(
                     (
                         lambda value: on_phase(

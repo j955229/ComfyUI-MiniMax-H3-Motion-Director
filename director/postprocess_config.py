@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 
-POSTPROCESS_CONFIG_VERSION = 2
+POSTPROCESS_CONFIG_VERSION = 3
 CANVAS_MULTIPLE = 32
 
 DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
@@ -28,6 +28,8 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "skip_fl2v": False,
         "upscale_method": "lanczos",
         "upscale_model": "",
+        "vsr_source": "clean",
+        "vsr_quality": "high",
         "resolution_mode": "follow_director",
         "aspect": "16:9",
         "megapixels": 1.0,
@@ -170,6 +172,10 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
         "lanczos",
     )
     g["upscale_model"] = str(g_raw.get("upscale_model") or "")
+    g["vsr_source"] = _choice(g_raw.get("vsr_source"), {"clean", "compressed"}, "clean")
+    g["vsr_quality"] = _choice(
+        g_raw.get("vsr_quality"), {"low", "medium", "high", "ultra"}, "high"
+    )
     g["resolution_mode"] = _choice(
         g_raw.get("resolution_mode"),
         {"follow_director", "aspect_megapixels", "custom"},
@@ -294,6 +300,16 @@ def refine_seed_for(config: dict[str, Any], seed: int) -> int:
     return int(seed) + int(config.get("seed_offset", 1)) if config.get("seed_mode") == "offset" else int(seed)
 
 
+def resolve_vsr_quality_name(config: dict[str, Any]) -> str:
+    """Return the exact NVIDIA VideoSuperRes QualityLevel enum member name."""
+    source = str(config.get("vsr_source") or "clean").strip().lower()
+    quality = str(config.get("vsr_quality") or "high").strip().lower()
+    if quality not in {"low", "medium", "high", "ultra"}:
+        quality = "high"
+    name = quality.upper()
+    return f"HIGHBITRATE_{name}" if source != "compressed" else name
+
+
 def resolve_upscale_target(config: dict[str, Any], director_width: int, director_height: int) -> tuple[int, int]:
     mode = config.get("resolution_mode") or "follow_director"
     if mode == "follow_director":
@@ -320,6 +336,6 @@ def postprocess_cache_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
 __all__ = [
     "DEFAULT_POSTPROCESS_CONFIG", "POSTPROCESS_CONFIG_VERSION",
     "normalize_postprocess_config", "serialize_postprocess_config",
-    "refine_steps_for", "refine_seed_for", "resolve_upscale_target",
-    "postprocess_cache_fingerprint",
+    "refine_steps_for", "refine_seed_for", "resolve_vsr_quality_name",
+    "resolve_upscale_target", "postprocess_cache_fingerprint",
 ]
