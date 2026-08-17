@@ -1,0 +1,92 @@
+name: Fix Postprocess Bootstrap Once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/fix_postprocess_bootstrap_once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix-postprocess-bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Create regression test
+        shell: bash
+        run: |
+          cat > web/js/tests/minimax_postprocess_bootstrap.test.mjs <<'EOF'
+          import assert from "node:assert/strict";
+          import fs from "node:fs";
+
+          const timeline = fs.readFileSync(
+              new URL("../minimax_timeline.js", import.meta.url),
+              "utf8",
+          );
+
+          assert.match(
+              timeline,
+              /minimax_postprocess_ui\.mjs\?boot=postprocess_output_v6/,
+              "Director bootstrap must use postprocess_output_v6 so updated postprocess UI cannot reuse the v5 module URL",
+          );
+
+          console.log("postprocess bootstrap cache token test passed");
+          EOF
+
+      - name: Verify regression test is red before the fix
+        shell: bash
+        run: |
+          set +e
+          node web/js/tests/minimax_postprocess_bootstrap.test.mjs > /tmp/postprocess-red.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/postprocess-red.log
+          if [ "$status" -eq 0 ]; then
+            echo "Regression test unexpectedly passed before the bootstrap token was changed."
+            exit 1
+          fi
+          echo "Regression test failed as expected before the fix."
+
+      - name: Bump postprocess child-module bootstrap token
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("web/js/minimax_timeline.js")
+          text = path.read_text(encoding="utf-8")
+          old = '"./minimax_postprocess_ui.mjs?boot=postprocess_output_v5"'
+          new = '"./minimax_postprocess_ui.mjs?boot=postprocess_output_v6"'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"Expected exactly one old postprocess bootstrap import, found {count}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
+      - name: Verify fix and Global Refine frontend
+        shell: bash
+        run: |
+          node --check web/js/minimax_timeline.js
+          node --check web/js/minimax_postprocess_ui.mjs
+          node web/js/tests/minimax_postprocess_bootstrap.test.mjs
+          node web/js/tests/minimax_postprocess_ui.test.mjs
+
+      - name: Commit verified fix to main
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/js/minimax_timeline.js web/js/tests/minimax_postprocess_bootstrap.test.mjs
+          git commit -m "fix: invalidate stale postprocess frontend module"
+          git push origin HEAD:main
