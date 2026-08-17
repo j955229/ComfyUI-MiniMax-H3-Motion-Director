@@ -300,7 +300,6 @@ def _upscale_rtx_vsr_exact(
     width: int,
     height: int,
     *,
-    source_mode: str = "clean",
     quality_name: str = "high",
     on_progress: Callable[[float], None] | None = None,
 ) -> torch.Tensor:
@@ -311,7 +310,7 @@ def _upscale_rtx_vsr_exact(
             "NVIDIA RTX VSR requires the optional nvidia-vfx package and a compatible NVIDIA GPU."
         ) from exc
 
-    enum_name = resolve_vsr_quality_name({"vsr_source": source_mode, "vsr_quality": quality_name})
+    enum_name = resolve_vsr_quality_name({"vsr_quality": quality_name})
     level = _nvvfx_quality_level(nvvfx, enum_name)
     context = nvvfx.VideoSuperRes(level)
     processor = context.__enter__()
@@ -341,7 +340,6 @@ def upscale_image_batch_strict(
     height: int,
     method: str,
     model_name: str = "",
-    vsr_source: str = "clean",
     vsr_quality: str = "high",
     on_progress: Callable[[float], None] | None = None,
 ) -> torch.Tensor:
@@ -362,7 +360,6 @@ def upscale_image_batch_strict(
             images,
             width,
             height,
-            source_mode=vsr_source,
             quality_name=vsr_quality,
             on_progress=on_progress,
         )
@@ -443,7 +440,6 @@ def apply_global_refine(
                 height=height,
                 method=config.get("upscale_method") or "lanczos",
                 model_name=config.get("upscale_model") or "",
-                vsr_source=config.get("vsr_source") or "clean",
                 vsr_quality=config.get("vsr_quality") or "high",
                 on_progress=(
                     (

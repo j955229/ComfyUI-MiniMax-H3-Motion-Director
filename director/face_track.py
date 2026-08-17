@@ -249,7 +249,7 @@ def track_and_crop(
             "detector_model": fallback_name,
         })
         seeded_size = _interp(face_h, valid)
-        head_fraction = float(config.get("fallback_head_frac") or 0.34)
+        head_fraction = float(config.get("fallback_head_frac") or 0.5)
         for index in np.flatnonzero(~valid):
             boxes = fallback(images[index])
             if not boxes:
@@ -264,15 +264,15 @@ def track_and_crop(
     raw_cx, raw_cy = _interp(cx, valid), _interp(cy, valid)
     raw_h, raw_w = _interp(face_h, valid), _interp(face_w, valid)
     method = str(config.get("smooth_method") or "gaussian")
-    cx = _smooth(raw_cx, int(config.get("smooth_window") or 9), method)
+    cx = _smooth(raw_cx, int(config.get("smooth_window") or 21), method)
     cy = _smooth(raw_cy, int(config.get("smooth_window") or 9), method)
-    face_h = _smooth(raw_h, int(config.get("size_smooth_window") or 13), method)
+    face_h = _smooth(raw_h, int(config.get("size_smooth_window") or 51), method)
     face_w = _smooth(raw_w, int(config.get("size_smooth_window") or 13), method)
     if config.get("size_mode") == "stable":
         face_h[:] = np.max(face_h)
         face_w[:] = np.max(face_w)
 
-    factor = float(config.get("crop_factor") or 2.0)
+    factor = float(config.get("crop_factor") or 2.5)
     requested_canvas = int(config.get("canvas_size") or 768)
     canvas_mode = config.get("canvas_mode") or "auto_capped_768"
     max_crop = float(min(np.max(face_h) * factor, source_h, source_w))

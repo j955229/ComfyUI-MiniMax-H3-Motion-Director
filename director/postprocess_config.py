@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 
-POSTPROCESS_CONFIG_VERSION = 3
+POSTPROCESS_CONFIG_VERSION = 4
 CANVAS_MULTIPLE = 32
 
 DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
@@ -28,7 +28,6 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "skip_fl2v": False,
         "upscale_method": "lanczos",
         "upscale_model": "",
-        "vsr_source": "clean",
         "vsr_quality": "high",
         "resolution_mode": "follow_director",
         "aspect": "16:9",
@@ -42,37 +41,37 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "detector_model": "",
         "confidence": 0.35,
         "select": "largest",
-        "crop_factor": 2.0,
+        "crop_factor": 2.5,
         "canvas_mode": "auto_capped_768",
         "canvas_size": 768,
         "smooth_method": "gaussian",
-        "smooth_window": 9,
-        "size_smooth_window": 13,
+        "smooth_window": 21,
+        "size_smooth_window": 51,
         "size_mode": "adaptive",
         "adaptive": True,
-        "base_denoise": 0.22,
-        "strength_small_face": 0.35,
-        "strength_large_face": 0.16,
-        "face_px_small": 96,
-        "face_px_large": 320,
+        "base_denoise": 0.45,
+        "strength_small_face": 0.8,
+        "strength_large_face": 0.35,
+        "face_px_small": 30,
+        "face_px_large": 120,
         "mask_mode": "rect",
         "paste_region": "face_rect",
-        "feather": 0.12,
+        "feather": 24.0,
         "colour_match": True,
         "blend": 1.0,
         "undetected_frames": "fade",
         "identity_reference": "",
         "identity_track": False,
-        "identity_threshold": 0.35,
+        "identity_threshold": 0.28,
         "fallback_detector": "none",
-        "fallback_head_frac": 0.34,
+        "fallback_head_frac": 0.5,
         "gamma": 1.0,
-        "denoise_smooth": 5,
-        "mask_dilation": 0.06,
-        "feather_scales_with_crop": True,
+        "denoise_smooth": 9,
+        "mask_dilation": 24.0,
+        "feather_scales_with_crop": False,
         "sam_model": "",
-        "sam_threshold": 0.5,
-        "sam_dilation": 0.04,
+        "sam_threshold": 0.93,
+        "sam_dilation": 0.0,
         "sam_temporal_smooth": 5,
     },
     "preview": {
@@ -172,7 +171,6 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
         "lanczos",
     )
     g["upscale_model"] = str(g_raw.get("upscale_model") or "")
-    g["vsr_source"] = _choice(g_raw.get("vsr_source"), {"clean", "compressed"}, "clean")
     g["vsr_quality"] = _choice(
         g_raw.get("vsr_quality"), {"low", "medium", "high", "ultra"}, "high"
     )
@@ -186,13 +184,27 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g["width"] = _snap(_int(g_raw.get("width"), 1376, 32, 8192))
     g["height"] = _snap(_int(g_raw.get("height"), 768, 32, 8192))
 
+    raw_version = _int(raw.get("version"), 0, 0, 10000)
+    if 0 < raw_version < 4:
+        f_raw = dict(f_raw)
+        old_defaults = {
+            "crop_factor": (2.0,2.5), "smooth_window": (9,21), "size_smooth_window": (13,51),
+            "base_denoise": (0.22,0.45), "strength_small_face": (0.35,0.8),
+            "strength_large_face": (0.16,0.35), "face_px_small": (96,30), "face_px_large": (320,120),
+            "feather": (0.12,24.0), "identity_threshold": (0.35,0.28), "fallback_head_frac": (0.34,0.5),
+            "denoise_smooth": (5,9), "mask_dilation": (0.06,24.0),
+            "feather_scales_with_crop": (True,False), "sam_threshold": (0.5,0.93), "sam_dilation": (0.04,0.0),
+        }
+        for key,(old,new) in old_defaults.items():
+            if f_raw.get(key) == old: f_raw[key] = new
+
     f = result["face_refine"]
     f["enabled"] = _bool(f_raw.get("enabled"), False)
     f["detector"] = _choice(f_raw.get("detector"), {"ultralytics", "insightface"}, "ultralytics")
     f["detector_model"] = str(f_raw.get("detector_model") or "")
     f["confidence"] = _float(f_raw.get("confidence"), 0.35, 0.01, 1.0)
     f["select"] = _choice(f_raw.get("select"), {"largest", "most_central"}, "largest")
-    f["crop_factor"] = _float(f_raw.get("crop_factor"), 2.0, 1.05, 5.0)
+    f["crop_factor"] = _float(f_raw.get("crop_factor"), 2.5, 1.05, 5.0)
     f["canvas_mode"] = _choice(
         f_raw.get("canvas_mode"),
         {"manual", "auto_no_downscale", "auto_capped_768"},
@@ -202,20 +214,22 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     f["smooth_method"] = _choice(
         f_raw.get("smooth_method"), {"gaussian", "moving_average", "savgol"}, "gaussian"
     )
-    f["smooth_window"] = _int(f_raw.get("smooth_window"), 9, 1, 101) | 1
-    f["size_smooth_window"] = _int(f_raw.get("size_smooth_window"), 13, 1, 101) | 1
+    f["smooth_window"] = _int(f_raw.get("smooth_window"), 21, 1, 201) | 1
+    f["size_smooth_window"] = _int(f_raw.get("size_smooth_window"), 51, 1, 201) | 1
     f["size_mode"] = _choice(f_raw.get("size_mode"), {"adaptive", "stable"}, "adaptive")
     f["adaptive"] = _bool(f_raw.get("adaptive"), True)
     for key, default in (
-        ("base_denoise", 0.22), ("strength_small_face", 0.35),
-        ("strength_large_face", 0.16), ("feather", 0.12),
-        ("blend", 1.0), ("identity_threshold", 0.35),
-        ("fallback_head_frac", 0.34), ("mask_dilation", 0.06),
-        ("sam_threshold", 0.5), ("sam_dilation", 0.04),
+        ("base_denoise", 0.45), ("strength_small_face", 0.8),
+        ("strength_large_face", 0.35), ("blend", 1.0),
+        ("identity_threshold", 0.28), ("sam_threshold", 0.93),
     ):
         f[key] = _float(f_raw.get(key), default, 0.0, 1.0)
-    f["face_px_small"] = _int(f_raw.get("face_px_small"), 96, 8, 4096)
-    f["face_px_large"] = _int(f_raw.get("face_px_large"), 320, 8, 8192)
+    f["fallback_head_frac"] = _float(f_raw.get("fallback_head_frac"), 0.5, 0.0, 1.5)
+    f["feather"] = _float(f_raw.get("feather"), 24.0, 0.0, 256.0)
+    f["mask_dilation"] = _float(f_raw.get("mask_dilation"), 24.0, 0.0, 256.0)
+    f["sam_dilation"] = _float(f_raw.get("sam_dilation"), 0.0, 0.0, 256.0)
+    f["face_px_small"] = _int(f_raw.get("face_px_small"), 30, 4, 400)
+    f["face_px_large"] = _int(f_raw.get("face_px_large"), 120, 8, 800)
     f["mask_mode"] = _choice(f_raw.get("mask_mode"), {"rect", "ellipse", "sam"}, "rect")
     f["paste_region"] = _choice(f_raw.get("paste_region"), {"face_rect", "full_crop"}, "face_rect")
     f["colour_match"] = _bool(f_raw.get("colour_match"), True)
@@ -224,8 +238,8 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     f["identity_track"] = _bool(f_raw.get("identity_track"), False)
     f["fallback_detector"] = str(f_raw.get("fallback_detector") or "none")
     f["gamma"] = _float(f_raw.get("gamma"), 1.0, 0.1, 4.0)
-    f["denoise_smooth"] = _int(f_raw.get("denoise_smooth"), 5, 1, 51) | 1
-    f["feather_scales_with_crop"] = _bool(f_raw.get("feather_scales_with_crop"), True)
+    f["denoise_smooth"] = _int(f_raw.get("denoise_smooth"), 9, 1, 51) | 1
+    f["feather_scales_with_crop"] = _bool(f_raw.get("feather_scales_with_crop"), False)
     f["sam_model"] = str(f_raw.get("sam_model") or "")
     f["sam_temporal_smooth"] = _int(f_raw.get("sam_temporal_smooth"), 5, 1, 51) | 1
 
@@ -301,13 +315,10 @@ def refine_seed_for(config: dict[str, Any], seed: int) -> int:
 
 
 def resolve_vsr_quality_name(config: dict[str, Any]) -> str:
-    """Return the exact NVIDIA VideoSuperRes QualityLevel enum member name."""
-    source = str(config.get("vsr_source") or "clean").strip().lower()
+    """Return the VSR mode for clean frames decoded directly from the H3 latent."""
     quality = str(config.get("vsr_quality") or "high").strip().lower()
-    if quality not in {"low", "medium", "high", "ultra"}:
-        quality = "high"
-    name = quality.upper()
-    return f"HIGHBITRATE_{name}" if source != "compressed" else name
+    if quality not in {"low", "medium", "high", "ultra"}: quality = "high"
+    return f"HIGHBITRATE_{quality.upper()}"
 
 
 def resolve_upscale_target(config: dict[str, Any], director_width: int, director_height: int) -> tuple[int, int]:

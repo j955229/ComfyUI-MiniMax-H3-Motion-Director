@@ -63,14 +63,14 @@ def apply_per_frame_denoise(
     if not len(values):
         raise ValueError("Face Refine transform has no face sizes.")
     if config.get("adaptive", True):
-        low = float(config.get("face_px_small") or 96)
-        high = float(config.get("face_px_large") or 320)
+        low = float(config.get("face_px_small") or 30)
+        high = float(config.get("face_px_large") or 120)
         ratio = np.zeros_like(values) if high <= low else np.clip((values - low) / (high - low), 0, 1)
         ratio = ratio ** float(config.get("gamma") or 1.0)
-        small = float(config.get("strength_small_face") or 0.35)
-        large = float(config.get("strength_large_face") or 0.16)
+        small = float(config.get("strength_small_face") or 0.8)
+        large = float(config.get("strength_large_face") or 0.35)
         strengths = small + (large - small) * ratio
-        window = max(1, int(config.get("denoise_smooth") or 5) | 1)
+        window = max(1, int(config.get("denoise_smooth") or 9) | 1)
         if window > 1 and len(strengths) > 1:
             radius = window // 2
             kernel = np.exp(-(np.arange(-radius, radius + 1) ** 2) / (2 * max(0.5, window / 6) ** 2))
@@ -128,6 +128,7 @@ def apply_face_refine(
     prompt: str,
     seed: int,
     cfg: float,
+    steps: int,
     sampler_name: str,
     scheduler: str,
     shift_video: float,
@@ -178,12 +179,12 @@ def apply_face_refine(
                 latent=latent,
                 seed=int(seed) + part_index,
                 cfg=cfg,
-                steps=max(8, round(25 * 0.4)),
+                steps=max(1, int(steps)),
                 sampler_name=sampler_name,
                 scheduler=scheduler,
                 shift_video=shift_video,
                 shift_audio=shift_audio,
-                denoise=float(config.get("base_denoise") or 0.22),
+                denoise=float(config.get("base_denoise") or 0.45),
                 phase_name="face_refine",
                 on_step_preview=on_step_preview,
                 preview_every=preview_every,

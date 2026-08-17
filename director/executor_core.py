@@ -1974,6 +1974,7 @@ def execute_director_plan_core(
         prompt=str(getattr(plan, "global_prompt", "") or "Refine the tracked face with stable natural detail."),
         seed=seed,
         cfg=cfg,
+        steps=int(external_steps or steps),
         sampler_name=sampler,
         scheduler=scheduler,
         shift_video=shift_video,
