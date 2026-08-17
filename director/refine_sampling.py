@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import torch
@@ -376,10 +377,15 @@ class GlobalRefineOutcome:
     status: str
     fallback: str = ""
     error: str = ""
+    source_width: int = 0
+    source_height: int = 0
     target_width: int = 0
     target_height: int = 0
     steps: int = 0
     seed: int = 0
+    method: str = ""
+    vsr_quality: str = ""
+    timings: dict[str, float] = field(default_factory=dict)
 
     @property
     def succeeded(self) -> bool:
@@ -423,6 +429,11 @@ def apply_global_refine(
     refine_steps = refine_steps_for(config, first_steps)
     refine_seed = refine_seed_for(config, seed)
     width, height = int(director_width), int(director_height)
+    source_width, source_height = width, height
+    method = str(config.get("upscale_method") or "lanczos")
+    vsr_quality = str(config.get("vsr_quality") or "high")
+    timings: dict[str, float] = {}
+    stage_started = time.perf_counter()
     try:
         work = dict(samples)
         if not preserve_noise_mask or config.get("mode") == "upscale":
@@ -432,8 +443,13 @@ def apply_global_refine(
             width, height = resolve_upscale_target(config, director_width, director_height)
             if on_phase:
                 on_phase("global_upscale", 0)
+            decode_started = time.perf_counter()
             video_latent, audio_latent = _split_av(work)
             decoded = _decode_video(vae, video_latent)
+            timings["decode"] = time.perf_counter() - decode_started
+            source_height = int(decoded.shape[1])
+            source_width = int(decoded.shape[2])
+            upscale_started = time.perf_counter()
             upscaled = upscale_image_batch_strict(
                 decoded,
                 width=width,
@@ -452,13 +468,17 @@ def apply_global_refine(
                     else None
                 ),
             )
+            timings["upscale"] = time.perf_counter() - upscale_started
+            encode_started = time.perf_counter()
             work = _join_av(_encode_video(vae, upscaled), audio_latent, work)
+            timings["encode"] = time.perf_counter() - encode_started
             if repin is not None:
                 refine_positive = repin(refine_positive, work)
             if on_phase:
                 on_phase("global_upscale", 1)
         if on_phase:
             on_phase("global_refine", 0)
+        refine_sample_started = time.perf_counter()
         refined = sample_single_stage(
             model=model,
             positive=refine_positive,
@@ -476,27 +496,25 @@ def apply_global_refine(
             on_step_preview=on_step_preview,
             preview_every=preview_every,
         )
+        timings["refine_sampling"] = time.perf_counter() - refine_sample_started
+        timings["total"] = time.perf_counter() - stage_started
         if on_phase:
             on_phase("global_refine", 1)
         return GlobalRefineOutcome(
-            samples=refined,
-            status="SUCCESS",
-            target_width=width,
-            target_height=height,
-            steps=refine_steps,
-            seed=refine_seed,
+            samples=refined, status="SUCCESS",
+            source_width=source_width, source_height=source_height,
+            target_width=width, target_height=height, steps=refine_steps, seed=refine_seed,
+            method=method, vsr_quality=vsr_quality, timings=timings,
         )
     except Exception as exc:
         log.warning("Global Refine failed; keeping first-pass result: %s", exc)
+        timings["total"] = time.perf_counter() - stage_started
         return GlobalRefineOutcome(
-            samples=samples,
-            status="FAILED",
-            fallback="FIRST_PASS_RESULT",
+            samples=samples, status="FAILED", fallback="FIRST_PASS_RESULT",
             error=f"{type(exc).__name__}: {exc}",
-            target_width=width,
-            target_height=height,
-            steps=refine_steps,
-            seed=refine_seed,
+            source_width=source_width, source_height=source_height,
+            target_width=width, target_height=height, steps=refine_steps, seed=refine_seed,
+            method=method, vsr_quality=vsr_quality, timings=timings,
         )
 
 

@@ -10079,6 +10079,16 @@ class MiniMaxH3MotionDirectorEditor {
         const parts = [];
         if (detail.frames_label) parts.push(detail.frames_label);
         if (detail.task_key) parts.push(detail.task_key);
+        const elapsedSeconds = Math.max(0, Number(detail.elapsed_seconds) || 0);
+        const phaseElapsedSeconds = Math.max(0, Number(detail.phase_elapsed_seconds) || 0);
+        const fmtElapsed = (seconds) => {
+            if (seconds < 60) return `${seconds.toFixed(1)}s`;
+            const minutes = Math.floor(seconds / 60);
+            const remainSeconds = Math.floor(seconds % 60);
+            return `${String(minutes).padStart(2, "0")}:${String(remainSeconds).padStart(2, "0")}`;
+        };
+        if (elapsedSeconds > 0) parts.push(`已用 ${fmtElapsed(elapsedSeconds)}`);
+        if (phaseElapsedSeconds > 0) parts.push(`当前阶段 ${fmtElapsed(phaseElapsedSeconds)}`);
         parts.push(t("run.detailOverall", { pct: overallPct }));
         if (runTotal > 1) {
             parts.push(this.isImageBatch()

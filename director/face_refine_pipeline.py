@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -30,6 +31,9 @@ class FaceRefineOutcome:
     error: str = ""
     statistics: dict[str, Any] = field(default_factory=dict)
     canvas: str = ""
+    steps: int = 0
+    base_denoise: float = 0.0
+    timings: dict[str, Any] = field(default_factory=dict)
 
     @property
     def succeeded(self) -> bool:
@@ -141,11 +145,22 @@ def apply_face_refine(
     """Track once across the assembled video, then H3-regenerate crop chunks."""
     if not config.get("enabled"):
         return FaceRefineOutcome(images=images, status="DISABLED")
+    stage_started = time.perf_counter()
+    timings: dict[str, Any] = {"sampling_chunks": []}
+    base_denoise = float(config.get("base_denoise") or 0.45)
     try:
         if on_phase:
             on_phase("face_refine", 0)
+        detect_started = time.perf_counter()
         tracked = track_and_crop(images, config)
+        timings["detection_tracking"] = time.perf_counter() - detect_started
+        if on_phase:
+            on_phase("face_refine", 0.08)
+        mask_started = time.perf_counter()
         masks = build_sam_masks(tracked.crops, tracked.transform, config) if config.get("mask_mode") == "sam" else None
+        timings["mask"] = time.perf_counter() - mask_started
+        if on_phase:
+            on_phase("face_refine", 0.10)
         refined_parts = []
         ranges = _chunk_ranges(int(tracked.crops.shape[0]), chunk_lengths)
         for part_index, (start, end) in enumerate(ranges):
@@ -172,6 +187,13 @@ def apply_face_refine(
                 tracked.transform["face_heights"][start:end] + [tracked.transform["face_heights"][end - 1]] * max(0, aligned_length - (end - start)),
                 config,
             )
+            chunk_started = time.perf_counter()
+
+            def _chunk_phase(_phase: str, value: float) -> None:
+                if on_phase:
+                    fraction = (part_index + max(0.0, min(1.0, float(value)))) / max(1, len(ranges))
+                    on_phase("face_refine", 0.10 + 0.80 * fraction)
+
             sampled = sample_single_stage(
                 model=model,
                 positive=positive,
@@ -184,24 +206,32 @@ def apply_face_refine(
                 scheduler=scheduler,
                 shift_video=shift_video,
                 shift_audio=shift_audio,
-                denoise=float(config.get("base_denoise") or 0.45),
+                denoise=base_denoise,
                 phase_name="face_refine",
+                on_phase=_chunk_phase,
                 on_step_preview=on_step_preview,
                 preview_every=preview_every,
             )
             video_latent, _audio = _split_av(sampled)
             decoded = _decode_video(vae, video_latent)
             refined_parts.append(decoded[: end - start])
+            timings["sampling_chunks"].append(time.perf_counter() - chunk_started)
             tracked.statistics.update(denoise_stats)
-            if on_phase:
-                on_phase("face_refine", (part_index + 1) / len(ranges))
         refined_crops = torch.cat(refined_parts, dim=0)
+        if on_phase:
+            on_phase("face_refine", 0.92)
+        stitch_started = time.perf_counter()
         final = stitch_faces(images, refined_crops, tracked.transform, config, masks=masks)
+        timings["stitch"] = time.perf_counter() - stitch_started
+        timings["total"] = time.perf_counter() - stage_started
+        tracked.statistics["steps"] = int(steps)
+        tracked.statistics["base_denoise"] = base_denoise
+        if on_phase:
+            on_phase("face_refine", 1)
         return FaceRefineOutcome(
-            images=final.detach().cpu().float(),
-            status="SUCCESS",
-            statistics=tracked.statistics,
-            canvas=tracked.statistics["canvas"],
+            images=final.detach().cpu().float(), status="SUCCESS",
+            statistics=tracked.statistics, canvas=tracked.statistics["canvas"],
+            steps=int(steps), base_denoise=base_denoise, timings=timings,
         )
     except NoFaceDetected as exc:
         log.warning("Face Refine found no face; keeping assembled result: %s", exc)

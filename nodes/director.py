@@ -9,9 +9,12 @@
 
 from __future__ import annotations
 
+import time
+
 import comfy.samplers
 
 from ..director.executor_core import execute_director_plan_core
+from ..director.execution_report import append_report_section_lines, fmt_seconds
 from ..director.mixed_runtime import bind_mixed_runtime_node
 from ..director.postprocess_config import normalize_postprocess_config
 from ..director.progress import (
@@ -334,6 +337,8 @@ class MiniMaxH3MotionDirector:
         **kwargs,
     ):
         del kwargs
+        run_started = time.perf_counter()
+        auto_save_seconds = None
 
         final_run_id = FINAL_VIDEO_REGISTRY.begin_run(unique_id) if unique_id is not None else None
 
@@ -396,9 +401,11 @@ class MiniMaxH3MotionDirector:
             export_source_images=export_source_images,
             segment_audios=segment_audios,
         )
+        pipeline_seconds = time.perf_counter() - run_started
         if final_run_id is not None:
             try:
                 save_config = normalize_postprocess_config(postprocess_config)["save"]
+                _save_started = time.perf_counter()
                 record, auto_result = FINAL_VIDEO_REGISTRY.register_final(
                     unique_id,
                     final_run_id,
@@ -440,6 +447,8 @@ class MiniMaxH3MotionDirector:
                         )
                     ],
                 )
+                if auto_result is not None:
+                    auto_save_seconds = time.perf_counter() - _save_started
                 final_payload = record.info()
                 if auto_result is not None:
                     final_payload["auto_save"] = auto_result
@@ -464,6 +473,14 @@ class MiniMaxH3MotionDirector:
                     "ready": False,
                     "error": str(exc),
                 })
+        timing_lines = [f"Pipeline Total: {fmt_seconds(pipeline_seconds)}"]
+        if auto_save_seconds is not None:
+            timing_lines.append(f"Video Encode / Auto Save: {fmt_seconds(auto_save_seconds)}")
+            timing_lines.append(f"End-to-end Total: {fmt_seconds(time.perf_counter() - run_started)}")
+        else:
+            timing_lines.append("Video Encode / Auto Save: DISABLED")
+            timing_lines.append("End-to-end Total: n/a (Auto Save disabled)")
+        outputs = (*outputs[:-1], append_report_section_lines(outputs[-1], "Timing", timing_lines))
         report_director_report(unique_id, outputs[-1])
         report_director_audio_preview(unique_id, outputs[1])
         return outputs

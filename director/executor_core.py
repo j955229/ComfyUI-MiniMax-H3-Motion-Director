@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import torch
@@ -348,6 +349,7 @@ def execute_director_plan_core(
     postprocess_config: str | dict[str, Any] = "",
 ) -> tuple[torch.Tensor, list[torch.Tensor], list[dict[str, Any]], str]:
     """Process every segment with MiniMax H3 conditioning + single-stage sampling."""
+    core_started = time.perf_counter()
     legacy_preview = (plan.raw or {}).get(
         "liveTaePreview", (plan.raw or {}).get("live_tae_preview", True)
     )
@@ -601,6 +603,7 @@ def execute_director_plan_core(
     reference_diagnostics: dict[int, str] = {}
     warning_messages: list[str] = []
     global_refine_outcomes: dict[int, Any] = {}
+    segment_stage_timings: dict[int, dict[str, float]] = {}
 
     def _run_one_segment(
         seg, *, progress_index: int
@@ -626,6 +629,7 @@ def execute_director_plan_core(
 
         target_len = max(1, int(seg.frame_count or plan.total_frames or 124))
         timeline_slot = int(seg.timeline_index)
+        stage_times = segment_stage_timings.setdefault(timeline_slot, {})
         source_bridge_active = timeline_slot in source_bridge_consumer_slots
         context_link = resolve_context_link(
             seg,
@@ -1061,6 +1065,7 @@ def execute_director_plan_core(
                 latent_shapes=latent_shapes,
             )
 
+        _h3_sample_started = time.perf_counter()
         try:
             samples = sample_single_stage(
                 model=model,
@@ -1080,6 +1085,7 @@ def execute_director_plan_core(
                 on_step_preview=_report_step_preview if live_tae_preview else None,
                 preview_every=int(preview_config["preview_every"]),
             )
+            stage_times["h3_sampling"] = time.perf_counter() - _h3_sample_started
         except torch.cuda.OutOfMemoryError as exc:
             raise RuntimeError(
                 "Motion Director ran out of VRAM during H3 sampling. Motion "
@@ -1161,9 +1167,11 @@ def execute_director_plan_core(
             node_id, segment_index=progress_index, segment_total=seg_total,
             phase="decode", phase_value=0, phase_max=1, **meta,
         )
+        _decode_started = time.perf_counter()
         decoded, audio_dict = _decode_av_latent(
             samples, vae, audio_vae, decode_audio=decode_audio,
         )
+        stage_times["av_decode"] = time.perf_counter() - _decode_started
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
             phase="decode", phase_value=1, phase_max=1, **meta,
@@ -1478,9 +1486,11 @@ def execute_director_plan_core(
         if seg.index in run_indices:
             if clear_vram_between_segments and selected_results:
                 cleanup_segment_vram(enabled=True)
+            _segment_started = time.perf_counter()
             chunk, audio_dict = _run_one_segment(
                 seg, progress_index=progress_pos[seg.index]
             )
+            segment_stage_timings.setdefault(int(seg.timeline_index), {})["total"] = time.perf_counter() - _segment_started
             result = (chunk, audio_dict or {})
             nominal_generated_frames[int(seg.index)] = chunk
             selected_results[int(seg.index)] = result
@@ -1922,6 +1932,7 @@ def execute_director_plan_core(
         phase_value=0,
         phase_max=1,
     )
+    _assembly_started = time.perf_counter()
     if plan.export_mode == "all":
         missing_all = [seg.index for seg in all_segments if seg.index not in all_export_results]
         if missing_all:
@@ -1945,6 +1956,7 @@ def execute_director_plan_core(
         combined = cat_frames_variable_size(export_chunks)
     else:
         combined = concat_continuous_chunks(export_chunks, export_segments, plan)
+    assembly_seconds = time.perf_counter() - _assembly_started
     report_director_progress(
         node_id,
         segment_index=max(0, seg_total - 1),
@@ -2178,6 +2190,8 @@ def execute_director_plan_core(
         f"Steps: {int(global_refine_config['steps']) or 'Auto'}",
         f"Seed Mode: {str(global_refine_config['seed_mode']).title()}",
         f"Upscale Method: {global_refine_config['upscale_method']}",
+        (f"VSR Quality: {str(global_refine_config.get('vsr_quality') or 'high').title()}"
+         if global_refine_config.get('mode') == 'upscale' and global_refine_config.get('upscale_method') == 'nvidia_rtx_vsr' else ""),
     )
     for slot, outcome in sorted(global_refine_outcomes.items()):
         execution_report.add(
@@ -2185,7 +2199,10 @@ def execute_director_plan_core(
             "\n".join(
                 line for line in (
                     f"S{slot + 1} Status: {outcome.status}",
+                    f"Source Resolution: {outcome.source_width}x{outcome.source_height}" if outcome.source_width else "",
                     f"Target Resolution: {outcome.target_width}x{outcome.target_height}" if outcome.target_width else "",
+                    (f"Scale: {outcome.target_width / max(1, outcome.source_width):.2f}x" if outcome.source_width and outcome.target_width else ""),
+                    ("Timing: " + ", ".join(f"{name}={value:.2f}s" for name, value in outcome.timings.items()) if outcome.timings else ""),
                     f"Error: {outcome.error}" if outcome.error else "",
                     f"Fallback: {outcome.fallback}" if outcome.fallback else "",
                 ) if line
@@ -2198,10 +2215,54 @@ def execute_director_plan_core(
         f"Canvas: {face_outcome.canvas or face_refine_config['canvas_mode']}",
         f"Mask mode: {face_refine_config['mask_mode']}",
         f"Status: {face_outcome.status}",
-        f"Detection statistics: {face_outcome.statistics or 'n/a'}",
+        (f"Frames: {int((face_outcome.statistics or {}).get('frames') or 0)}" if face_outcome.statistics else "Frames: n/a"),
+        (f"Detected: {int((face_outcome.statistics or {}).get('detected') or 0)} / {int((face_outcome.statistics or {}).get('frames') or 0)}" if face_outcome.statistics else ""),
+        (f"Detection Rate: {100.0 * int((face_outcome.statistics or {}).get('detected') or 0) / max(1, int((face_outcome.statistics or {}).get('frames') or 0)):.1f}%" if face_outcome.statistics else ""),
+        (f"Interpolated: {int((face_outcome.statistics or {}).get('interpolated') or 0)}" if face_outcome.statistics else ""),
+        (f"Face px min/mean/max: {float((face_outcome.statistics or {}).get('face_px_min') or 0):.1f} / {float((face_outcome.statistics or {}).get('face_px_mean') or 0):.1f} / {float((face_outcome.statistics or {}).get('face_px_max') or 0):.1f}" if face_outcome.statistics else ""),
+        (f"Steps: {int(face_outcome.steps)}" if face_outcome.steps else ""),
+        (f"Base Denoise: {float(face_outcome.base_denoise):g}" if face_outcome.base_denoise else ""),
+        (f"Adaptive Strength min/mean/max: {float((face_outcome.statistics or {}).get('denoise_min') or 0):.3f} / {float((face_outcome.statistics or {}).get('denoise_mean') or 0):.3f} / {float((face_outcome.statistics or {}).get('denoise_max') or 0):.3f}" if face_outcome.statistics and 'denoise_mean' in face_outcome.statistics else ""),
         f"Error: {face_outcome.error}" if face_outcome.error else "",
         f"Fallback: {face_outcome.fallback}" if face_outcome.fallback else "",
     )
+    core_seconds = time.perf_counter() - core_started
+    for slot, timing in sorted(segment_stage_timings.items()):
+        outcome = global_refine_outcomes.get(slot)
+        global_times = getattr(outcome, "timings", {}) if outcome is not None else {}
+        global_total = float(global_times.get("total", 0.0))
+        known = float(timing.get("h3_sampling", 0.0)) + float(timing.get("av_decode", 0.0)) + global_total
+        prepare_other = max(0.0, float(timing.get("total", 0.0)) - known)
+        execution_report.add(
+            "Timing",
+            f"S{slot + 1} Total: {float(timing.get('total', 0.0)):.2f}s",
+            f"  Prepare / Conditioning / Context: {prepare_other:.2f}s",
+            f"  H3 Sampling: {float(timing.get('h3_sampling', 0.0)):.2f}s",
+            (f"  Global Refine Decode: {float(global_times.get('decode', 0.0)):.2f}s" if global_times else ""),
+            (f"  Global Refine Upscale: {float(global_times.get('upscale', 0.0)):.2f}s" if global_times else ""),
+            (f"  Global Refine VAE Encode: {float(global_times.get('encode', 0.0)):.2f}s" if global_times else ""),
+            (f"  Global Refine H3 Sampling: {float(global_times.get('refine_sampling', 0.0)):.2f}s" if global_times else ""),
+            (f"  Global Refine Total: {global_total:.2f}s" if global_times else "  Global Refine Total: 0.00s"),
+            f"  AV Decode: {float(timing.get('av_decode', 0.0)):.2f}s",
+        )
+    execution_report.add("Timing", f"Assembly: {assembly_seconds:.2f}s")
+    if face_outcome.timings:
+        execution_report.add(
+            "Timing",
+            f"Face Refine Detection / Tracking: {float(face_outcome.timings.get('detection_tracking', 0.0)):.2f}s",
+            f"Face Refine Mask: {float(face_outcome.timings.get('mask', 0.0)):.2f}s",
+        )
+        for part_index, seconds in enumerate(face_outcome.timings.get("sampling_chunks", [])):
+            execution_report.add("Timing", f"Face Refine S{part_index + 1} Sampling: {float(seconds):.2f}s")
+        execution_report.add(
+            "Timing",
+            f"Face Refine Stitch: {float(face_outcome.timings.get('stitch', 0.0)):.2f}s",
+            f"Face Refine Total: {float(face_outcome.timings.get('total', 0.0)):.2f}s",
+        )
+    else:
+        execution_report.add("Timing", "Face Refine Total: 0.00s")
+    execution_report.add("Timing", f"Core Pipeline: {core_seconds:.2f}s")
+
     execution_report.add(
         "Preview",
         f"Director Preview: {'ON' if preview_config['enabled'] else 'OFF'}",

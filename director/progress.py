@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import base64
 import io
 import wave
@@ -29,6 +30,22 @@ DIRECTOR_PHASES = (
     "face_refine",
     "finalize",
 )
+
+SEGMENT_PHASES = ("prepare", "context_encode", "sample", "global_upscale", "global_refine", "decode")
+GLOBAL_PHASES = ("assemble", "face_refine", "finalize")
+PHASE_WEIGHTS = {
+    "prepare": 1.0,
+    "context_encode": 1.5,
+    "sample": 8.0,
+    "global_upscale": 5.0,
+    "global_refine": 4.0,
+    "decode": 2.0,
+    "assemble": 1.0,
+    "face_refine": 8.0,
+    "finalize": 1.0,
+}
+_RUN_STARTED: dict[str, float] = {}
+_PHASE_STARTED: dict[str, tuple[str, float]] = {}
 
 PHASE_LABELS = {
     "prepare": "准备片段",
@@ -67,33 +84,39 @@ def report_director_progress(
 ) -> None:
     if not node_id:
         return
+    key = str(node_id)
+    now = time.perf_counter()
+    if phase == "plan" or key not in _RUN_STARTED:
+        _RUN_STARTED[key] = now
+    previous_phase = _PHASE_STARTED.get(key)
+    if previous_phase is None or previous_phase[0] != phase:
+        _PHASE_STARTED[key] = (phase, now)
+    phase_started = _PHASE_STARTED[key][1]
 
-    phases_per = len(DIRECTOR_PHASES)
-    overall_max = max(1, segment_total * phases_per)
-    phase_fraction = max(0.0, min(1.0, phase_value / max(phase_max, 1)))
-    overall_value = min(
-        overall_max,
-        segment_index * phases_per + _phase_index(phase) + phase_fraction,
-    )
-
-    remaining_segments = max(0, segment_total - segment_index - 1)
-    if phase == "finish":
+    phase_fraction = max(0.0, min(1.0, float(phase_value) / max(float(phase_max), 1e-9)))
+    segment_weight = sum(PHASE_WEIGHTS[name] for name in SEGMENT_PHASES)
+    global_weight = sum(PHASE_WEIGHTS[name] for name in GLOBAL_PHASES)
+    overall_max = max(1.0, max(1, int(segment_total)) * segment_weight + global_weight)
+    if phase in SEGMENT_PHASES:
+        offset = sum(PHASE_WEIGHTS[name] for name in SEGMENT_PHASES[:SEGMENT_PHASES.index(phase)])
+        overall_value = max(0, int(segment_index)) * segment_weight + offset + PHASE_WEIGHTS[phase] * phase_fraction
+    elif phase in GLOBAL_PHASES:
+        offset = sum(PHASE_WEIGHTS[name] for name in GLOBAL_PHASES[:GLOBAL_PHASES.index(phase)])
+        overall_value = max(1, int(segment_total)) * segment_weight + offset + PHASE_WEIGHTS[phase] * phase_fraction
+    elif phase == "finish":
         overall_value = overall_max
+    else:
+        overall_value = 0.0
+    overall_value = min(overall_max, overall_value)
+    remaining_segments = max(0, int(segment_total) - int(segment_index) - 1)
+    if phase == "finish":
         remaining_segments = 0
 
-    timeline_seg = (
-        timeline_segment_index + 1
-        if timeline_segment_index is not None
-        else segment_index + 1
-    )
+    timeline_seg = timeline_segment_index + 1 if timeline_segment_index is not None else segment_index + 1
     timeline_total = timeline_segment_total if timeline_segment_total is not None else segment_total
-    partial_run = (
-        timeline_segment_total is not None
-        and segment_total < timeline_segment_total
-    )
-
+    partial_run = timeline_segment_total is not None and segment_total < timeline_segment_total
     payload = {
-        "node_id": str(node_id),
+        "node_id": key,
         "segment": segment_index + 1,
         "segment_total": segment_total,
         "timeline_segment": timeline_seg,
@@ -108,24 +131,25 @@ def report_director_progress(
         "remaining_segments": remaining_segments,
         "frames_label": frames_label,
         "task_key": task_key,
+        "elapsed_seconds": max(0.0, now - _RUN_STARTED.get(key, now)),
+        "phase_elapsed_seconds": max(0.0, now - phase_started),
     }
-
     try:
         from server import PromptServer
-
         srv = PromptServer.instance
         if srv:
             srv.send_sync("minimax_motion_director_progress", payload, srv.client_id)
-            srv.send_progress_text("", str(node_id))
+            srv.send_progress_text("", key)
     except Exception as exc:
         log.debug("Director progress send skipped: %s", exc)
-
     try:
         from comfy_execution.progress import get_progress_state
-
-        get_progress_state().update_progress(str(node_id), overall_value, overall_max)
+        get_progress_state().update_progress(key, overall_value, overall_max)
     except Exception:
         pass
+    if phase == "finish":
+        _RUN_STARTED.pop(key, None)
+        _PHASE_STARTED.pop(key, None)
 
 
 def report_director_segment_preview(

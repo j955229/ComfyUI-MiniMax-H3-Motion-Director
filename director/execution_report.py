@@ -19,6 +19,7 @@ SECTION_ORDER = (
     "Generation",
     "Global Refine",
     "Face Refine",
+    "Timing",
     "Preview",
     "Warnings",
     "Final",
@@ -39,6 +40,33 @@ def fmt_float(value: Any) -> str:
     if value is None:
         return "n/a"
     return f"{float(value):.6f}"
+
+
+def fmt_seconds(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    seconds = max(0.0, float(value))
+    if seconds < 60.0:
+        return f"{seconds:.2f}s"
+    minutes = int(seconds // 60)
+    remain = seconds - minutes * 60
+    return f"{minutes}m {remain:05.2f}s"
+
+
+def append_report_section_lines(report: str, section: str, lines) -> str:
+    clean = [str(line) for line in lines if str(line).strip()]
+    if not clean:
+        return str(report or "")
+    text = str(report or "").rstrip()
+    marker = f"[{section}]"
+    payload = "\n".join(clean)
+    start = text.find(marker)
+    if start < 0:
+        return text + f"\n\n{marker}\n{payload}"
+    next_section = text.find("\n\n[", start + len(marker))
+    if next_section < 0:
+        return text + "\n" + payload
+    return text[:next_section].rstrip() + "\n" + payload + text[next_section:]
 
 
 def context_shortfall_warning(segment_slot: int, requested: int, actual: int) -> str | None:
@@ -167,7 +195,9 @@ def format_audio_context(from_segment: int, to_segment: int, diag: dict[str, Any
 
 __all__ = [
     "DirectorExecutionReport",
+    "append_report_section_lines",
     "fmt_float",
+    "fmt_seconds",
     "context_shortfall_warning",
     "format_audio_context",
     "format_effective_references",

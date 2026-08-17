@@ -254,6 +254,7 @@ def sample_single_stage(
     )
 
     def callback(step, x0, x, total_steps):
+        notify(phase_name, min(1.0, (int(step) + 1) / max(1, int(total_steps))))
         if on_step_preview is not None and not preview_wrapped:
             try:
                 if step % every == 0 or step >= max(0, int(total_steps) - 1):
