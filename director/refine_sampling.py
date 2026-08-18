@@ -16,6 +16,7 @@ import torch
 
 from .core_sampling import sample_single_stage
 from .postprocess_config import (
+    refine_passes_for,
     refine_seed_for,
     refine_steps_for,
     resolve_upscale_target,
@@ -24,6 +25,8 @@ from .postprocess_config import (
 from .rtx_deblur import RTXDeblurOutcome, apply_rtx_deblur
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.refine")
+
+RefinePassCallback = Callable[[int, int, dict], None]
 
 
 def _unpack(out):
@@ -91,119 +94,54 @@ def _upscale_model_exact(
     on_progress: Callable[[float], None] | None = None,
 ) -> torch.Tensor:
     if not model_name:
-        raise ValueError(
-            "Upscale Model was selected but no internal model was selected."
-        )
+        raise ValueError("Upscale Model was selected but no internal model was selected.")
 
     import folder_paths
     import comfy.model_management as model_management
     import comfy.utils
     from comfy_extras.nodes_upscale_model import UpscaleModelLoader
 
-    resolver = getattr(
-        folder_paths,
-        "get_full_path_or_raise",
-        None,
-    )
-
+    resolver = getattr(folder_paths, "get_full_path_or_raise", None)
     if resolver is not None:
-        resolver(
-            "upscale_models",
-            model_name,
-        )
-    elif not getattr(
-        folder_paths,
-        "get_full_path",
-        lambda *_: None,
-    )(
-        "upscale_models",
-        model_name,
-    ):
-        raise FileNotFoundError(
-            f"Upscale model not found: {model_name}"
-        )
+        resolver("upscale_models", model_name)
+    elif not getattr(folder_paths, "get_full_path", lambda *_: None)("upscale_models", model_name):
+        raise FileNotFoundError(f"Upscale model not found: {model_name}")
 
-    model = _unpack(
-        UpscaleModelLoader().load_model(
-            model_name
-        )
-    )[0]
-
+    model = _unpack(UpscaleModelLoader().load_model(model_name))[0]
     device = model.patcher.load_device
     output_device = model_management.intermediate_device()
-
     total_frames = int(images.shape[0])
     batch_size = 4
-
-    probe = images[
-        : min(batch_size, total_frames)
-    ]
-
+    probe = images[: min(batch_size, total_frames)]
     memory_required = (
-        (512 * 512 * 3)
-        * probe.element_size()
-        * max(model.scale, 1.0)
-        * 384.0
+        (512 * 512 * 3) * probe.element_size() * max(model.scale, 1.0) * 384.0
     )
-
-    memory_required += (
-        probe.nelement()
-        * probe.element_size()
-    )
-
+    memory_required += probe.nelement() * probe.element_size()
     model_management.load_models_gpu(
-        [model.patcher],
-        memory_required=memory_required,
-        force_full_load=True,
+        [model.patcher], memory_required=memory_required, force_full_load=True,
     )
 
     output = None
-
-    for index in range(
-        0,
-        total_frames,
-        batch_size,
-    ):
+    for index in range(0, total_frames, batch_size):
         model_management.throw_exception_if_processing_interrupted()
-
-        end = min(
-            index + batch_size,
-            total_frames,
-        )
-
+        end = min(index + batch_size, total_frames)
         chunk = images[index:end]
-
-        in_img = (
-            chunk[..., :3]
-            .movedim(-1, -3)
-            .to(device)
-        )
-
+        in_img = chunk[..., :3].movedim(-1, -3).to(device)
         tile = 512
         overlap = 32
-
         while True:
             try:
                 steps = (
                     in_img.shape[0]
                     * comfy.utils.get_tiled_scale_steps(
-                        in_img.shape[3],
-                        in_img.shape[2],
-                        tile_x=tile,
-                        tile_y=tile,
-                        overlap=overlap,
+                        in_img.shape[3], in_img.shape[2],
+                        tile_x=tile, tile_y=tile, overlap=overlap,
                     )
                 )
-
-                pbar = comfy.utils.ProgressBar(
-                    steps
-                )
-
+                pbar = comfy.utils.ProgressBar(steps)
                 upscaled = comfy.utils.tiled_scale(
                     in_img,
-                    lambda tensor: model(
-                        tensor.float()
-                    ),
+                    lambda tensor: model(tensor.float()),
                     tile_x=tile,
                     tile_y=tile,
                     overlap=overlap,
@@ -211,39 +149,19 @@ def _upscale_model_exact(
                     pbar=pbar,
                     output_device=output_device,
                 )
-
                 break
-
             except Exception as exc:
-                model_management.raise_non_oom(
-                    exc
-                )
-
+                model_management.raise_non_oom(exc)
                 tile //= 2
-
                 if tile < 128:
                     raise
 
         upscaled = torch.clamp(
-            upscaled.movedim(-3, -1),
-            min=0,
-            max=1.0,
-        ).to(
-            model_management.intermediate_dtype()
-        )
-
-        if (
-            int(upscaled.shape[2]) != int(width)
-            or int(upscaled.shape[1]) != int(height)
-        ):
-            upscaled = _resize_lanczos(
-                upscaled,
-                int(width),
-                int(height),
-            )
-
+            upscaled.movedim(-3, -1), min=0, max=1.0,
+        ).to(model_management.intermediate_dtype())
+        if int(upscaled.shape[2]) != int(width) or int(upscaled.shape[1]) != int(height):
+            upscaled = _resize_lanczos(upscaled, int(width), int(height))
         upscaled = upscaled.cpu()
-
         if output is None:
             output = torch.empty(
                 (
@@ -255,29 +173,15 @@ def _upscale_model_exact(
                 dtype=upscaled.dtype,
                 device="cpu",
             )
-
-        output[index:end].copy_(
-            upscaled
-        )
-
+        output[index:end].copy_(upscaled)
         del in_img
         del upscaled
-
         if on_progress is not None:
-            on_progress(
-                end / max(
-                    1,
-                    total_frames,
-                )
-            )
-
+            on_progress(end / max(1, total_frames))
         model_management.throw_exception_if_processing_interrupted()
 
     if output is None:
-        raise RuntimeError(
-            "Upscale Model produced no frames."
-        )
-
+        raise RuntimeError("Upscale Model produced no frames.")
     return output
 
 
@@ -393,6 +297,31 @@ def _deblur_report_lines(outcome: RTXDeblurOutcome | None) -> list[str]:
     return lines
 
 
+def _selected_refine_model(config: dict[str, Any], fallback_model):
+    """Load the dropdown-selected H3 diffusion model; empty means first-pass MODEL."""
+    model_name = str(config.get("refine_model") or "").strip()
+    if not model_name:
+        return fallback_model, "Main"
+
+    import comfy.model_base
+    import folder_paths
+    from nodes import UNETLoader
+
+    resolver = getattr(folder_paths, "get_full_path_or_raise", None)
+    if resolver is not None:
+        resolver("diffusion_models", model_name)
+    elif not getattr(folder_paths, "get_full_path", lambda *_: None)("diffusion_models", model_name):
+        raise FileNotFoundError(f"Refine model not found: {model_name}")
+
+    loaded = _unpack(UNETLoader().load_unet(model_name, "default"))[0]
+    base_model = getattr(loaded, "model", None)
+    if not isinstance(base_model, comfy.model_base.MiniMaxH3):
+        raise ValueError(
+            f"Refine Model must be MiniMax H3; selected {model_name} loaded {type(base_model).__name__}."
+        )
+    return loaded, model_name
+
+
 @dataclass
 class GlobalRefineOutcome:
     samples: dict
@@ -407,6 +336,9 @@ class GlobalRefineOutcome:
     seed: int = 0
     method: str = ""
     vsr_quality: str = ""
+    passes: int = 0
+    refine_model: str = ""
+    pass_timings: list[float] = field(default_factory=list)
     timings: dict[str, float] = field(default_factory=dict)
 
     @property
@@ -435,10 +367,11 @@ def apply_global_refine(
     repin: Callable[[Any, dict], Any] | None = None,
     on_phase: Callable[[str, float], None] | None = None,
     on_step_preview: Callable[[int, int, Any, Any], None] | None = None,
+    on_pass_result: RefinePassCallback | None = None,
     preview_every: int = 1,
     preserve_noise_mask: bool = False,
 ) -> GlobalRefineOutcome:
-    """Run optional Deblur, upscale and second sampling with strict fallback."""
+    """Run optional Deblur, upscale and one-or-more second-sampling passes."""
     if not config.get("enabled"):
         return GlobalRefineOutcome(samples=samples, status="DISABLED")
     if config.get("skip_fl2v") and task_key == "fl2v":
@@ -448,18 +381,19 @@ def apply_global_refine(
     deblur_enabled = bool(config.get("rtx_deblur_enabled", False))
     upscale_enabled = config.get("mode") == "upscale"
     refine_steps = refine_steps_for(config, first_steps)
-    refine_seed = refine_seed_for(config, seed)
+    pass_count = refine_passes_for(config) if second_sampling_enabled else 0
+    first_refine_seed = refine_seed_for(config, seed, 0)
     width, height = int(director_width), int(director_height)
     source_width, source_height = width, height
     method = str(config.get("upscale_method") or "lanczos")
     vsr_quality = str(config.get("vsr_quality") or "high")
     timings: dict[str, float] = {}
+    pass_timings: list[float] = []
     stage_started = time.perf_counter()
     deblur_outcome: RTXDeblurOutcome | None = None
+    selected_model_name = ""
 
     try:
-        # With every child stage OFF, the master is a true no-op.  Preserve the
-        # exact first-pass object rather than decoding/re-encoding pointlessly.
         if not second_sampling_enabled and not deblur_enabled and not upscale_enabled:
             timings["total"] = time.perf_counter() - stage_started
             return GlobalRefineOutcome(
@@ -470,7 +404,7 @@ def apply_global_refine(
                 target_width=width,
                 target_height=height,
                 steps=0,
-                seed=refine_seed,
+                seed=first_refine_seed,
                 method=method,
                 vsr_quality=vsr_quality,
                 timings=timings,
@@ -500,13 +434,8 @@ def apply_global_refine(
                 images=decoded,
                 stage="presample",
                 on_progress=(
-                    (
-                        lambda done, total: on_phase(
-                            "rtx_deblur", done / max(1, total)
-                        )
-                    )
-                    if on_phase is not None
-                    else None
+                    (lambda done, total: on_phase("rtx_deblur", done / max(1, total)))
+                    if on_phase is not None else None
                 ),
             )
             timings["deblur"] = time.perf_counter() - deblur_started
@@ -527,14 +456,8 @@ def apply_global_refine(
                 model_name=config.get("upscale_model") or "",
                 vsr_quality=config.get("vsr_quality") or "high",
                 on_progress=(
-                    (
-                        lambda value: on_phase(
-                            "global_upscale",
-                            value,
-                        )
-                    )
-                    if on_phase is not None
-                    else None
+                    (lambda value: on_phase("global_upscale", value))
+                    if on_phase is not None else None
                 ),
             )
             timings["upscale"] = time.perf_counter() - upscale_started
@@ -564,42 +487,66 @@ def apply_global_refine(
                 target_width=width,
                 target_height=height,
                 steps=0,
-                seed=refine_seed,
+                seed=first_refine_seed,
                 method=method,
                 vsr_quality=vsr_quality,
                 timings=timings,
             )
 
+        refine_model, selected_model_name = _selected_refine_model(config, model)
+        refined = work
         if on_phase:
             on_phase("global_refine", 0)
-        refine_sample_started = time.perf_counter()
-        refined = sample_single_stage(
-            model=model,
-            positive=refine_positive,
-            negative=negative,
-            latent=work,
-            seed=refine_seed,
-            cfg=cfg,
-            steps=refine_steps,
-            sampler_name=sampler_name,
-            scheduler=scheduler,
-            shift_video=shift_video,
-            shift_audio=shift_audio,
-            denoise=float(config.get("denoise") or 0.25),
-            phase_name="global_refine",
-            on_step_preview=on_step_preview,
-            preview_every=preview_every,
-        )
-        timings["refine_sampling"] = time.perf_counter() - refine_sample_started
+
+        for pass_index in range(pass_count):
+            pass_started = time.perf_counter()
+            pass_seed = refine_seed_for(config, seed, pass_index)
+
+            def _pass_phase(_phase: str, value: float, *, _index=pass_index) -> None:
+                if on_phase is not None:
+                    on_phase(
+                        "global_refine",
+                        (float(_index) + max(0.0, min(1.0, float(value)))) / max(1, pass_count),
+                    )
+
+            refined = sample_single_stage(
+                model=refine_model,
+                positive=refine_positive,
+                negative=negative,
+                latent=refined,
+                seed=pass_seed,
+                cfg=cfg,
+                steps=refine_steps,
+                sampler_name=sampler_name,
+                scheduler=scheduler,
+                shift_video=shift_video,
+                shift_audio=shift_audio,
+                denoise=float(config.get("denoise") or 0.25),
+                phase_name="global_refine",
+                on_phase=_pass_phase,
+                on_step_preview=on_step_preview,
+                preview_every=preview_every,
+            )
+            elapsed = time.perf_counter() - pass_started
+            pass_timings.append(elapsed)
+            timings[f"refine_pass_{pass_index + 1}"] = elapsed
+            if on_pass_result is not None:
+                on_pass_result(pass_index + 1, pass_count, refined)
+
+        timings["refine_sampling"] = sum(pass_timings)
         timings["total"] = time.perf_counter() - stage_started
         if on_phase:
             on_phase("global_refine", 1)
         status_lines = [
             "SUCCESS",
             "Second Sampling: ON",
+            f"Refine Model: {selected_model_name}",
+            f"Passes: {pass_count}",
             f"Upscale: {'ON' if upscale_enabled else 'OFF'}",
             *_deblur_report_lines(deblur_outcome),
         ]
+        for index, elapsed in enumerate(pass_timings, start=1):
+            status_lines.append(f"Pass {index}: SUCCESS · {elapsed:.2f}s")
         return GlobalRefineOutcome(
             samples=refined,
             status="\n".join(status_lines),
@@ -608,9 +555,12 @@ def apply_global_refine(
             target_width=width,
             target_height=height,
             steps=refine_steps,
-            seed=refine_seed,
+            seed=first_refine_seed,
             method=method,
             vsr_quality=vsr_quality,
+            passes=pass_count,
+            refine_model=selected_model_name,
+            pass_timings=pass_timings,
             timings=timings,
         )
     except Exception as exc:
@@ -626,9 +576,12 @@ def apply_global_refine(
             target_width=width,
             target_height=height,
             steps=refine_steps if second_sampling_enabled else 0,
-            seed=refine_seed,
+            seed=first_refine_seed,
             method=method,
             vsr_quality=vsr_quality,
+            passes=pass_count,
+            refine_model=selected_model_name,
+            pass_timings=pass_timings,
             timings=timings,
         )
 
