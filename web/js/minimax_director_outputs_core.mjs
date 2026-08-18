@@ -22,3 +22,11 @@ export function reportResizeMaxHeight(containerBottom, reportTop, padding = 12) 
     if (!Number.isFinite(bottom) || !Number.isFinite(top)) return 0;
     return Math.max(0, Math.floor(bottom - top - safePadding));
 }
+
+export async function copyReportText(text, writeText) {
+    const value = String(text || "");
+    if (!value) return false;
+    if (typeof writeText !== "function") return false;
+    await writeText(value);
+    return true;
+}
