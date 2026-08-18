@@ -29,7 +29,17 @@ function syncColumnState(root, section) {
     if (!column) return;
     const globalEnabled = !!root.querySelector('[data-path="global_refine.enabled"]')?.checked;
     const deblurEnabled = !!section.querySelector('[data-path="global_refine.rtx_deblur_enabled"]')?.checked;
-    column.classList.toggle("mmx-post-disabled", !(globalEnabled || deblurEnabled));
+
+    // Global Refine and RTX Deblur are independent stages. The base postprocess
+    // renderer dims the entire column when Global Refine is disabled, but that
+    // would also dim Deblur even when Deblur remains enabled. Keep the column
+    // itself active and apply disabled styling to each direct child instead.
+    column.classList.remove("mmx-post-disabled");
+    for (const child of Array.from(column.children || [])) {
+        if (child === section) continue;
+        child.classList.toggle("mmx-post-disabled", !globalEnabled);
+    }
+    section.classList.toggle("mmx-post-disabled", !deblurEnabled);
 }
 
 function requestStoreRender(root) {
