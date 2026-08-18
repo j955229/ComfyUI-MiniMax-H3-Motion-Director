@@ -1,17 +1,37 @@
-name: Mixed Mode Browser CI
+name: Director Browser CI
 
 on:
   push:
     branches:
+      - main
       - feature/mixed-mode
+    paths:
+      - "web/js/minimax_mixed_*.mjs"
+      - "web/js/minimax_timeline.js"
+      - "web/js/minimax_gen_timeline.js"
+      - "web/js/minimax_run_selection.mjs"
+      - "web/js/minimax_postprocess_ui.mjs"
+      - "web/js/minimax_rtx_deblur_ui.js"
+      - "web/js/minimax_i18n.js"
+      - "web/js/tests/minimax_mixed_*.mjs"
+      - "web/js/tests/minimax_run_selection.test.mjs"
+      - "web/js/tests/minimax_postprocess_ui.test.mjs"
+      - "web/js/tests/minimax_rtx_deblur_*.test.mjs"
+      - "web/js/tests/minimax_director_module_load.test.mjs"
+      - ".github/workflows/mixed_mode_browser_ci.yml"
   pull_request:
     paths:
       - "web/js/minimax_mixed_*.mjs"
       - "web/js/minimax_timeline.js"
       - "web/js/minimax_gen_timeline.js"
       - "web/js/minimax_run_selection.mjs"
+      - "web/js/minimax_postprocess_ui.mjs"
+      - "web/js/minimax_rtx_deblur_ui.js"
+      - "web/js/minimax_i18n.js"
       - "web/js/tests/minimax_mixed_*.mjs"
       - "web/js/tests/minimax_run_selection.test.mjs"
+      - "web/js/tests/minimax_postprocess_ui.test.mjs"
+      - "web/js/tests/minimax_rtx_deblur_*.test.mjs"
       - "web/js/tests/minimax_director_module_load.test.mjs"
       - ".github/workflows/mixed_mode_browser_ci.yml"
 
@@ -34,15 +54,15 @@ jobs:
       - name: Provide Comfy frontend stubs
         run: |
           mkdir -p scripts
-          cat > scripts/app.js <<'EOF'
+          cat > scripts/app.js <<'STUB'
           export const __extensions = [];
           export const app = {
             registerExtension(extension) {
               __extensions.push(extension);
             },
           };
-          EOF
-          cat > scripts/api.js <<'EOF'
+          STUB
+          cat > scripts/api.js <<'STUB'
           export const api = {
             apiURL: (value) => value,
             fetchApi: async () => ({
@@ -54,13 +74,15 @@ jobs:
             addEventListener: () => {},
             removeEventListener: () => {},
           };
-          EOF
+          STUB
 
-      - name: Check Mixed browser modules
+      - name: Check Director browser modules
         run: |
           node --check web/js/minimax_timeline.js
           node --check web/js/minimax_gen_timeline.js
           node --check web/js/minimax_run_selection.mjs
+          node --check web/js/minimax_postprocess_ui.mjs
+          node --check web/js/minimax_rtx_deblur_ui.js
           node --check web/js/minimax_mixed_ui.mjs
           node --check web/js/minimax_mixed_ui_v2.mjs
           node --check web/js/minimax_mixed_i18n.mjs
@@ -71,9 +93,18 @@ jobs:
           node --check web/js/tests/minimax_mixed_mode_inputs.test.mjs
           node --check web/js/tests/minimax_mixed_browser.test.mjs
           node --check web/js/tests/minimax_run_selection.test.mjs
+          node --check web/js/tests/minimax_postprocess_ui.test.mjs
+          node --check web/js/tests/minimax_rtx_deblur_lifecycle.test.mjs
+          node --check web/js/tests/minimax_rtx_deblur_browser.test.mjs
 
       - name: Run Run Selection regression contract
         run: node web/js/tests/minimax_run_selection.test.mjs
+
+      - name: Run postprocess state contract
+        run: node web/js/tests/minimax_postprocess_ui.test.mjs
+
+      - name: Run RTX Deblur lifecycle regression contract
+        run: node web/js/tests/minimax_rtx_deblur_lifecycle.test.mjs
 
       - name: Load real Director module
         run: node web/js/tests/minimax_director_module_load.test.mjs
@@ -86,3 +117,6 @@ jobs:
 
       - name: Run Mixed integrated browser contract
         run: node web/js/tests/minimax_mixed_browser.test.mjs
+
+      - name: Run RTX Deblur browser lifecycle contract
+        run: node web/js/tests/minimax_rtx_deblur_browser.test.mjs

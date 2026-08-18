@@ -1,33 +1,61 @@
 import { app } from "../../scripts/app.js";
+import { getLocale, onLocaleChange } from "./minimax_i18n.js";
 
 const ROOT_SELECTOR = ".mmx-postprocess";
 const SECTION_SELECTOR = "[data-rtx-deblur-section]";
-const observedRoots = new WeakSet();
+const boundRoots = new WeakSet();
+let scanScheduled = false;
+let stopLocaleSync = null;
 
-function isZh(root) {
+function currentLanguage(root) {
+    const locale = getLocale?.();
+    if (locale === "en" || locale === "zh") return locale;
     const label = root.querySelector('[data-post-text="upscale"]')?.textContent || "";
-    return label.includes("放大");
+    return label.includes("放大") ? "zh" : "en";
+}
+
+function setText(element, text) {
+    if (element && element.textContent !== text) element.textContent = text;
 }
 
 function syncText(root, section) {
-    const zh = isZh(root);
-    const enabled = section.querySelector("[data-rtx-deblur-enabled-label]");
-    const quality = section.querySelector("[data-rtx-deblur-quality-label]");
-    if (enabled) enabled.textContent = zh ? "开 / 关" : "ON / OFF";
-    if (quality) quality.textContent = zh ? "质量" : "Quality";
+    const zh = currentLanguage(root) === "zh";
+    setText(section.querySelector("[data-rtx-deblur-enabled-label]"), zh ? "开 / 关" : "ON / OFF");
+    setText(section.querySelector("[data-rtx-deblur-quality-label]"), zh ? "质量" : "Quality");
 }
 
 function syncColumnState(root, section) {
     const column = root.querySelector('[data-section="global_refine"]');
-    const enabled = section.querySelector('[data-path="global_refine.rtx_deblur_enabled"]');
-    if (column && enabled?.checked) column.classList.remove("mmx-post-disabled");
+    if (!column) return;
+    const globalEnabled = !!root.querySelector('[data-path="global_refine.enabled"]')?.checked;
+    const deblurEnabled = !!section.querySelector('[data-path="global_refine.rtx_deblur_enabled"]')?.checked;
+    column.classList.toggle("mmx-post-disabled", !(globalEnabled || deblurEnabled));
+}
+
+function requestStoreRender(root) {
+    const existingInput = root.querySelector('[data-path="global_refine.denoise"]')
+        || root.querySelector('[data-path]');
+    if (!existingInput) return;
+    existingInput.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function bindRoot(root) {
+    if (boundRoots.has(root)) return;
+    boundRoots.add(root);
+    root.addEventListener("change", () => {
+        queueMicrotask(() => {
+            const section = root.querySelector(SECTION_SELECTOR);
+            if (section) syncColumnState(root, section);
+        });
+    });
 }
 
 function inject(root) {
     let section = root.querySelector(SECTION_SELECTOR);
+    let created = false;
     if (!section) {
         const upscale = root.querySelector("[data-upscale-section]");
-        if (!upscale) return;
+        if (!upscale) return false;
 
         section = document.createElement("div");
         section.className = "mmx-post-section mmx-rtx-deblur-section";
@@ -55,60 +83,58 @@ function inject(root) {
             </div>
           </div>`;
         upscale.insertAdjacentElement("afterend", section);
+        created = true;
 
         const enabled = section.querySelector('[data-path="global_refine.rtx_deblur_enabled"]');
         const quality = section.querySelector('[data-path="global_refine.rtx_deblur_quality"]');
         enabled?.addEventListener("change", () => {
-            if (quality && !quality.value) {
+            if (enabled.checked && quality && !quality.value) {
                 quality.value = "medium";
                 quality.dispatchEvent(new Event("change", { bubbles: true }));
             }
         });
-        root.addEventListener("change", () => {
-            queueMicrotask(() => syncColumnState(root, section));
-        });
     }
 
+    bindRoot(root);
     syncText(root, section);
+    if (created) requestStoreRender(root);
     syncColumnState(root, section);
-
-    if (!observedRoots.has(root)) {
-        observedRoots.add(root);
-        const localeObserver = new MutationObserver(() => {
-            const liveSection = root.querySelector(SECTION_SELECTOR);
-            if (liveSection) {
-                syncText(root, liveSection);
-                syncColumnState(root, liveSection);
-            }
-        });
-        localeObserver.observe(root, {
-            subtree: true,
-            childList: true,
-            characterData: true,
-            attributes: true,
-            attributeFilter: ["class"],
-        });
-    }
+    return true;
 }
 
 function scan() {
     document.querySelectorAll(ROOT_SELECTOR).forEach(inject);
 }
 
+function scheduleScan() {
+    if (scanScheduled) return;
+    scanScheduled = true;
+    queueMicrotask(() => {
+        scanScheduled = false;
+        scan();
+    });
+}
+
+function refreshAll() {
+    scan();
+    document.querySelectorAll(ROOT_SELECTOR).forEach((root) => {
+        const section = root.querySelector(SECTION_SELECTOR);
+        if (!section) return;
+        syncText(root, section);
+        syncColumnState(root, section);
+    });
+}
+
 app.registerExtension({
     name: "MiniMaxH3.MotionDirector.RTXDeblurUI",
-    async setup() {
-        let scheduled = false;
-        const scheduleScan = () => {
-            if (scheduled) return;
-            scheduled = true;
-            requestAnimationFrame(() => {
-                scheduled = false;
-                scan();
-            });
-        };
-        const observer = new MutationObserver(scheduleScan);
-        observer.observe(document.documentElement, { childList: true, subtree: true });
-        scan();
+    setup() {
+        if (!stopLocaleSync) stopLocaleSync = onLocaleChange(() => queueMicrotask(refreshAll));
+        scheduleScan();
+    },
+    nodeCreated() {
+        scheduleScan();
+    },
+    loadedGraphNode() {
+        scheduleScan();
     },
 });
