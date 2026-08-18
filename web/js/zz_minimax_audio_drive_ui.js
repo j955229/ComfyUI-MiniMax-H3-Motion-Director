@@ -117,9 +117,15 @@ function syncControl(host, { timeline, editor, node, scope, global = false, audi
     if (stale) commit(editor, node);
 
     let control = host.querySelector?.(`.${CONTROL_CLASS}`);
+    const binding = `${global ? "global" : "segment"}:${String(scope)}`;
+    if (control && control.dataset.binding !== binding) {
+        control.remove();
+        control = null;
+    }
     if (!control) {
         control = document.createElement("div");
         control.className = CONTROL_CLASS;
+        control.dataset.binding = binding;
         control.innerHTML = '<span class="mmx-dialogue-drive-label"></span><select class="bd-select"></select>';
         host.appendChild(control);
     }
