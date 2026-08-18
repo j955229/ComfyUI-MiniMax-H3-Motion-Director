@@ -21,6 +21,12 @@ import {
     setAudioRole,
     validateAudioRoleIntervals,
 } from "./minimax_dialogue_drive_core.mjs";
+import {
+    clampTrimSelection,
+    createAudioEditHistory,
+    moveTrimSelection,
+    orderDriveRows,
+} from "./minimax_audio_editor_core.mjs";
 
 const DIRECTOR_CLASS = "MiniMaxH3MotionDirector";
 const STYLE_ID = "mmx-audio-roles-style";
@@ -37,10 +43,12 @@ function words() {
         editorTitle: "Edit audio",
         play: "Play",
         pause: "Pause",
-        loop: "Loop selection",
+        undo: "Undo",
+        redo: "Redo",
+        cut: "Trim",
         reset: "Reset",
         cancel: "Cancel",
-        save: "Save",
+        done: "Done",
         trimStart: "Trim start",
         trimEnd: "Trim end",
         effective: "Effective",
@@ -58,10 +66,12 @@ function words() {
         editorTitle: "编辑音频",
         play: "播放",
         pause: "暂停",
-        loop: "循环选区",
+        undo: "上一步",
+        redo: "下一步",
+        cut: "裁切",
         reset: "重置",
         cancel: "取消",
-        save: "保存",
+        done: "完成",
         trimStart: "裁切开始",
         trimEnd: "裁切结束",
         effective: "有效长度",
@@ -77,9 +87,13 @@ function taskKey(editor) {
 }
 
 function commit(editor, node) {
-    editor.scheduleTimelineSync?.();
-    editor.commit?.();
-    node?.setDirtyCanvas?.(true, true);
+    if (typeof editor?.flushTimelineSync === "function") {
+        editor.flushTimelineSync();
+        return;
+    }
+    editor?.scheduleTimelineSync?.();
+    if (typeof editor?._markNodeDirtyLight === "function") editor._markNodeDirtyLight();
+    else node?.setDirtyCanvas?.(true, false);
 }
 
 function audioOutputSelect(editor) {
@@ -167,9 +181,9 @@ function ensureStyle() {
 .mmx-audio-editor-backdrop{position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box}
 .mmx-audio-editor{width:min(760px,calc(100vw - 40px));background:#101311;border:1px solid #3b4c40;border-radius:12px;box-shadow:0 24px 80px rgba(0,0,0,.72);padding:14px;display:flex;flex-direction:column;gap:11px;color:#ddd;font-size:11px}
 .mmx-audio-editor-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.mmx-audio-editor-head b{font-size:13px;color:#e6eee8}.mmx-audio-editor-head span{color:#7e8a82;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mmx-wave-wrap{position:relative;height:130px;border:1px solid #2b352e;border-radius:8px;background:#080a09;overflow:hidden;cursor:crosshair}.mmx-wave-wrap canvas{display:block;width:100%;height:100%}.mmx-trim-selection{position:absolute;top:0;bottom:0;background:rgba(79,255,143,.09);border-left:1px solid #4fff8f;border-right:1px solid #4fff8f;pointer-events:none}.mmx-trim-handle{position:absolute;top:0;bottom:0;width:10px;background:rgba(79,255,143,.26);pointer-events:auto;cursor:ew-resize}.mmx-trim-handle.left{left:-5px}.mmx-trim-handle.right{right:-5px}
+.mmx-wave-wrap{position:relative;height:130px;border:1px solid #2b352e;border-radius:8px;background:#080a09;overflow:hidden;cursor:crosshair}.mmx-wave-wrap canvas{display:block;width:100%;height:100%}.mmx-trim-selection{position:absolute;top:0;bottom:0;z-index:2;background:rgba(79,255,143,.09);border-left:1px solid #4fff8f;border-right:1px solid #4fff8f;pointer-events:auto;cursor:grab;touch-action:none}.mmx-trim-selection:active{cursor:grabbing}.mmx-trim-handle{position:absolute;top:0;bottom:0;z-index:3;width:10px;background:rgba(79,255,143,.26);pointer-events:auto;cursor:ew-resize}.mmx-trim-handle.left{left:-5px}.mmx-trim-handle.right{right:-5px}.mmx-audio-playhead{position:absolute;top:0;bottom:0;z-index:4;width:1px;background:#eafff0;box-shadow:0 0 0 1px rgba(234,255,240,.18);pointer-events:none;transform:translateX(-.5px)}
 .mmx-audio-editor-fields{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.mmx-audio-editor-fields label{display:flex;flex-direction:column;gap:4px;color:#8f9d93}.mmx-audio-editor-fields input{width:100%;box-sizing:border-box;background:#090b0a;color:#e7eee9;border:1px solid #343d37;border-radius:5px;padding:6px;font-variant-numeric:tabular-nums}
-.mmx-audio-editor-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.mmx-audio-editor-controls button,.mmx-audio-editor-actions button{border:1px solid #3c4940;border-radius:6px;background:#181d19;color:#d9e3dc;padding:6px 10px;cursor:pointer}.mmx-audio-editor-controls button:hover,.mmx-audio-editor-actions button:hover{border-color:#698174}.mmx-audio-editor-controls label{display:flex;align-items:center;gap:5px;color:#98a49c}.mmx-audio-editor-actions{display:flex;justify-content:flex-end;gap:7px}.mmx-audio-editor-actions .save{border-color:#4b8b5e;color:#bdf4cb;background:#15301d}
+.mmx-audio-editor-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.mmx-audio-editor-controls button,.mmx-audio-editor-actions button{border:1px solid #3c4940;border-radius:6px;background:#181d19;color:#d9e3dc;padding:6px 10px;cursor:pointer}.mmx-audio-editor-controls button:hover:not(:disabled),.mmx-audio-editor-actions button:hover:not(:disabled){border-color:#698174}.mmx-audio-editor-controls button:disabled,.mmx-audio-editor-actions button:disabled{opacity:.38;cursor:default}.mmx-audio-editor-actions{display:flex;justify-content:flex-end;gap:7px}.mmx-audio-editor-controls .cut,.mmx-audio-editor-actions .done{border-color:#4b8b5e;color:#bdf4cb;background:#15301d}
 .bd-batch-r2v .bd-batch-audio.has-audio,.bd-rv2v-layout .bd-ref-audio.has-audio{padding-top:6px;padding-bottom:7px}
 `;
     document.head.appendChild(style);
@@ -277,42 +291,66 @@ async function openAudioEditor({ timeline, scope, audio, options, editor, node, 
         window.alert?.(`${w.decodeFail}\n${err}`);
         return;
     }
+
     const duration = decoded.duration;
     setDiscoveredDuration(timeline, scope, audio, duration, options, editor, node);
     const cfg = getAudioRole(timeline, scope, audio.id, options);
-    let trimStart = Math.max(0, Math.min(duration, Number(cfg.trimStart) || 0));
-    let trimEnd = Math.max(trimStart, Math.min(duration, Number(cfg.trimEnd) > 0 ? Number(cfg.trimEnd) : duration));
+    const initialTrim = clampTrimSelection(
+        Number(cfg.trimStart) || 0,
+        Number(cfg.trimEnd) > 0 ? Number(cfg.trimEnd) : duration,
+        duration,
+    );
+    const originalApplied = { ...initialTrim };
+    let trimStart = initialTrim.trimStart;
+    let trimEnd = initialTrim.trimEnd;
+    let appliedTrimStart = initialTrim.trimStart;
+    let appliedTrimEnd = initialTrim.trimEnd;
 
     const backdrop = document.createElement("div");
     backdrop.className = "mmx-audio-editor-backdrop";
     backdrop.innerHTML = `
       <div class="mmx-audio-editor" role="dialog" aria-modal="true">
         <div class="mmx-audio-editor-head"><b>${w.editorTitle}</b><span></span></div>
-        <div class="mmx-wave-wrap"><canvas></canvas><div class="mmx-trim-selection"><div class="mmx-trim-handle left"></div><div class="mmx-trim-handle right"></div></div></div>
+        <div class="mmx-wave-wrap"><canvas></canvas><div class="mmx-trim-selection"><div class="mmx-trim-handle left"></div><div class="mmx-trim-handle right"></div></div><div class="mmx-audio-playhead"></div></div>
         <div class="mmx-audio-editor-fields">
           <label>${w.trimStart}<input class="start" type="number" min="0" step="0.001"></label>
           <label>${w.trimEnd}<input class="end" type="number" min="0" step="0.001"></label>
           <label>${w.effective}<input class="effective" type="text" readonly></label>
         </div>
-        <div class="mmx-audio-editor-controls"><button class="play">▶ ${w.play}</button><label><input class="loop" type="checkbox"> ${w.loop}</label><button class="reset">${w.reset}</button></div>
-        <div class="mmx-audio-editor-actions"><button class="cancel">${w.cancel}</button><button class="save">${w.save}</button></div>
+        <div class="mmx-audio-editor-controls"><button class="play">▶ ${w.play}</button><button class="undo">↶ ${w.undo}</button><button class="redo">↷ ${w.redo}</button><button class="reset">${w.reset}</button><button class="cut">${w.cut}</button></div>
+        <div class="mmx-audio-editor-actions"><button class="cancel">${w.cancel}</button><button class="done">${w.done}</button></div>
       </div>`;
     document.body.appendChild(backdrop);
     backdrop.querySelector(".mmx-audio-editor-head span").textContent = basename(audio.item);
+
+    const waveWrap = backdrop.querySelector(".mmx-wave-wrap");
     const canvas = backdrop.querySelector("canvas");
-    requestAnimationFrame(() => drawWaveform(canvas, decoded));
     const selection = backdrop.querySelector(".mmx-trim-selection");
+    const playhead = backdrop.querySelector(".mmx-audio-playhead");
     const startInput = backdrop.querySelector("input.start");
     const endInput = backdrop.querySelector("input.end");
     const effectiveInput = backdrop.querySelector("input.effective");
-    const loopInput = backdrop.querySelector("input.loop");
     const playBtn = backdrop.querySelector("button.play");
+    const undoBtn = backdrop.querySelector("button.undo");
+    const redoBtn = backdrop.querySelector("button.redo");
     const player = new Audio(audioUrl(audio.item));
     player.preload = "auto";
+    let playRaf = 0;
 
+    const snapshot = () => ({ trimStart, trimEnd, appliedTrimStart, appliedTrimEnd });
+    const history = createAudioEditHistory(snapshot());
+    const updateHistoryButtons = () => {
+        undoBtn.disabled = !history.canUndo;
+        redoBtn.disabled = !history.canRedo;
+    };
+    const syncPlayhead = () => {
+        const current = Math.max(0, Math.min(duration, Number(player.currentTime) || 0));
+        playhead.style.left = `${duration > 0 ? current / duration * 100 : 0}%`;
+    };
     const sync = () => {
-        trimStart = Math.max(0, Math.min(duration, trimStart));
-        trimEnd = Math.max(trimStart, Math.min(duration, trimEnd));
+        const normalized = clampTrimSelection(trimStart, trimEnd, duration);
+        trimStart = normalized.trimStart;
+        trimEnd = normalized.trimEnd;
         startInput.value = trimStart.toFixed(3);
         endInput.value = trimEnd.toFixed(3);
         effectiveInput.value = `${Math.max(0, trimEnd - trimStart).toFixed(3)} s`;
@@ -320,70 +358,180 @@ async function openAudioEditor({ timeline, scope, audio, options, editor, node, 
         const width = duration > 0 ? (trimEnd - trimStart) / duration * 100 : 0;
         selection.style.left = `${left}%`;
         selection.style.width = `${width}%`;
+        syncPlayhead();
+        updateHistoryButtons();
     };
+    const persistApplied = () => {
+        setAudioRole(timeline, scope, audio.id, {
+            sourceDuration: duration,
+            trimStart: appliedTrimStart,
+            trimEnd: appliedTrimEnd,
+        }, options);
+        commit(editor, node);
+        schedule(node);
+    };
+    const restoreSnapshot = (next) => {
+        if (!next) return;
+        const appliedChanged = Math.abs(appliedTrimStart - Number(next.appliedTrimStart)) > 0.0005
+            || Math.abs(appliedTrimEnd - Number(next.appliedTrimEnd)) > 0.0005;
+        trimStart = Number(next.trimStart);
+        trimEnd = Number(next.trimEnd);
+        appliedTrimStart = Number(next.appliedTrimStart);
+        appliedTrimEnd = Number(next.appliedTrimEnd);
+        sync();
+        if (appliedChanged) persistApplied();
+    };
+    const recordEdit = () => {
+        history.push(snapshot());
+        updateHistoryButtons();
+    };
+
+    requestAnimationFrame(() => drawWaveform(canvas, decoded));
     sync();
 
-    const stop = () => { player.pause(); playBtn.textContent = `▶ ${w.play}`; };
-    player.addEventListener("play", () => { playBtn.textContent = `⏸ ${w.pause}`; });
-    player.addEventListener("pause", () => { playBtn.textContent = `▶ ${w.play}`; });
-    player.addEventListener("timeupdate", () => {
-        if (player.currentTime >= trimEnd - 0.01) {
-            if (loopInput.checked && trimEnd > trimStart) { player.currentTime = trimStart; player.play().catch(() => {}); }
-            else { stop(); player.currentTime = trimStart; }
+    const stop = () => {
+        if (playRaf) cancelAnimationFrame(playRaf);
+        playRaf = 0;
+        player.pause();
+        playBtn.textContent = `▶ ${w.play}`;
+    };
+    const tickPlayhead = () => {
+        playRaf = 0;
+        if (player.currentTime >= trimEnd - 0.002) {
+            player.currentTime = trimEnd;
+            syncPlayhead();
+            stop();
+            return;
         }
+        syncPlayhead();
+        if (!player.paused) playRaf = requestAnimationFrame(tickPlayhead);
+    };
+    player.addEventListener("play", () => {
+        playBtn.textContent = `⏸ ${w.pause}`;
+        if (playRaf) cancelAnimationFrame(playRaf);
+        playRaf = requestAnimationFrame(tickPlayhead);
     });
+    player.addEventListener("pause", () => {
+        playBtn.textContent = `▶ ${w.play}`;
+        if (playRaf) cancelAnimationFrame(playRaf);
+        playRaf = 0;
+        syncPlayhead();
+    });
+    player.addEventListener("seeked", syncPlayhead);
+    player.addEventListener("loadedmetadata", syncPlayhead);
     playBtn.onclick = (e) => {
         e.stopPropagation();
         if (player.paused) {
+            if (trimEnd <= trimStart) return;
             if (player.currentTime < trimStart || player.currentTime >= trimEnd) player.currentTime = trimStart;
+            syncPlayhead();
             player.play().catch(() => {});
         } else stop();
     };
-    backdrop.querySelector(".mmx-wave-wrap").addEventListener("click", (e) => {
-        if (e.target.classList.contains("mmx-trim-handle")) return;
-        const rect = e.currentTarget.getBoundingClientRect();
+
+    waveWrap.addEventListener("click", (e) => {
+        const rect = waveWrap.getBoundingClientRect();
         player.currentTime = Math.max(0, Math.min(duration, (e.clientX - rect.left) / Math.max(1, rect.width) * duration));
+        syncPlayhead();
     });
+    selection.addEventListener("click", (e) => e.stopPropagation());
+
     const bindHandle = (handle, side) => {
         handle.addEventListener("pointerdown", (e) => {
-            e.preventDefault(); e.stopPropagation();
-            const wrap = backdrop.querySelector(".mmx-wave-wrap");
-            const rect = wrap.getBoundingClientRect();
+            e.preventDefault();
+            e.stopPropagation();
+            const rect = waveWrap.getBoundingClientRect();
             const move = (ev) => {
                 const value = Math.max(0, Math.min(duration, (ev.clientX - rect.left) / Math.max(1, rect.width) * duration));
                 if (side === "left") trimStart = Math.min(value, trimEnd);
                 else trimEnd = Math.max(value, trimStart);
                 sync();
             };
-            const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+            const up = () => {
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", up);
+                recordEdit();
+            };
             window.addEventListener("pointermove", move);
             window.addEventListener("pointerup", up, { once: true });
         });
     };
     bindHandle(selection.querySelector(".left"), "left");
     bindHandle(selection.querySelector(".right"), "right");
+
+    selection.addEventListener("pointerdown", (e) => {
+        if (e.target.classList.contains("mmx-trim-handle")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = waveWrap.getBoundingClientRect();
+        const startX = e.clientX;
+        const initialStart = trimStart;
+        const initialEnd = trimEnd;
+        selection.setPointerCapture?.(e.pointerId);
+        const move = (ev) => {
+            const deltaSec = (ev.clientX - startX) / Math.max(1, rect.width) * duration;
+            const moved = moveTrimSelection(initialStart, initialEnd, deltaSec, duration);
+            trimStart = moved.trimStart;
+            trimEnd = moved.trimEnd;
+            sync();
+        };
+        const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            recordEdit();
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up, { once: true });
+    });
+
     const applyInputs = () => {
-        trimStart = Number(startInput.value);
-        trimEnd = Number(endInput.value);
-        if (!Number.isFinite(trimStart)) trimStart = 0;
-        if (!Number.isFinite(trimEnd)) trimEnd = duration;
+        const normalized = clampTrimSelection(Number(startInput.value), Number(endInput.value), duration);
+        trimStart = normalized.trimStart;
+        trimEnd = normalized.trimEnd;
         sync();
+        recordEdit();
     };
     startInput.onchange = applyInputs;
     endInput.onchange = applyInputs;
-    backdrop.querySelector("button.reset").onclick = () => { trimStart = 0; trimEnd = duration; sync(); player.currentTime = 0; };
-    const close = () => { stop(); player.src = ""; context?.close?.(); backdrop.remove(); };
-    backdrop.querySelector("button.cancel").onclick = close;
-    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
-    backdrop.querySelector("button.save").onclick = () => {
-        setAudioRole(timeline, scope, audio.id, { sourceDuration: duration, trimStart, trimEnd }, options);
-        const updated = getAudioRole(timeline, scope, audio.id, options);
-        const placement = audioPlacement(updated, segmentSec);
-        commit(editor, node);
-        close();
-        if (placement.overrun > 0) window.alert?.(w.overrun);
-        schedule(node);
+
+    backdrop.querySelector("button.reset").onclick = () => {
+        trimStart = 0;
+        trimEnd = duration;
+        player.currentTime = 0;
+        sync();
+        recordEdit();
     };
+    undoBtn.onclick = () => restoreSnapshot(history.undo());
+    redoBtn.onclick = () => restoreSnapshot(history.redo());
+    backdrop.querySelector("button.cut").onclick = () => {
+        const changed = Math.abs(appliedTrimStart - trimStart) > 0.0005 || Math.abs(appliedTrimEnd - trimEnd) > 0.0005;
+        appliedTrimStart = trimStart;
+        appliedTrimEnd = trimEnd;
+        history.push(snapshot());
+        updateHistoryButtons();
+        if (changed) persistApplied();
+        const placement = audioPlacement(getAudioRole(timeline, scope, audio.id, options), segmentSec);
+        if (placement.overrun > 0) window.alert?.(w.overrun);
+    };
+
+    const close = () => {
+        stop();
+        player.src = "";
+        context?.close?.();
+        backdrop.remove();
+    };
+    backdrop.querySelector("button.cancel").onclick = () => {
+        const needsRevert = Math.abs(appliedTrimStart - originalApplied.trimStart) > 0.0005
+            || Math.abs(appliedTrimEnd - originalApplied.trimEnd) > 0.0005;
+        if (needsRevert) {
+            appliedTrimStart = originalApplied.trimStart;
+            appliedTrimEnd = originalApplied.trimEnd;
+            persistApplied();
+        }
+        close();
+    };
+    backdrop.querySelector("button.done").onclick = close;
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
 }
 
 function decorateCard(card, ctx) {
@@ -490,9 +638,9 @@ function renderTimeline(host, ctx) {
         const span = document.createElement("span"); span.style.left = `${ratio * 100}%`; span.textContent = `${(ctx.segmentSec * ratio).toFixed(ratio === 0 || ratio === 1 ? 2 : 1)}s`; axis.appendChild(span);
     }
     const tracks = panel.querySelector(".mmx-audio-tracks");
-    tracks.style.height = `${Math.max(30, rows.length * 28 + 4)}px`;
-    rows.sort((a, b) => a.timelineStart - b.timelineStart || a.assetId.localeCompare(b.assetId));
-    rows.forEach((row, track) => {
+    const orderedRows = orderDriveRows(rows, ctx.audios.map((audio) => audio.id));
+    tracks.style.height = `${Math.max(30, orderedRows.length * 28 + 4)}px`;
+    orderedRows.forEach((row, track) => {
         const p = audioPlacement(row, ctx.segmentSec);
         const audio = ctx.audios.find((a) => a.id === row.assetId);
         const block = document.createElement("div");
