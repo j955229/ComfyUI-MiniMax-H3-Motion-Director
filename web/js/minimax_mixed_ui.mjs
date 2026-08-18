@@ -11,25 +11,41 @@ export {
     syncMixedGlobalsFromWidgets,
 };
 
-export function mountMixedUI(options) {
-    const controller = mountMixedUIV2(options);
-    const destroyMixedUI = controller?.destroy?.bind(controller);
-    if (!destroyMixedUI) return controller;
+const guardedEditors = new WeakSet();
 
-    let destroyed = false;
-    controller.destroy = () => {
-        if (destroyed) return;
-        destroyed = true;
-        destroyMixedUI();
+function syncStandaloneSplitPointUI(editor) {
+    editor?.updateSplitPointUI?.();
 
-        // _leaveMixedNative() restores the standalone Director bodies after
-        // destroying Mixed. Re-apply the target mode's own split-point
-        // visibility once that synchronous mode transition has completed.
-        queueMicrotask(() => {
-            const editor = options?.editor;
-            if (editor?.getDirectorMode?.() === "mixed") return;
-            editor?.updateSplitPointUI?.();
-        });
+    const unsupported = editor?.isFl2vMode?.()
+        || editor?.isImageBatch?.()
+        || editor?.isGenMode?.();
+    if (!unsupported) return;
+
+    const bar = editor?.splitEditBarEl
+        || editor?.root?.querySelector?.('[data-r="split-edit-bar"]');
+    const btn = editor?.root?.querySelector?.('[data-a="del-split"]');
+    bar?.classList?.add("hidden");
+    if (btn) {
+        btn.disabled = true;
+        btn.title = "";
+    }
+}
+
+function installMixedExitSplitGuard(editor) {
+    if (!editor || guardedEditors.has(editor) || typeof editor.applyTaskLayout !== "function") return;
+
+    const applyTaskLayout = editor.applyTaskLayout;
+    editor.applyTaskLayout = function (...args) {
+        const result = applyTaskLayout.apply(this, args);
+        if (this.getDirectorMode?.() !== "mixed") {
+            syncStandaloneSplitPointUI(this);
+        }
+        return result;
     };
-    return controller;
+    guardedEditors.add(editor);
+}
+
+export function mountMixedUI(options) {
+    installMixedExitSplitGuard(options?.editor);
+    return mountMixedUIV2(options);
 }
