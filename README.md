@@ -10,7 +10,7 @@
 
 Build `T2V / I2V / FL2V / R2V / V2V / RV2V` shots in one production interface, mix generation methods segment by segment, carry visual and generated-audio context across shots, rerun only the segments that need work, manage reusable assets, preview the pipeline live, refine the result, and export the final video without turning the ComfyUI graph into a wall of nodes.
 
-> Current version: **v1.1.0**
+> Current version: **v1.1.4**
 
 <!-- IMAGE SLOT 1
 Place your Mixed + Selective Run screenshot here:
