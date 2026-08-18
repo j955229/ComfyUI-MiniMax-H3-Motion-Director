@@ -54,10 +54,14 @@ def apply_rtx_deblur(
 ) -> RTXDeblurOutcome:
     """Deblur a BHWC IMAGE batch at the original resolution.
 
-    Failure containment is strict: the exact input tensor is returned when the
-    optional NVIDIA runtime is unavailable or processing fails.
+    RTX Deblur is a subordinate Global Refine stage: both the Global Refine
+    master switch and the Deblur sub-switch must be enabled. Failure containment
+    is strict: the exact input tensor is returned when the optional NVIDIA
+    runtime is unavailable or processing fails.
     """
-    enabled = bool(config.get("rtx_deblur_enabled", False))
+    enabled = bool(config.get("enabled", False)) and bool(
+        config.get("rtx_deblur_enabled", False)
+    )
     quality = str(config.get("rtx_deblur_quality") or "medium").strip().lower()
     if quality not in {"low", "medium", "high", "ultra"}:
         quality = "medium"
