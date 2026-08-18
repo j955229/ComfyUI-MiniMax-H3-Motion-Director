@@ -30,3 +30,14 @@ export async function copyReportText(text, writeText) {
     await writeText(value);
     return true;
 }
+
+export function refinePassOptions(passCount) {
+    const count = Math.max(0, Math.trunc(Number(passCount) || 0));
+    if (count <= 0) return [{ value: "final", label: "Final" }];
+    const rows = [{ value: "first", label: "First Pass" }];
+    for (let index = 1; index <= count; index += 1) {
+        rows.push({ value: `pass:${index}`, label: `Pass ${index}` });
+    }
+    rows.push({ value: "final", label: "Final" });
+    return rows;
+}
