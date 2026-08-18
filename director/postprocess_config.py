@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 
-POSTPROCESS_CONFIG_VERSION = 5
+POSTPROCESS_CONFIG_VERSION = 6
 CANVAS_MULTIPLE = 32
 
 DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
@@ -22,6 +22,8 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "enabled": False,
         "mode": "refine",
         "second_sampling_enabled": True,
+        "refine_model": "",
+        "passes": 1,
         "denoise": 0.25,
         "steps": 0,
         "seed_mode": "inherit",
@@ -165,6 +167,8 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g["enabled"] = _bool(g_raw.get("enabled"), False)
     g["mode"] = _choice(g_raw.get("mode"), {"refine", "upscale"}, "refine")
     g["second_sampling_enabled"] = _bool(g_raw.get("second_sampling_enabled"), True)
+    g["refine_model"] = str(g_raw.get("refine_model") or "").strip()
+    g["passes"] = _int(g_raw.get("passes"), 1, 1, 9999)
     g["denoise"] = _float(g_raw.get("denoise"), 0.25, 0.01, 1.0)
     g["steps"] = _int(g_raw.get("steps"), 0, 0, 200)
     g["seed_mode"] = _choice(g_raw.get("seed_mode"), {"inherit", "offset"}, "inherit")
@@ -321,8 +325,18 @@ def refine_steps_for(config: dict[str, Any], first_steps: int) -> int:
     return configured if configured > 0 else max(8, int(round(int(first_steps) * 0.4)))
 
 
-def refine_seed_for(config: dict[str, Any], seed: int) -> int:
-    return int(seed) + int(config.get("seed_offset", 1)) if config.get("seed_mode") == "offset" else int(seed)
+def refine_passes_for(config: dict[str, Any]) -> int:
+    try:
+        passes = int(config.get("passes") or 1)
+    except (TypeError, ValueError):
+        passes = 1
+    return max(1, min(9999, passes))
+
+
+def refine_seed_for(config: dict[str, Any], seed: int, pass_index: int = 0) -> int:
+    if config.get("seed_mode") != "offset":
+        return int(seed)
+    return int(seed) + int(config.get("seed_offset", 1)) + max(0, int(pass_index))
 
 
 def resolve_vsr_quality_name(config: dict[str, Any]) -> str:
@@ -358,6 +372,6 @@ def postprocess_cache_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
 __all__ = [
     "DEFAULT_POSTPROCESS_CONFIG", "POSTPROCESS_CONFIG_VERSION",
     "normalize_postprocess_config", "serialize_postprocess_config",
-    "refine_steps_for", "refine_seed_for", "resolve_vsr_quality_name",
+    "refine_steps_for", "refine_passes_for", "refine_seed_for", "resolve_vsr_quality_name",
     "resolve_upscale_target", "postprocess_cache_fingerprint",
 ]
