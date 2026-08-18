@@ -170,6 +170,9 @@ def report_director_segment_preview(
     stage: str = "Generation",
     media_type: str = "image/jpeg",
     result_kind: str = "segment",
+    result_variant: str = "",
+    pass_index: int | None = None,
+    pass_count: int | None = None,
 ) -> None:
     if not node_id or not image_b64:
         return
@@ -184,6 +187,12 @@ def report_director_segment_preview(
         "media_type": str(media_type),
         "result_kind": str(result_kind),
     }
+    if result_variant:
+        payload["result_variant"] = str(result_variant)
+    if pass_index is not None:
+        payload["pass_index"] = int(pass_index)
+    if pass_count is not None:
+        payload["pass_count"] = int(pass_count)
     if frames:
         payload["frames"] = frames
         payload["fps"] = fps
