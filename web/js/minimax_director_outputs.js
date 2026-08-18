@@ -55,10 +55,12 @@ function reportIsEnglish(heading) {
 function syncCopyButton(button, report, heading) {
     const english = reportIsEnglish(heading);
     const copied = button.dataset.copyState === "copied";
+    const label = copied ? (english ? "Copied" : "已复制") : (english ? "Copy" : "复制");
+    const title = english ? "Copy report" : "复制报告";
     button.disabled = !report.dataset.hasReport;
-    button.textContent = copied ? (english ? "Copied" : "已复制") : (english ? "Copy" : "复制");
-    button.title = english ? "Copy report" : "复制报告";
-    button.setAttribute("aria-label", button.title);
+    if (button.textContent !== label) button.textContent = label;
+    if (button.title !== title) button.title = title;
+    if (button.getAttribute("aria-label") !== title) button.setAttribute("aria-label", title);
 }
 
 function fallbackClipboardWrite(text) {
@@ -99,11 +101,13 @@ function refreshReportMaxHeight(report) {
     const containerBottom = shellRect
         ? Math.min(pageRect.bottom, shellRect.bottom - 8)
         : pageRect.bottom;
-    const maxHeight = reportResizeMaxHeight(containerBottom, reportRect.top, 12);
+    const pageMaxHeight = Math.max(0, Math.floor(pageRect.height - 20));
+    const reportIsVisible = reportRect.top >= pageRect.top && reportRect.top < pageRect.bottom;
+    const remainingHeight = reportResizeMaxHeight(containerBottom, reportRect.top, 12);
+    const maxHeight = reportIsVisible
+        ? Math.min(pageMaxHeight, remainingHeight)
+        : pageMaxHeight;
     report.style.maxHeight = `${maxHeight}px`;
-    if (maxHeight > 0 && reportRect.height > maxHeight) {
-        report.style.height = `${maxHeight}px`;
-    }
 }
 
 function enhanceReport(report) {
