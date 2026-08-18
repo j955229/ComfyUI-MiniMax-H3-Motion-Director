@@ -17,6 +17,7 @@ from ..director.execution_report import append_report_section_lines, fmt_seconds
 from ..director.postprocess_config import normalize_postprocess_config
 from ..director.progress import (
     report_director_audio_preview,
+    report_director_complete,
     report_director_final_ready,
     report_director_progress,
     report_director_report,
@@ -227,6 +228,8 @@ class MiniMaxH3MotionDirector(_BaseDirector):
 
         postprocess = normalize_postprocess_config(postprocess_config)
         deblur_config = postprocess["global_refine"]
+        deblur_requested = bool(deblur_config.get("rtx_deblur_enabled"))
+        deblur_enabled = bool(deblur_config.get("enabled")) and deblur_requested
         progress_total = max(
             1,
             len(plan.run_indices) if plan.run_indices is not None else len(plan.segments),
@@ -234,6 +237,8 @@ class MiniMaxH3MotionDirector(_BaseDirector):
         deblur_total = max(1, int(combined.shape[0]))
 
         def _report_deblur_progress(done: int, total: int) -> None:
+            if not deblur_enabled:
+                return
             report_director_progress(
                 unique_id,
                 segment_index=max(0, progress_total - 1),
@@ -243,17 +248,15 @@ class MiniMaxH3MotionDirector(_BaseDirector):
                 phase_max=max(1, int(total)),
             )
 
-        _report_deblur_progress(0, deblur_total)
+        if deblur_enabled:
+            _report_deblur_progress(0, deblur_total)
         deblur_outcome = apply_rtx_deblur(
             deblur_config,
             images=combined,
-            on_progress=(
-                _report_deblur_progress
-                if deblur_config.get("rtx_deblur_enabled")
-                else None
-            ),
+            on_progress=_report_deblur_progress if deblur_enabled else None,
         )
-        _report_deblur_progress(deblur_total, deblur_total)
+        if deblur_enabled:
+            _report_deblur_progress(deblur_total, deblur_total)
 
         if deblur_outcome.succeeded:
             combined = deblur_outcome.images
@@ -270,7 +273,12 @@ class MiniMaxH3MotionDirector(_BaseDirector):
             report,
             "RTX Deblur",
             [
-                f"Enabled: {'ON' if deblur_config.get('rtx_deblur_enabled') else 'OFF'}",
+                f"Enabled: {'ON' if deblur_enabled else 'OFF'}",
+                (
+                    "Reason: Global Refine disabled"
+                    if deblur_requested and not deblur_config.get("enabled")
+                    else ""
+                ),
                 f"Quality: {str(deblur_outcome.quality).title()}",
                 f"Frames: {int(deblur_outcome.frames)}",
                 (
@@ -356,4 +364,5 @@ class MiniMaxH3MotionDirector(_BaseDirector):
 
         report_director_report(unique_id, outputs[-1])
         report_director_audio_preview(unique_id, outputs[1])
+        report_director_complete(unique_id, progress_total)
         return outputs
