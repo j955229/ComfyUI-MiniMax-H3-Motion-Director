@@ -17,11 +17,17 @@ function activeRunSelectionTimeline(editor) {
 
 function memoryRunSelectionState(editor) {
     const timeline = activeRunSelectionTimeline(editor);
-    const enabled = !!timeline?.runSelectEnabled;
+    // Match execution serialization semantics: a hidden/stale Run Selection
+    // state must not participate when the current mode/segment count does not
+    // support selective execution.
+    const supported = typeof editor?.supportsRunSelect === "function"
+        ? !!editor.supportsRunSelect()
+        : true;
+    const enabled = supported && !!timeline?.runSelectEnabled;
     return {
         enabled,
-        // When Run Selection is off, runSelection is remembered UI state only.
-        // Execution serialization intentionally canonicalizes it to [].
+        // When Run Selection is off or unsupported, runSelection is remembered
+        // UI state only. Execution serialization canonicalizes it to [].
         selection: enabled ? normalizedSelection(timeline?.runSelection) : [],
     };
 }
