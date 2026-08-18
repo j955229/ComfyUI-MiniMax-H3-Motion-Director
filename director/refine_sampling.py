@@ -3,7 +3,7 @@
 # This derivative is distributed under GPL-3.0; see NOTICE and
 # LICENSES/Apache-2.0-AIMixer.txt.
 
-"""Strict in-node H3 Global Refine / pixel-upscale second sampling."""
+"""Strict in-node H3 Global Refine / pixel-upscale processing."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from .postprocess_config import (
     resolve_upscale_target,
     resolve_vsr_quality_name,
 )
+from .rtx_deblur import RTXDeblurOutcome, apply_rtx_deblur
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.refine")
 
@@ -371,6 +372,27 @@ def upscale_image_batch_strict(
     return result
 
 
+def _deblur_report_lines(outcome: RTXDeblurOutcome | None) -> list[str]:
+    if outcome is None:
+        return ["RTX Deblur: OFF"]
+    lines = [
+        f"RTX Deblur: {outcome.status}",
+        f"Quality: {str(outcome.quality).title()}",
+        f"Strength: {float(outcome.strength):.2f}",
+    ]
+    if outcome.succeeded:
+        lines.extend(
+            [
+                f"Mean Delta: {float(outcome.mean_delta):.6f}",
+                f"P95 Delta: {float(outcome.p95_delta):.6f}",
+                f"Max Delta: {float(outcome.max_delta):.6f}",
+            ]
+        )
+    if outcome.error:
+        lines.append(f"Deblur Error: {outcome.error}")
+    return lines
+
+
 @dataclass
 class GlobalRefineOutcome:
     samples: dict
@@ -389,7 +411,7 @@ class GlobalRefineOutcome:
 
     @property
     def succeeded(self) -> bool:
-        return self.status == "SUCCESS"
+        return self.status.startswith("SUCCESS")
 
 
 def apply_global_refine(
@@ -416,16 +438,15 @@ def apply_global_refine(
     preview_every: int = 1,
     preserve_noise_mask: bool = False,
 ) -> GlobalRefineOutcome:
-    """Second sample with stage-local failure containment.
-
-    Any exception, including CUDA OOM, returns the exact first-pass object.
-    There is deliberately no method, resolution, or mode downgrade.
-    """
+    """Run optional Deblur, upscale and second sampling with strict fallback."""
     if not config.get("enabled"):
         return GlobalRefineOutcome(samples=samples, status="DISABLED")
     if config.get("skip_fl2v") and task_key == "fl2v":
         return GlobalRefineOutcome(samples=samples, status="SKIPPED")
 
+    second_sampling_enabled = bool(config.get("second_sampling_enabled", True))
+    deblur_enabled = bool(config.get("rtx_deblur_enabled", False))
+    upscale_enabled = config.get("mode") == "upscale"
     refine_steps = refine_steps_for(config, first_steps)
     refine_seed = refine_seed_for(config, seed)
     width, height = int(director_width), int(director_height)
@@ -434,23 +455,71 @@ def apply_global_refine(
     vsr_quality = str(config.get("vsr_quality") or "high")
     timings: dict[str, float] = {}
     stage_started = time.perf_counter()
+    deblur_outcome: RTXDeblurOutcome | None = None
+
     try:
+        # With every child stage OFF, the master is a true no-op.  Preserve the
+        # exact first-pass object rather than decoding/re-encoding pointlessly.
+        if not second_sampling_enabled and not deblur_enabled and not upscale_enabled:
+            timings["total"] = time.perf_counter() - stage_started
+            return GlobalRefineOutcome(
+                samples=samples,
+                status="SUCCESS\nSecond Sampling: OFF\nUpscale: OFF\nRTX Deblur: OFF",
+                source_width=source_width,
+                source_height=source_height,
+                target_width=width,
+                target_height=height,
+                steps=0,
+                seed=refine_seed,
+                method=method,
+                vsr_quality=vsr_quality,
+                timings=timings,
+            )
+
         work = dict(samples)
-        if not preserve_noise_mask or config.get("mode") == "upscale":
+        if not preserve_noise_mask or upscale_enabled or deblur_enabled:
             work.pop("noise_mask", None)
         refine_positive = positive
-        if config.get("mode") == "upscale":
-            width, height = resolve_upscale_target(config, director_width, director_height)
-            if on_phase:
-                on_phase("global_upscale", 0)
+
+        decoded = None
+        audio_latent = None
+        if upscale_enabled or deblur_enabled:
             decode_started = time.perf_counter()
             video_latent, audio_latent = _split_av(work)
             decoded = _decode_video(vae, video_latent)
             timings["decode"] = time.perf_counter() - decode_started
             source_height = int(decoded.shape[1])
             source_width = int(decoded.shape[2])
+
+        if deblur_enabled and decoded is not None:
+            if on_phase:
+                on_phase("rtx_deblur", 0)
+            deblur_started = time.perf_counter()
+            deblur_outcome = apply_rtx_deblur(
+                config,
+                images=decoded,
+                stage="presample",
+                on_progress=(
+                    (
+                        lambda done, total: on_phase(
+                            "rtx_deblur", done / max(1, total)
+                        )
+                    )
+                    if on_phase is not None
+                    else None
+                ),
+            )
+            timings["deblur"] = time.perf_counter() - deblur_started
+            decoded = deblur_outcome.images
+            if on_phase:
+                on_phase("rtx_deblur", 1)
+
+        if upscale_enabled and decoded is not None:
+            width, height = resolve_upscale_target(config, director_width, director_height)
+            if on_phase:
+                on_phase("global_upscale", 0)
             upscale_started = time.perf_counter()
-            upscaled = upscale_image_batch_strict(
+            decoded = upscale_image_batch_strict(
                 decoded,
                 width=width,
                 height=height,
@@ -469,13 +538,38 @@ def apply_global_refine(
                 ),
             )
             timings["upscale"] = time.perf_counter() - upscale_started
+            if on_phase:
+                on_phase("global_upscale", 1)
+
+        if decoded is not None:
             encode_started = time.perf_counter()
-            work = _join_av(_encode_video(vae, upscaled), audio_latent, work)
+            work = _join_av(_encode_video(vae, decoded), audio_latent, work)
             timings["encode"] = time.perf_counter() - encode_started
             if repin is not None:
                 refine_positive = repin(refine_positive, work)
-            if on_phase:
-                on_phase("global_upscale", 1)
+
+        if not second_sampling_enabled:
+            timings["total"] = time.perf_counter() - stage_started
+            status_lines = [
+                "SUCCESS",
+                "Second Sampling: OFF",
+                f"Upscale: {'ON' if upscale_enabled else 'OFF'}",
+                *_deblur_report_lines(deblur_outcome),
+            ]
+            return GlobalRefineOutcome(
+                samples=work,
+                status="\n".join(status_lines),
+                source_width=source_width,
+                source_height=source_height,
+                target_width=width,
+                target_height=height,
+                steps=0,
+                seed=refine_seed,
+                method=method,
+                vsr_quality=vsr_quality,
+                timings=timings,
+            )
+
         if on_phase:
             on_phase("global_refine", 0)
         refine_sample_started = time.perf_counter()
@@ -500,21 +594,42 @@ def apply_global_refine(
         timings["total"] = time.perf_counter() - stage_started
         if on_phase:
             on_phase("global_refine", 1)
+        status_lines = [
+            "SUCCESS",
+            "Second Sampling: ON",
+            f"Upscale: {'ON' if upscale_enabled else 'OFF'}",
+            *_deblur_report_lines(deblur_outcome),
+        ]
         return GlobalRefineOutcome(
-            samples=refined, status="SUCCESS",
-            source_width=source_width, source_height=source_height,
-            target_width=width, target_height=height, steps=refine_steps, seed=refine_seed,
-            method=method, vsr_quality=vsr_quality, timings=timings,
+            samples=refined,
+            status="\n".join(status_lines),
+            source_width=source_width,
+            source_height=source_height,
+            target_width=width,
+            target_height=height,
+            steps=refine_steps,
+            seed=refine_seed,
+            method=method,
+            vsr_quality=vsr_quality,
+            timings=timings,
         )
     except Exception as exc:
         log.warning("Global Refine failed; keeping first-pass result: %s", exc)
         timings["total"] = time.perf_counter() - stage_started
         return GlobalRefineOutcome(
-            samples=samples, status="FAILED", fallback="FIRST_PASS_RESULT",
+            samples=samples,
+            status="FAILED",
+            fallback="FIRST_PASS_RESULT",
             error=f"{type(exc).__name__}: {exc}",
-            source_width=source_width, source_height=source_height,
-            target_width=width, target_height=height, steps=refine_steps, seed=refine_seed,
-            method=method, vsr_quality=vsr_quality, timings=timings,
+            source_width=source_width,
+            source_height=source_height,
+            target_width=width,
+            target_height=height,
+            steps=refine_steps if second_sampling_enabled else 0,
+            seed=refine_seed,
+            method=method,
+            vsr_quality=vsr_quality,
+            timings=timings,
         )
 
 
