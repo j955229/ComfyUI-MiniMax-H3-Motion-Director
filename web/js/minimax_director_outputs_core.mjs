@@ -14,3 +14,30 @@ export function staleDirectorOutputIndices(outputs = []) {
     }
     return stale.sort((a, b) => b - a);
 }
+
+export function reportResizeMaxHeight(containerBottom, reportTop, padding = 12) {
+    const bottom = Number(containerBottom);
+    const top = Number(reportTop);
+    const safePadding = Math.max(0, Number(padding) || 0);
+    if (!Number.isFinite(bottom) || !Number.isFinite(top)) return 0;
+    return Math.max(0, Math.floor(bottom - top - safePadding));
+}
+
+export async function copyReportText(text, writeText) {
+    const value = String(text || "");
+    if (!value) return false;
+    if (typeof writeText !== "function") return false;
+    await writeText(value);
+    return true;
+}
+
+export function refinePassOptions(passCount) {
+    const count = Math.max(0, Math.trunc(Number(passCount) || 0));
+    if (count <= 0) return [{ value: "final", label: "Final" }];
+    const rows = [{ value: "first", label: "First Pass" }];
+    for (let index = 1; index <= count; index += 1) {
+        rows.push({ value: `pass:${index}`, label: `Pass ${index}` });
+    }
+    rows.push({ value: "final", label: "Final" });
+    return rows;
+}

@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 
-POSTPROCESS_CONFIG_VERSION = 4
+POSTPROCESS_CONFIG_VERSION = 7
 CANVAS_MULTIPLE = 32
 
 DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
@@ -21,8 +21,13 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
     "global_refine": {
         "enabled": False,
         "mode": "refine",
+        "second_sampling_enabled": True,
+        "refine_model": "",
+        "passes": 1,
         "denoise": 0.25,
         "steps": 0,
+        "denoise_schedule": "0.25",
+        "steps_schedule": "0",
         "seed_mode": "inherit",
         "seed_offset": 1,
         "skip_fl2v": False,
@@ -36,6 +41,7 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "height": 768,
         "rtx_deblur_enabled": False,
         "rtx_deblur_quality": "medium",
+        "rtx_deblur_strength": 1.0,
     },
     "face_refine": {
         "enabled": False,
@@ -131,6 +137,66 @@ def _float(value: Any, default: float, low: float, high: float) -> float:
     return max(low, min(high, parsed))
 
 
+def _schedule_text(value: Any, fallback: Any) -> str:
+    raw = fallback if value is None or str(value).strip() == "" else value
+    return str(raw).strip().replace("，", ",")
+
+
+def _first_schedule_float(value: Any, default: float, low: float, high: float) -> float:
+    text = _schedule_text(value, default)
+    first = text.split(",", 1)[0].strip()
+    return _float(first, default, low, high)
+
+
+def _first_schedule_int(value: Any, default: int, low: int, high: int) -> int:
+    text = _schedule_text(value, default)
+    first = text.split(",", 1)[0].strip()
+    return _int(first, default, low, high)
+
+
+def _parse_numeric_schedule(
+    value: Any,
+    *,
+    passes: int,
+    label: str,
+    kind: type,
+    low: float,
+    high: float,
+) -> list[float | int]:
+    text = str(value if value is not None else "").strip().replace("，", ",")
+    parts = [part.strip() for part in text.split(",")]
+    if not text or any(not part for part in parts):
+        raise ValueError(f"{label} schedule contains an empty value.")
+    if len(parts) not in {1, int(passes)}:
+        raise ValueError(
+            f"{label} schedule must contain 1 value or exactly {int(passes)} values; "
+            f"got {len(parts)}."
+        )
+
+    values: list[float | int] = []
+    for part in parts:
+        try:
+            if kind is int:
+                if any(marker in part.lower() for marker in (".", "e")):
+                    raise ValueError
+                parsed: float | int = int(part)
+            else:
+                parsed = float(part)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{label} schedule contains an invalid value: {part!r}.") from exc
+        if isinstance(parsed, float) and not math.isfinite(parsed):
+            raise ValueError(f"{label} schedule contains a non-finite value: {part!r}.")
+        if parsed < low or parsed > high:
+            raise ValueError(
+                f"{label} schedule values must be between {low:g} and {high:g}; got {parsed}."
+            )
+        values.append(parsed)
+
+    if len(values) == 1:
+        values *= int(passes)
+    return values
+
+
 def _snap(value: int, multiple: int = CANVAS_MULTIPLE) -> int:
     return max(multiple, int(round(int(value) / multiple)) * multiple)
 
@@ -162,8 +228,19 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g = result["global_refine"]
     g["enabled"] = _bool(g_raw.get("enabled"), False)
     g["mode"] = _choice(g_raw.get("mode"), {"refine", "upscale"}, "refine")
-    g["denoise"] = _float(g_raw.get("denoise"), 0.25, 0.01, 1.0)
-    g["steps"] = _int(g_raw.get("steps"), 0, 0, 200)
+    g["second_sampling_enabled"] = _bool(g_raw.get("second_sampling_enabled"), True)
+    g["refine_model"] = str(g_raw.get("refine_model") or "").strip()
+    g["passes"] = _int(g_raw.get("passes"), 1, 1, 9999)
+
+    legacy_denoise = g_raw.get("denoise", 0.25)
+    legacy_steps = g_raw.get("steps", 0)
+    g["denoise_schedule"] = _schedule_text(g_raw.get("denoise_schedule"), legacy_denoise)
+    g["steps_schedule"] = _schedule_text(g_raw.get("steps_schedule"), legacy_steps)
+    # Keep legacy scalar fields in sync with pass 1 so older report/cache callers
+    # remain valid while schedule-aware sampling uses the full strings below.
+    g["denoise"] = _first_schedule_float(g["denoise_schedule"], 0.25, 0.01, 1.0)
+    g["steps"] = _first_schedule_int(g["steps_schedule"], 0, 0, 200)
+
     g["seed_mode"] = _choice(g_raw.get("seed_mode"), {"inherit", "offset"}, "inherit")
     g["seed_offset"] = _int(g_raw.get("seed_offset"), 1, -2_147_483_648, 2_147_483_647)
     g["skip_fl2v"] = _bool(g_raw.get("skip_fl2v"), False)
@@ -189,6 +266,7 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g["rtx_deblur_quality"] = _choice(
         g_raw.get("rtx_deblur_quality"), {"low", "medium", "high", "ultra"}, "medium"
     )
+    g["rtx_deblur_strength"] = _float(g_raw.get("rtx_deblur_strength"), 1.0, 0.0, 3.0)
 
     raw_version = _int(raw.get("version"), 0, 0, 10000)
     if 0 < raw_version < 4:
@@ -304,6 +382,7 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
         0,
         51,
     )
+    result["version"] = POSTPROCESS_CONFIG_VERSION
     return result
 
 
@@ -316,8 +395,49 @@ def refine_steps_for(config: dict[str, Any], first_steps: int) -> int:
     return configured if configured > 0 else max(8, int(round(int(first_steps) * 0.4)))
 
 
-def refine_seed_for(config: dict[str, Any], seed: int) -> int:
-    return int(seed) + int(config.get("seed_offset", 1)) if config.get("seed_mode") == "offset" else int(seed)
+def refine_passes_for(config: dict[str, Any]) -> int:
+    try:
+        passes = int(config.get("passes") or 1)
+    except (TypeError, ValueError):
+        passes = 1
+    return max(1, min(9999, passes))
+
+
+def refine_pass_settings_for(
+    config: dict[str, Any],
+    first_steps: int,
+) -> list[tuple[float, int]]:
+    """Resolve per-pass (denoise, steps) from one value or a comma schedule."""
+    passes = refine_passes_for(config)
+    denoise_raw = config.get("denoise_schedule") or config.get("denoise") or 0.25
+    steps_raw = config.get("steps_schedule") if config.get("steps_schedule") is not None else config.get("steps", 0)
+    denoises = _parse_numeric_schedule(
+        denoise_raw,
+        passes=passes,
+        label="Denoise",
+        kind=float,
+        low=0.01,
+        high=1.0,
+    )
+    requested_steps = _parse_numeric_schedule(
+        steps_raw,
+        passes=passes,
+        label="Steps",
+        kind=int,
+        low=0,
+        high=200,
+    )
+    auto_steps = max(8, int(round(int(first_steps) * 0.4)))
+    return [
+        (float(denoise), int(steps) if int(steps) > 0 else auto_steps)
+        for denoise, steps in zip(denoises, requested_steps)
+    ]
+
+
+def refine_seed_for(config: dict[str, Any], seed: int, pass_index: int = 0) -> int:
+    if config.get("seed_mode") != "offset":
+        return int(seed)
+    return int(seed) + int(config.get("seed_offset", 1)) + max(0, int(pass_index))
 
 
 def resolve_vsr_quality_name(config: dict[str, Any]) -> str:
@@ -345,16 +465,15 @@ def resolve_upscale_target(config: dict[str, Any], director_width: int, director
 
 
 def postprocess_cache_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
-    """Only per-segment Global Refine affects segment/continuity caches."""
+    """Return the effective per-segment Global Refine cache identity."""
     g = dict(normalize_postprocess_config(config)["global_refine"])
-    g.pop("rtx_deblur_enabled", None)
-    g.pop("rtx_deblur_quality", None)
     return {"global_refine": g if g["enabled"] else False}
 
 
 __all__ = [
     "DEFAULT_POSTPROCESS_CONFIG", "POSTPROCESS_CONFIG_VERSION",
     "normalize_postprocess_config", "serialize_postprocess_config",
-    "refine_steps_for", "refine_seed_for", "resolve_vsr_quality_name",
+    "refine_steps_for", "refine_passes_for", "refine_pass_settings_for",
+    "refine_seed_for", "resolve_vsr_quality_name",
     "resolve_upscale_target", "postprocess_cache_fingerprint",
 ]
