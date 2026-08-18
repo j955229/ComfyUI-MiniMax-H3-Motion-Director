@@ -36,6 +36,12 @@ else:
     if not _motion_patch_ready:
         _log.error("Motion Context disabled: %s", motion_context_patch_status()[1])
 
+    # Audio Drive is installed before the public node modules import executor/audio
+    # helpers so their local function references see the fourth audio policy.
+    from .director.audio_drive import install_audio_drive_support  # noqa: E402
+
+    install_audio_drive_support()
+
     from .nodes.director_output import MiniMaxH3MotionDirector  # noqa: E402
     from .nodes.director_inputs import (  # noqa: E402
         MiniMaxH3MotionDirectorAssets,
