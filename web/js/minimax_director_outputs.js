@@ -39,6 +39,18 @@ function scheduleCleanup(node) {
     setTimeout(() => stripStaleDirectorOutputs(node), 250);
 }
 
+function setText(element, value) {
+    if (!element) return;
+    const text = String(value ?? "");
+    if (element.textContent !== text) element.textContent = text;
+}
+
+function setHidden(element, hidden) {
+    if (!element) return;
+    const value = !!hidden;
+    if (element.hidden !== value) element.hidden = value;
+}
+
 function ensureReportStyles() {
     if (document.getElementById(REPORT_STYLE_ID)) return;
     const style = document.createElement("style");
@@ -71,7 +83,7 @@ function syncCopyButton(button, report, heading) {
     const label = copied ? (english ? "Copied" : "已复制") : (english ? "Copy" : "复制");
     const title = english ? "Copy report" : "复制报告";
     button.disabled = !report.dataset.hasReport;
-    if (button.textContent !== label) button.textContent = label;
+    setText(button, label);
     if (button.title !== title) button.title = title;
     if (button.getAttribute("aria-label") !== title) button.setAttribute("aria-label", title);
 }
@@ -120,7 +132,8 @@ function refreshReportMaxHeight(report) {
     const maxHeight = reportIsVisible
         ? Math.min(pageMaxHeight, remainingHeight)
         : pageMaxHeight;
-    report.style.maxHeight = `${maxHeight}px`;
+    const value = `${maxHeight}px`;
+    if (report.style.maxHeight !== value) report.style.maxHeight = value;
 }
 
 function enhanceReport(report) {
@@ -236,9 +249,9 @@ function syncMultiPassLabels(root) {
     const modelLabel = root.querySelector("[data-mmx-refine-model-label]");
     const passesLabel = root.querySelector("[data-mmx-refine-passes-label]");
     const follow = root.querySelector('[data-path="global_refine.refine_model"] option[value=""]');
-    if (modelLabel) modelLabel.textContent = english ? "Refine Model" : "二采模型";
-    if (passesLabel) passesLabel.textContent = english ? "Passes" : "采样轮数";
-    if (follow) follow.textContent = english ? "Follow First Pass" : "跟随一采";
+    setText(modelLabel, english ? "Refine Model" : "二采模型");
+    setText(passesLabel, english ? "Passes" : "采样轮数");
+    setText(follow, english ? "Follow First Pass" : "跟随一采");
 }
 
 function injectMultiPassControls(root) {
@@ -277,7 +290,7 @@ function injectMultiPassControls(root) {
         fetchCapabilities().then((caps) => {
             if (!modelSelect?.isConnected) return;
             const rows = Array.isArray(caps?.diffusion_models) ? caps.diffusion_models : [];
-            modelSelect.innerHTML = '<option value="">跟随一采</option>'
+            const markup = '<option value="">跟随一采</option>'
                 + rows.map((name) => {
                     const value = String(name);
                     const escaped = value
@@ -287,6 +300,7 @@ function injectMultiPassControls(root) {
                         .replaceAll(">", "&gt;");
                     return `<option value="${escaped}">${escaped}</option>`;
                 }).join("");
+            if (modelSelect.innerHTML !== markup) modelSelect.innerHTML = markup;
             syncMultiPassLabels(root);
             requestPostprocessRender(root);
             queueMicrotask(() => {
@@ -376,12 +390,13 @@ function syncResultSelector(root, { replay = false } = {}) {
     const record = refineResults.get(nodeId)?.get(segmentIndex) || null;
     const activeTab = root.querySelector('[data-result-tab].active')?.dataset?.resultTab || "segment";
     const hasPasses = !!record && record.passCount > 0 && record.variants.size > 0;
+    const shouldHide = activeTab !== "segment" || !hasPasses;
 
-    state.label.hidden = activeTab !== "segment" || !hasPasses;
-    state.select.hidden = activeTab !== "segment" || !hasPasses;
+    setHidden(state.label, shouldHide);
+    setHidden(state.select, shouldHide);
     if (!hasPasses) return;
 
-    let options = refinePassOptions(record.passCount)
+    const options = refinePassOptions(record.passCount)
         .filter((row) => record.variants.has(row.value));
     if (!options.length) return;
     if (!options.some((row) => row.value === record.selected)) {
@@ -390,16 +405,18 @@ function syncResultSelector(root, { replay = false } = {}) {
             : options.at(-1).value;
     }
 
-    const oldValue = state.select.value;
-    state.select.innerHTML = options
-        .map((row) => `<option value="${row.value}">${row.label}</option>`)
-        .join("");
-    state.select.value = record.selected;
-    if (!state.select.value) state.select.value = oldValue || options.at(-1).value;
+    const signature = options.map((row) => `${row.value}:${row.label}`).join("|");
+    if (state.select.dataset.mmxOptions !== signature) {
+        state.select.innerHTML = options
+            .map((row) => `<option value="${row.value}">${row.label}</option>`)
+            .join("");
+        state.select.dataset.mmxOptions = signature;
+    }
+    if (state.select.value !== record.selected) state.select.value = record.selected;
 
     const english = String(root.querySelector('[data-result-tab="final"]')?.textContent || "")
         .toLowerCase().includes("final");
-    state.label.textContent = english ? "Result" : "结果";
+    setText(state.label, english ? "Result" : "结果");
 
     if (replay) {
         const stored = record.variants.get(record.selected);
