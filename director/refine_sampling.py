@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -301,7 +302,7 @@ def _selected_refine_model(config: dict[str, Any], fallback_model):
     """Load the dropdown-selected H3 diffusion model; empty means first-pass MODEL."""
     model_name = str(config.get("refine_model") or "").strip()
     if not model_name:
-        return fallback_model, "Main"
+        return fallback_model, "Follow First Pass"
 
     import comfy.model_base
     import folder_paths
@@ -320,6 +321,132 @@ def _selected_refine_model(config: dict[str, Any], fallback_model):
             f"Refine Model must be MiniMax H3; selected {model_name} loaded {type(base_model).__name__}."
         )
     return loaded, model_name
+
+
+def _context_span_from_conditioning(conditioning) -> int:
+    """Read the exact visual Motion Context prefix from H3 conditioning metadata."""
+    try:
+        from ..patches import MC_KEY
+        from .motion_context import latent_step_offsets, pixel_frames_for_latent_steps
+
+        if not isinstance(conditioning, (list, tuple)) or not conditioning:
+            return 0
+        entry = conditioning[0]
+        if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+            return 0
+        metadata = entry[1] if isinstance(entry[1], dict) else {}
+        keyframes = list(metadata.get("minimax_keyframes") or [])
+        count = 0
+        for keyframe in keyframes:
+            if not isinstance(keyframe, dict) or keyframe.get(MC_KEY) is None:
+                break
+            expected = latent_step_offsets(count + 1)[-1]
+            if int(keyframe.get(MC_KEY)) != int(expected):
+                break
+            count += 1
+        return pixel_frames_for_latent_steps(count) if count > 0 else 0
+    except Exception:
+        return 0
+
+
+def _preview_target_context() -> tuple[str, int, int]:
+    """Return (node_id, zero-based timeline segment, visible target frames)."""
+    try:
+        from .progress import current_director_progress_context
+
+        context = current_director_progress_context()
+        node_id = str(context.get("node_id") or "").strip()
+        segment = max(0, int(context.get("timeline_segment") or context.get("segment") or 1) - 1)
+        label = str(context.get("frames_label") or "")
+        match = re.search(r"\((\d+)f\)", label)
+        target = int(match.group(1)) if match else 0
+        return node_id, segment, target
+    except Exception:
+        return "", 0, 0
+
+
+def _visible_preview_frames(
+    images: torch.Tensor,
+    *,
+    conditioning,
+    target_frames: int,
+    has_context: bool,
+) -> torch.Tensor:
+    target = max(0, int(target_frames))
+    total = int(images.shape[0])
+    if target <= 0 or total <= target:
+        return images[:target] if target > 0 else images
+
+    head = _context_span_from_conditioning(conditioning) if has_context else 0
+    if has_context and head <= 0:
+        try:
+            from .frame_align import minimax_align_frame_count
+            from .motion_context import VIDEO_CONTEXT_GRID
+
+            matches = [
+                int(span)
+                for span in (*VIDEO_CONTEXT_GRID, 0)
+                if minimax_align_frame_count(target + int(span)) == total
+            ]
+            if matches:
+                head = max(matches)
+        except Exception:
+            head = 0
+    head = max(0, min(int(head), max(0, total - target)))
+    return images[head : head + target]
+
+
+def _emit_refine_result_preview(
+    latent: dict,
+    *,
+    vae,
+    conditioning,
+    variant: str,
+    pass_index: int | None,
+    pass_count: int,
+    has_context: bool,
+) -> None:
+    """Decode a result variant for Results UI; preview failures never fail sampling."""
+    node_id, segment_index, target_frames = _preview_target_context()
+    if not node_id:
+        return
+    try:
+        from .progress import report_director_segment_preview
+        from .segment_runtime import tensor_frame_to_jpeg_b64
+
+        video_latent, _audio_latent = _split_av(latent)
+        images = _decode_video(vae, video_latent)
+        images = _visible_preview_frames(
+            images,
+            conditioning=conditioning,
+            target_frames=target_frames,
+            has_context=has_context,
+        )
+        if not isinstance(images, torch.Tensor) or int(images.shape[0]) <= 0:
+            return
+        frames = [
+            tensor_frame_to_jpeg_b64(images[index])
+            for index in range(int(images.shape[0]))
+        ]
+        height = int(images.shape[1])
+        width = int(images.shape[2])
+        label = "First Pass" if variant == "first" else f"Pass {int(pass_index or 0)}"
+        report_director_segment_preview(
+            node_id,
+            segment_index=segment_index,
+            image_b64=frames[0],
+            width=width,
+            height=height,
+            frames=frames,
+            fps=24.0,
+            stage=label,
+            result_kind="refine_pass",
+            result_variant=variant,
+            pass_index=pass_index,
+            pass_count=pass_count,
+        )
+    except Exception as exc:
+        log.debug("Refine result preview %s skipped: %s", variant, exc)
 
 
 @dataclass
@@ -408,6 +535,17 @@ def apply_global_refine(
                 method=method,
                 vsr_quality=vsr_quality,
                 timings=timings,
+            )
+
+        if second_sampling_enabled:
+            _emit_refine_result_preview(
+                samples,
+                vae=vae,
+                conditioning=positive,
+                variant="first",
+                pass_index=None,
+                pass_count=pass_count,
+                has_context=bool(preserve_noise_mask),
             )
 
         work = dict(samples)
@@ -530,6 +668,15 @@ def apply_global_refine(
             elapsed = time.perf_counter() - pass_started
             pass_timings.append(elapsed)
             timings[f"refine_pass_{pass_index + 1}"] = elapsed
+            _emit_refine_result_preview(
+                refined,
+                vae=vae,
+                conditioning=refine_positive,
+                variant=f"pass:{pass_index + 1}",
+                pass_index=pass_index + 1,
+                pass_count=pass_count,
+                has_context=bool(preserve_noise_mask),
+            )
             if on_pass_result is not None:
                 on_pass_result(pass_index + 1, pass_count, refined)
 
