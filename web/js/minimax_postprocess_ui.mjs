@@ -1,12 +1,13 @@
 const DEFAULT_CONFIG = Object.freeze({
-    version: 4,
+    version: 5,
     global_refine: {
-        enabled: false, mode: "refine", denoise: 0.25, steps: 0,
+        enabled: false, mode: "refine", second_sampling_enabled: true, denoise: 0.25, steps: 0,
         seed_mode: "inherit", seed_offset: 1, skip_fl2v: false,
         upscale_method: "lanczos", upscale_model: "",
         vsr_quality: "high",
         resolution_mode: "follow_director", aspect: "16:9", megapixels: 1,
         width: 1376, height: 768,
+        rtx_deblur_enabled: false, rtx_deblur_quality: "medium", rtx_deblur_strength: 1,
     },
     face_refine: {
         enabled: false, detector: "ultralytics", detector_model: "", confidence: 0.35,
@@ -143,6 +144,7 @@ export function normalizePostprocessConfig(raw) {
     const global = result.global_refine;
     global.enabled = !!global.enabled;
     global.mode = inChoice(global.mode, ["refine", "upscale"], "refine");
+    global.second_sampling_enabled = global.second_sampling_enabled !== false;
     global.seed_mode = inChoice(global.seed_mode, ["inherit", "offset"], "inherit");
     const seedOffset = Number(global.seed_offset);
     global.seed_offset = Number.isFinite(seedOffset)
@@ -151,6 +153,10 @@ export function normalizePostprocessConfig(raw) {
     global.upscale_method = inChoice(global.upscale_method, ["lanczos", "upscale_model", "nvidia_rtx_vsr"], "lanczos");
     global.vsr_quality = inChoice(global.vsr_quality, ["low", "medium", "high", "ultra"], "high");
     global.resolution_mode = inChoice(global.resolution_mode, ["follow_director", "aspect_megapixels", "custom"], "follow_director");
+    global.rtx_deblur_enabled = !!global.rtx_deblur_enabled;
+    global.rtx_deblur_quality = inChoice(global.rtx_deblur_quality, ["low", "medium", "high", "ultra"], "medium");
+    const deblurStrength = Number(global.rtx_deblur_strength);
+    global.rtx_deblur_strength = Number.isFinite(deblurStrength) ? Math.max(0, Math.min(3, deblurStrength)) : 1;
     const face=result.face_refine;
     face.enabled=!!face.enabled;
     face.detector=inChoice(face.detector,["ultralytics","insightface"],"ultralytics");
@@ -171,7 +177,7 @@ export function normalizePostprocessConfig(raw) {
     result.save.codec = String(result.save.codec || "auto").trim().toLowerCase().slice(0, 64) || "auto";
     result.save.encoding = result.save.encoding === "re-encode" ? "re-encode" : "auto";
     result.save.crf = Math.max(0, Math.min(51, Math.round(Number(result.save.crf) || 23)));
-    result.version = 4;
+    result.version = 5;
     return result;
 }
 
@@ -201,8 +207,9 @@ export function globalRefineVisibility(config) {
     const global = normalizePostprocessConfig(config).global_refine;
     const upscaleEnabled = global.mode === "upscale";
     return {
+        secondSampling: global.second_sampling_enabled,
         upscaleEnabled,
-        seedOffset: global.seed_mode === "offset",
+        seedOffset: global.second_sampling_enabled && global.seed_mode === "offset",
         upscaleModel: upscaleEnabled && global.upscale_method === "upscale_model",
         vsr: upscaleEnabled && global.upscale_method === "nvidia_rtx_vsr",
         aspectMegapixels: upscaleEnabled && global.resolution_mode === "aspect_megapixels",
@@ -219,11 +226,16 @@ export function globalRefineSummary(config, width = 864, height = 480, locale = 
     const global = normalizePostprocessConfig(config).global_refine;
     const zh = locale === "zh";
     if (!global.enabled) return POST_TEXT[zh ? "zh" : "en"].disabled;
-    const steps = Number(global.steps) > 0 ? `${global.steps} ${zh ? "步" : "Steps"}` : (zh ? "自动步数" : "Auto Steps");
-    const seed = global.seed_mode === "offset"
-        ? `${zh ? "Seed 偏移" : "Seed Offset"} ${Number(global.seed_offset) >= 0 ? "+" : ""}${Number(global.seed_offset)}`
-        : (zh ? "保持原 Seed" : "Keep original Seed");
-    const parts = [zh ? "二次采样" : "Second Sampling", `D${Number(global.denoise).toFixed(2)}`, steps, seed];
+    const parts = [];
+    if (global.second_sampling_enabled) {
+        const steps = Number(global.steps) > 0 ? `${global.steps} ${zh ? "步" : "Steps"}` : (zh ? "自动步数" : "Auto Steps");
+        const seed = global.seed_mode === "offset"
+            ? `${zh ? "Seed 偏移" : "Seed Offset"} ${Number(global.seed_offset) >= 0 ? "+" : ""}${Number(global.seed_offset)}`
+            : (zh ? "保持原 Seed" : "Keep original Seed");
+        parts.push(zh ? "二次采样 ON" : "Second Sampling ON", `D${Number(global.denoise).toFixed(2)}`, steps, seed);
+    } else {
+        parts.push(zh ? "二次采样 OFF" : "Second Sampling OFF");
+    }
     if (global.mode === "upscale") {
         const [targetW, targetH] = resolveGlobalTarget(config, width, height);
         let method = global.upscale_method === "upscale_model" ? (global.upscale_model || (zh ? "放大模型" : "Upscale Model")) : "Lanczos";
@@ -332,13 +344,16 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
       <section class="mmx-post-column" data-section="global_refine">
         <div class="mmx-post-head"><h3 data-post-text="global_title">全局精修</h3><label class="mmx-post-enable"><input type="checkbox" data-path="global_refine.enabled"> <span data-post-text="enabled">ON / OFF</span></label></div>
         <p class="mmx-post-summary" data-summary="global_refine"></p>
-        <div class="mmx-post-section"><h4 data-post-text="sampling">二次采样</h4><div class="mmx-post-grid">
-          ${field("Denoise", "global_refine.denoise", "number", 'min="0.01" max="1" step="0.01"')}
-          ${field("Steps (0=Auto)", "global_refine.steps", "number", 'min="0" max="200" step="1"')}
-          ${field("Refine Randomness", "global_refine.seed_mode", "select", options([["inherit","Keep original Seed (recommended)"],["offset","Use Seed offset"]]))}
-          ${conditional("seed_offset", field("Seed Offset", "global_refine.seed_offset", "number", 'min="-2147483648" max="2147483647" step="1"'))}
-          ${field("Skip FL2V", "global_refine.skip_fl2v", "checkbox")}
-        </div></div>
+        <div class="mmx-post-section" data-second-sampling-section>
+          <div class="mmx-post-section-head"><h4 data-post-text="sampling">二次采样</h4><label class="mmx-post-subenable"><input type="checkbox" data-path="global_refine.second_sampling_enabled"> <span data-post-text="enabled">ON / OFF</span></label></div>
+          <div class="mmx-post-section-body" data-second-sampling-body><div class="mmx-post-grid">
+            ${field("Denoise", "global_refine.denoise", "number", 'min="0.01" max="1" step="0.01"')}
+            ${field("Steps (0=Auto)", "global_refine.steps", "number", 'min="0" max="200" step="1"')}
+            ${field("Refine Randomness", "global_refine.seed_mode", "select", options([["inherit","Keep original Seed (recommended)"],["offset","Use Seed offset"]]))}
+            ${conditional("seed_offset", field("Seed Offset", "global_refine.seed_offset", "number", 'min="-2147483648" max="2147483647" step="1"'))}
+            ${field("Skip FL2V", "global_refine.skip_fl2v", "checkbox")}
+          </div></div>
+        </div>
         <div class="mmx-post-section" data-upscale-section>
           <div class="mmx-post-section-head"><h4 data-post-text="upscale">Upscale</h4><label class="mmx-post-subenable"><input type="checkbox" data-upscale-enabled> <span data-post-text="enabled">ON / OFF</span></label></div>
           <div class="mmx-post-section-body" data-upscale-body>
@@ -471,6 +486,7 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
             else if (String(input.value) !== String(value ?? "")) input.value = value ?? "";
         });
         const visible = globalRefineVisibility(config);
+        root.querySelector("[data-second-sampling-body]").hidden = !visible.secondSampling;
         root.querySelector("[data-upscale-enabled]").checked = visible.upscaleEnabled;
         root.querySelector("[data-upscale-body]").hidden = !visible.upscaleEnabled;
         setConditional("seed_offset", !visible.seedOffset);
