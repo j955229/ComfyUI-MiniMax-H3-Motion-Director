@@ -187,26 +187,61 @@ function syncOutputUi(node) {
     if (!outputUi?.liveRoot) return false;
     let changed = false;
 
-    const syncGlobalRefineLabel = () => {
-        const tab = outputUi.liveRoot?.querySelector?.('[data-live-tab="global_refine"]');
+    const syncGlobalRefineVisibleText = () => {
         const label = getLocale() === "en" ? "Global Refine" : "全局精修";
+        let localChanged = false;
+        const tab = outputUi.liveRoot?.querySelector?.('[data-live-tab="global_refine"]');
         if (tab && tab.textContent !== label) {
             tab.textContent = label;
-            return true;
+            localChanged = true;
         }
-        return false;
+        for (const selector of ["[data-live-source]", "[data-live-badge]"]) {
+            const element = outputUi.liveRoot?.querySelector?.(selector);
+            if (!element) continue;
+            const text = String(element.textContent || "");
+            const next = text
+                .replace(/^放大(?=\s*·|$)/, label)
+                .replace(/^Global Refine(?=\s*·|$)/, label);
+            if (next !== text) {
+                element.textContent = next;
+                localChanged = true;
+            }
+        }
+        return localChanged;
     };
 
-    changed = syncGlobalRefineLabel() || changed;
+    changed = syncGlobalRefineVisibleText() || changed;
 
     if (!outputUi._mmxGlobalRefineLocalePatched && typeof outputUi.updateLocale === "function") {
         const updateLocale = outputUi.updateLocale.bind(outputUi);
         outputUi.updateLocale = function (...args) {
             const result = updateLocale(...args);
-            syncGlobalRefineLabel();
+            syncGlobalRefineVisibleText();
             return result;
         };
         outputUi._mmxGlobalRefineLocalePatched = true;
+        changed = true;
+    }
+
+    if (!outputUi._mmxGlobalRefinePreviewPatched && typeof outputUi.consumePreview === "function") {
+        const consumePreview = outputUi.consumePreview.bind(outputUi);
+        outputUi.consumePreview = function (...args) {
+            const result = consumePreview(...args);
+            syncGlobalRefineVisibleText();
+            return result;
+        };
+        outputUi._mmxGlobalRefinePreviewPatched = true;
+        changed = true;
+    }
+
+    if (!outputUi._mmxGlobalRefineStagePatched && typeof outputUi.setLiveStage === "function") {
+        const setLiveStage = outputUi.setLiveStage.bind(outputUi);
+        outputUi.setLiveStage = function (...args) {
+            const result = setLiveStage(...args);
+            syncGlobalRefineVisibleText();
+            return result;
+        };
+        outputUi._mmxGlobalRefineStagePatched = true;
         changed = true;
     }
 
