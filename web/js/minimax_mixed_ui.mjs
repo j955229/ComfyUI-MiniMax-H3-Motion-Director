@@ -13,22 +13,32 @@ export {
 
 const guardedEditors = new WeakSet();
 
-function syncStandaloneSplitPointUI(editor) {
-    editor?.updateSplitPointUI?.();
-
+export function enforceStandaloneSplitPointVisibility(editor) {
     const unsupported = editor?.isFl2vMode?.()
         || editor?.isImageBatch?.()
         || editor?.isGenMode?.();
-    if (!unsupported) return;
+    if (!unsupported) return false;
 
     const bar = editor?.splitEditBarEl
         || editor?.root?.querySelector?.('[data-r="split-edit-bar"]');
     const btn = editor?.root?.querySelector?.('[data-a="del-split"]');
-    bar?.classList?.add("hidden");
+    let changed = false;
+
+    if (bar && !bar.classList?.contains?.("hidden")) {
+        bar.classList?.add?.("hidden");
+        changed = true;
+    }
     if (btn) {
+        if (!btn.disabled) changed = true;
         btn.disabled = true;
         btn.title = "";
     }
+    return changed;
+}
+
+function syncStandaloneSplitPointUI(editor) {
+    editor?.updateSplitPointUI?.();
+    return enforceStandaloneSplitPointVisibility(editor);
 }
 
 function installMixedExitSplitGuard(editor) {

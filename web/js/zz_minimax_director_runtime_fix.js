@@ -16,6 +16,9 @@ import {
     keepSamplingSourceHidden,
     restoreContinuityWidgetRenderer,
 } from "./minimax_director_runtime_fix_core.mjs?boot=continuity_runtime_fix_v4";
+import {
+    enforceStandaloneSplitPointVisibility,
+} from "./minimax_mixed_ui.mjs?boot=mixed_native_v8";
 
 const DIRECTOR_CLASS = "MiniMaxH3MotionDirector";
 
@@ -186,6 +189,7 @@ function syncRuntimeFix(node) {
         syncSamplingSourceOwnership(node),
         syncGeneratedAudioContinuation(node),
         syncLocalizedLabels(node),
+        enforceStandaloneSplitPointVisibility(node?._minimaxEditor),
     ].some(Boolean);
 
     if (changed) node.setDirtyCanvas?.(true, true);
