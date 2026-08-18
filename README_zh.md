@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-![Version](https://img.shields.io/badge/version-v1.1.0-2ea44f)
+![Version](https://img.shields.io/badge/version-v1.1.4-2ea44f)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![ComfyUI](https://img.shields.io/badge/ComfyUI-custom%20node-6f42c1)
 
