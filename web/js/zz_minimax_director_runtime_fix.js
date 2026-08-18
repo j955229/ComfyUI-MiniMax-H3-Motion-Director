@@ -182,6 +182,59 @@ function syncLocalizedLabels(node) {
     return changed;
 }
 
+function syncOutputUi(node) {
+    const outputUi = node?._minimaxEditor?.outputUi;
+    if (!outputUi?.liveRoot) return false;
+    let changed = false;
+
+    const syncGlobalRefineLabel = () => {
+        const tab = outputUi.liveRoot?.querySelector?.('[data-live-tab="global_refine"]');
+        const label = getLocale() === "en" ? "Global Refine" : "全局精修";
+        if (tab && tab.textContent !== label) {
+            tab.textContent = label;
+            return true;
+        }
+        return false;
+    };
+
+    changed = syncGlobalRefineLabel() || changed;
+
+    if (!outputUi._mmxGlobalRefineLocalePatched && typeof outputUi.updateLocale === "function") {
+        const updateLocale = outputUi.updateLocale.bind(outputUi);
+        outputUi.updateLocale = function (...args) {
+            const result = updateLocale(...args);
+            syncGlobalRefineLabel();
+            return result;
+        };
+        outputUi._mmxGlobalRefineLocalePatched = true;
+        changed = true;
+    }
+
+    if (!outputUi._mmxDeblurPipelinePatched && typeof outputUi.setPipelineStatus === "function") {
+        const setPipelineStatus = outputUi.setPipelineStatus.bind(outputUi);
+        outputUi.setPipelineStatus = function (detail = {}) {
+            if (String(detail?.phase || "") !== "rtx_deblur") {
+                return setPipelineStatus(detail);
+            }
+            const target = outputUi.liveRoot?.querySelector?.("[data-pipeline-status]");
+            if (!target) return setPipelineStatus(detail);
+            const zh = getLocale() !== "en";
+            const segmentWord = zh ? "片段" : "Segment";
+            const frameWord = zh ? "帧" : "Frame";
+            const segment = detail.timeline_segment || detail.segment || 1;
+            const total = detail.timeline_segment_total || detail.segment_total || 1;
+            const progress = Number(detail.phase_max) > 1
+                ? ` · ${frameWord} ${detail.phase_value}/${detail.phase_max}`
+                : "";
+            target.textContent = `${segmentWord} ${segment}/${total} · NVIDIA RTX Deblur${progress}`;
+        };
+        outputUi._mmxDeblurPipelinePatched = true;
+        changed = true;
+    }
+
+    return changed;
+}
+
 function syncRuntimeFix(node) {
     if (!node || !Array.isArray(node.widgets)) return false;
 
@@ -189,6 +242,7 @@ function syncRuntimeFix(node) {
         syncSamplingSourceOwnership(node),
         syncGeneratedAudioContinuation(node),
         syncLocalizedLabels(node),
+        syncOutputUi(node),
         enforceStandaloneSplitPointVisibility(node?._minimaxEditor),
     ].some(Boolean);
 
