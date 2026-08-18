@@ -107,6 +107,21 @@ def _parse_timing_values(value: str) -> dict[str, str]:
     return result
 
 
+def _parse_refine_pass(value: str) -> dict[str, str]:
+    """Parse the compact per-pass status emitted by refine_sampling."""
+    result: dict[str, str] = {}
+    parts = [part.strip() for part in str(value or "").split("|") if part.strip()]
+    if not parts:
+        return result
+    result["Status"] = parts[0]
+    for part in parts[1:]:
+        if "=" not in part:
+            continue
+        key, raw = part.split("=", 1)
+        result[key.strip()] = raw.strip()
+    return result
+
+
 def _cache_segment_states(entries: list[str] | None) -> dict[str, str]:
     states: dict[str, str] = {}
     pattern = re.compile(r"^(S\d+):\s*(.+)$")
@@ -183,6 +198,15 @@ def _split_global_refine_sections(
             values[key.strip()] = value.strip()
         segment.update(values)
         segment["timings"] = _parse_timing_values(values.get("Timing", ""))
+        segment["passes_detail"] = []
+        for key, value in values.items():
+            match = re.fullmatch(r"Pass\s+(\d+)", key)
+            if not match:
+                continue
+            segment["passes_detail"].append(
+                (int(match.group(1)), _parse_refine_pass(value))
+            )
+        segment["passes_detail"].sort(key=lambda pair: pair[0])
 
     enabled = config.get("Enabled", "OFF").upper() == "ON"
     cache_states = _cache_segment_states(cache_entries)
@@ -231,10 +255,23 @@ def _split_global_refine_sections(
         for segment in segments
     )
     second_lines = [f"Enabled: {'ON' if second_enabled else 'OFF'}"]
-    if second_enabled:
-        for key in ("Denoise", "Steps", "Seed Mode"):
-            if config.get(key):
-                second_lines.append(f"{key}: {config[key]}")
+    sampled_segments = [
+        segment for segment in segments
+        if str(segment.get("Second Sampling") or "OFF").upper() == "ON"
+    ]
+    first_sampled = sampled_segments[0] if sampled_segments else None
+    if second_enabled and first_sampled is not None:
+        model_name = str(first_sampled.get("Refine Model") or "Follow First Pass")
+        pass_count = str(first_sampled.get("Passes") or len(first_sampled.get("passes_detail") or []) or 1)
+        second_lines.extend(
+            [
+                f"Model: {model_name}",
+                f"Passes: {pass_count}",
+            ]
+        )
+        if config.get("Seed Mode"):
+            second_lines.append(f"Seed Mode: {config['Seed Mode']}")
+
     for segment_id in ordered_ids:
         segment = by_id.get(segment_id)
         if segment is None:
@@ -245,10 +282,29 @@ def _split_global_refine_sections(
         if str(segment.get("Second Sampling") or "OFF").upper() != "ON":
             second_lines.append(f"{segment_id}: OFF")
             continue
+
         state = "FAILED" if segment.get("global_status") == "FAILED" else "SUCCESS"
-        timing = segment.get("timings", {}).get("refine_sampling")
-        suffix = f" · {timing}" if state == "SUCCESS" and timing else ""
-        second_lines.append(f"{segment_id}: {state}{suffix}")
+        pass_details = list(segment.get("passes_detail") or [])
+        if not pass_details:
+            timing = segment.get("timings", {}).get("refine_sampling")
+            suffix = f" · {timing}" if state == "SUCCESS" and timing else ""
+            second_lines.append(f"{segment_id}: {state}{suffix}")
+            continue
+
+        second_lines.append(f"{segment_id}:")
+        for pass_index, detail in pass_details:
+            pass_state = detail.get("Status") or state
+            second_lines.append(f"  Pass {pass_index}: {pass_state}")
+            for key in ("Denoise", "Steps", "Seed", "Timing"):
+                if detail.get(key):
+                    second_lines.append(f"    {key}: {detail[key]}")
+        total_sampling = segment.get("timings", {}).get("refine_sampling")
+        if total_sampling:
+            second_lines.append(f"  Total Sampling: {total_sampling}")
+        if segment.get("Error"):
+            second_lines.append(f"  Error: {segment['Error']}")
+        if segment.get("Fallback"):
+            second_lines.append(f"  Fallback: {segment['Fallback']}")
 
     upscale_enabled = config.get("Mode", "").strip().lower() == "upscale"
     upscale_lines = [f"Enabled: {'ON' if upscale_enabled else 'OFF'}"]
