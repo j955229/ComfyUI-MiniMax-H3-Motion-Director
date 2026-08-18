@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 
-POSTPROCESS_CONFIG_VERSION = 4
+POSTPROCESS_CONFIG_VERSION = 5
 CANVAS_MULTIPLE = 32
 
 DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
@@ -21,6 +21,7 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
     "global_refine": {
         "enabled": False,
         "mode": "refine",
+        "second_sampling_enabled": True,
         "denoise": 0.25,
         "steps": 0,
         "seed_mode": "inherit",
@@ -36,6 +37,7 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "height": 768,
         "rtx_deblur_enabled": False,
         "rtx_deblur_quality": "medium",
+        "rtx_deblur_strength": 1.0,
     },
     "face_refine": {
         "enabled": False,
@@ -162,6 +164,7 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g = result["global_refine"]
     g["enabled"] = _bool(g_raw.get("enabled"), False)
     g["mode"] = _choice(g_raw.get("mode"), {"refine", "upscale"}, "refine")
+    g["second_sampling_enabled"] = _bool(g_raw.get("second_sampling_enabled"), True)
     g["denoise"] = _float(g_raw.get("denoise"), 0.25, 0.01, 1.0)
     g["steps"] = _int(g_raw.get("steps"), 0, 0, 200)
     g["seed_mode"] = _choice(g_raw.get("seed_mode"), {"inherit", "offset"}, "inherit")
@@ -189,6 +192,7 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g["rtx_deblur_quality"] = _choice(
         g_raw.get("rtx_deblur_quality"), {"low", "medium", "high", "ultra"}, "medium"
     )
+    g["rtx_deblur_strength"] = _float(g_raw.get("rtx_deblur_strength"), 1.0, 0.0, 3.0)
 
     raw_version = _int(raw.get("version"), 0, 0, 10000)
     if 0 < raw_version < 4:
@@ -304,6 +308,7 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
         0,
         51,
     )
+    result["version"] = POSTPROCESS_CONFIG_VERSION
     return result
 
 
@@ -345,10 +350,8 @@ def resolve_upscale_target(config: dict[str, Any], director_width: int, director
 
 
 def postprocess_cache_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
-    """Only per-segment Global Refine affects segment/continuity caches."""
+    """Return the effective per-segment Global Refine cache identity."""
     g = dict(normalize_postprocess_config(config)["global_refine"])
-    g.pop("rtx_deblur_enabled", None)
-    g.pop("rtx_deblur_quality", None)
     return {"global_refine": g if g["enabled"] else False}
 
 
