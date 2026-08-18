@@ -14,3 +14,11 @@ export function staleDirectorOutputIndices(outputs = []) {
     }
     return stale.sort((a, b) => b - a);
 }
+
+export function reportResizeMaxHeight(containerBottom, reportTop, padding = 12) {
+    const bottom = Number(containerBottom);
+    const top = Number(reportTop);
+    const safePadding = Math.max(0, Number(padding) || 0);
+    if (!Number.isFinite(bottom) || !Number.isFinite(top)) return 0;
+    return Math.max(0, Math.floor(bottom - top - safePadding));
+}
