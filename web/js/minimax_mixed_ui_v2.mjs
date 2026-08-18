@@ -785,11 +785,12 @@ export function mountMixedUI({ host, editor, initialState, onChange }) {
                 check.type = "checkbox";
                 check.checked = state.runSelection.includes(index);
                 check.onclick = (event) => event.stopPropagation();
-                check.onchange = () => mutate(() => {
+                check.onchange = () => {
                     const set = new Set(state.runSelection || []);
                     if (check.checked) set.add(index); else set.delete(index);
                     state.runSelection = [...set].sort((a, b) => a - b);
-                });
+                    notify();
+                };
                 head.appendChild(check);
             }
             const prompt = document.createElement("div");
