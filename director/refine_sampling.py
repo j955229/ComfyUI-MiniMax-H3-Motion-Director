@@ -17,6 +17,7 @@ import torch
 
 from .core_sampling import sample_single_stage
 from .postprocess_config import (
+    refine_pass_settings_for,
     refine_passes_for,
     refine_seed_for,
     refine_steps_for,
@@ -466,6 +467,9 @@ class GlobalRefineOutcome:
     passes: int = 0
     refine_model: str = ""
     pass_timings: list[float] = field(default_factory=list)
+    pass_denoises: list[float] = field(default_factory=list)
+    pass_steps: list[int] = field(default_factory=list)
+    pass_seeds: list[int] = field(default_factory=list)
     timings: dict[str, float] = field(default_factory=dict)
 
     @property
@@ -507,8 +511,11 @@ def apply_global_refine(
     second_sampling_enabled = bool(config.get("second_sampling_enabled", True))
     deblur_enabled = bool(config.get("rtx_deblur_enabled", False))
     upscale_enabled = config.get("mode") == "upscale"
-    refine_steps = refine_steps_for(config, first_steps)
     pass_count = refine_passes_for(config) if second_sampling_enabled else 0
+    # Invalid/mismatched schedules are configuration errors. Resolve them before
+    # entering the stage fallback so a bad schedule is never silently ignored.
+    pass_settings = refine_pass_settings_for(config, first_steps) if second_sampling_enabled else []
+    refine_steps = pass_settings[0][1] if pass_settings else refine_steps_for(config, first_steps)
     first_refine_seed = refine_seed_for(config, seed, 0)
     width, height = int(director_width), int(director_height)
     source_width, source_height = width, height
@@ -516,6 +523,9 @@ def apply_global_refine(
     vsr_quality = str(config.get("vsr_quality") or "high")
     timings: dict[str, float] = {}
     pass_timings: list[float] = []
+    pass_denoises: list[float] = []
+    pass_steps: list[int] = []
+    pass_seeds: list[int] = []
     stage_started = time.perf_counter()
     deblur_outcome: RTXDeblurOutcome | None = None
     selected_model_name = ""
@@ -636,7 +646,7 @@ def apply_global_refine(
         if on_phase:
             on_phase("global_refine", 0)
 
-        for pass_index in range(pass_count):
+        for pass_index, (pass_denoise, pass_step_count) in enumerate(pass_settings):
             pass_started = time.perf_counter()
             pass_seed = refine_seed_for(config, seed, pass_index)
 
@@ -654,12 +664,12 @@ def apply_global_refine(
                 latent=refined,
                 seed=pass_seed,
                 cfg=cfg,
-                steps=refine_steps,
+                steps=pass_step_count,
                 sampler_name=sampler_name,
                 scheduler=scheduler,
                 shift_video=shift_video,
                 shift_audio=shift_audio,
-                denoise=float(config.get("denoise") or 0.25),
+                denoise=pass_denoise,
                 phase_name="global_refine",
                 on_phase=_pass_phase,
                 on_step_preview=on_step_preview,
@@ -667,6 +677,9 @@ def apply_global_refine(
             )
             elapsed = time.perf_counter() - pass_started
             pass_timings.append(elapsed)
+            pass_denoises.append(float(pass_denoise))
+            pass_steps.append(int(pass_step_count))
+            pass_seeds.append(int(pass_seed))
             timings[f"refine_pass_{pass_index + 1}"] = elapsed
             _emit_refine_result_preview(
                 refined,
@@ -692,8 +705,14 @@ def apply_global_refine(
             f"Upscale: {'ON' if upscale_enabled else 'OFF'}",
             *_deblur_report_lines(deblur_outcome),
         ]
-        for index, elapsed in enumerate(pass_timings, start=1):
-            status_lines.append(f"Pass {index}: SUCCESS · {elapsed:.2f}s")
+        for index, (pass_denoise, pass_step_count, pass_seed, elapsed) in enumerate(
+            zip(pass_denoises, pass_steps, pass_seeds, pass_timings),
+            start=1,
+        ):
+            status_lines.append(
+                f"Pass {index}: SUCCESS | Denoise={pass_denoise:g} | "
+                f"Steps={pass_step_count} | Seed={pass_seed} | Timing={elapsed:.2f}s"
+            )
         return GlobalRefineOutcome(
             samples=refined,
             status="\n".join(status_lines),
@@ -708,6 +727,9 @@ def apply_global_refine(
             passes=pass_count,
             refine_model=selected_model_name,
             pass_timings=pass_timings,
+            pass_denoises=pass_denoises,
+            pass_steps=pass_steps,
+            pass_seeds=pass_seeds,
             timings=timings,
         )
     except Exception as exc:
@@ -729,6 +751,9 @@ def apply_global_refine(
             passes=pass_count,
             refine_model=selected_model_name,
             pass_timings=pass_timings,
+            pass_denoises=pass_denoises,
+            pass_steps=pass_steps,
+            pass_seeds=pass_seeds,
             timings=timings,
         )
 
