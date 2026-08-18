@@ -13,6 +13,7 @@ import logging
 import time
 import base64
 import io
+import threading
 import wave
 
 import torch
@@ -48,6 +49,7 @@ PHASE_WEIGHTS = {
 }
 _RUN_STARTED: dict[str, float] = {}
 _PHASE_STARTED: dict[str, tuple[str, float]] = {}
+_PROGRESS_CONTEXT = threading.local()
 
 PHASE_LABELS = {
     "prepare": "准备片段",
@@ -70,6 +72,12 @@ def _phase_index(phase: str) -> int:
         return DIRECTOR_PHASES.index(phase)
     except ValueError:
         return 0
+
+
+def current_director_progress_context() -> dict:
+    """Return this execution thread's latest segment progress metadata."""
+    payload = getattr(_PROGRESS_CONTEXT, "payload", None)
+    return dict(payload) if isinstance(payload, dict) else {}
 
 
 def report_director_progress(
@@ -137,6 +145,7 @@ def report_director_progress(
         "elapsed_seconds": max(0.0, now - _RUN_STARTED.get(key, now)),
         "phase_elapsed_seconds": max(0.0, now - phase_started),
     }
+    _PROGRESS_CONTEXT.payload = payload
     try:
         from server import PromptServer
         srv = PromptServer.instance
