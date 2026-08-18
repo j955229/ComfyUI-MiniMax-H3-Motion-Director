@@ -36,9 +36,10 @@ else:
     if not _motion_patch_ready:
         _log.error("Motion Context disabled: %s", motion_context_patch_status()[1])
 
-    # Install Dialogue Drive before public node modules bind executor helpers.
-    # It augments native R2V/RV2V reference-audio prompt semantics only; target
-    # H3 audio remains generated and is never replaced/frozen by the upload.
+    # Install per-reference-audio roles before public node modules bind executor
+    # and audio-export helpers. Dialogue Drive keeps H3 audio generative; exact
+    # Audio Drive locks only configured time ranges and restores original PCM in
+    # the exported soundtrack.
     from .director.audio_drive import install_audio_drive_support  # noqa: E402
 
     install_audio_drive_support()
