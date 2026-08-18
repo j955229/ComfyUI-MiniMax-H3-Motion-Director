@@ -22,6 +22,7 @@ function syncText(root, section) {
     const zh = currentLanguage(root) === "zh";
     setText(section.querySelector("[data-rtx-deblur-enabled-label]"), zh ? "开 / 关" : "ON / OFF");
     setText(section.querySelector("[data-rtx-deblur-quality-label]"), zh ? "质量" : "Quality");
+    setText(section.querySelector("[data-rtx-deblur-strength-label]"), zh ? "强度" : "Strength");
 }
 
 function syncColumnState(root, section) {
@@ -30,6 +31,7 @@ function syncColumnState(root, section) {
     const globalEnabled = !!root.querySelector('[data-path="global_refine.enabled"]')?.checked;
     const enabled = section.querySelector('[data-path="global_refine.rtx_deblur_enabled"]');
     const quality = section.querySelector('[data-path="global_refine.rtx_deblur_quality"]');
+    const strength = section.querySelector('[data-path="global_refine.rtx_deblur_strength"]');
     const deblurEnabled = !!enabled?.checked;
 
     // RTX Deblur is a child stage of Global Refine. Keep its saved sub-toggle
@@ -38,6 +40,7 @@ function syncColumnState(root, section) {
     section.classList.toggle("mmx-post-disabled", globalEnabled && !deblurEnabled);
     if (enabled) enabled.disabled = !globalEnabled;
     if (quality) quality.disabled = !globalEnabled || !deblurEnabled;
+    if (strength) strength.disabled = !globalEnabled || !deblurEnabled;
 }
 
 function requestStoreRender(root) {
@@ -88,6 +91,10 @@ function inject(root) {
                   <option value="ultra">Ultra</option>
                 </select>
               </label>
+              <label class="mmx-post-field">
+                <span data-rtx-deblur-strength-label>Strength</span>
+                <input type="number" min="0" max="3" step="0.05" data-path="global_refine.rtx_deblur_strength">
+              </label>
             </div>
           </div>`;
         upscale.insertAdjacentElement("afterend", section);
@@ -95,10 +102,15 @@ function inject(root) {
 
         const enabled = section.querySelector('[data-path="global_refine.rtx_deblur_enabled"]');
         const quality = section.querySelector('[data-path="global_refine.rtx_deblur_quality"]');
+        const strength = section.querySelector('[data-path="global_refine.rtx_deblur_strength"]');
         enabled?.addEventListener("change", () => {
             if (enabled.checked && quality && !quality.value) {
                 quality.value = "medium";
                 quality.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+            if (enabled.checked && strength && !strength.value) {
+                strength.value = "1";
+                strength.dispatchEvent(new Event("change", { bubbles: true }));
             }
         });
     }
