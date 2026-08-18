@@ -36,8 +36,9 @@ else:
     if not _motion_patch_ready:
         _log.error("Motion Context disabled: %s", motion_context_patch_status()[1])
 
-    # Audio Drive is installed before the public node modules import executor/audio
-    # helpers so their local function references see the fourth audio policy.
+    # Install Dialogue Drive before public node modules bind executor helpers.
+    # It augments native R2V/RV2V reference-audio prompt semantics only; target
+    # H3 audio remains generated and is never replaced/frozen by the upload.
     from .director.audio_drive import install_audio_drive_support  # noqa: E402
 
     install_audio_drive_support()
