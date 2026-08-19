@@ -45,7 +45,7 @@ const POST_TEXT = {
         no_face_detector: "No face detector model found. face_yolov8m.pt is recommended.",
         runtime_detected: "Runtime detected (validated when generation starts)",
         missing_no_downgrade: "Not installed (stage will fail without downgrade)",
-        lbh_note: "Requires the separately installed LBH MiniMax H3 Latent Upscaler. Enter a checkpoint filename from models/latent_upscale_models.",
+        lbh_note: "Director loads compatible MiniMax H3 learned-latent checkpoints directly. Place the checkpoint in models/latent_upscale_models and select or enter its filename. No separate LBH custom node is required.",
     },
     zh: {
         global_title: "全局精修", face_title: "人脸精修", sampling: "二次采样",
@@ -58,7 +58,7 @@ const POST_TEXT = {
         no_face_detector: "未找到人脸检测模型，建议放入 face_yolov8m.pt。",
         runtime_detected: "已检测到运行库（生成时验证）",
         missing_no_downgrade: "未安装（此阶段会失败，不会自动降级）",
-        lbh_note: "需要另外安装 LBH MiniMax H3 Latent Upscaler。模型文件放在 models/latent_upscale_models，并在下方填写文件名。",
+        lbh_note: "Director 直接加载兼容的 MiniMax H3 Learned Latent checkpoint。将模型文件放入 models/latent_upscale_models，并在下方选择或填写文件名；无需另装 LBH 自定义节点。",
     },
 };
 
@@ -70,7 +70,7 @@ const POST_LABELS = {
     "global_refine.skip_fl2v": ["Skip FL2V", "跳过 FL2V"],
     "global_refine.upscale_method": ["Method", "放大方法"],
     "global_refine.upscale_model": ["Model", "模型"],
-    "global_refine.latent_upscale_model": ["LBH Model", "LBH 模型"],
+    "global_refine.latent_upscale_model": ["H3 Latent Model", "H3 Latent 模型"],
     "global_refine.latent_upscale_variant": ["Latent Variant", "Latent 版本"],
     "global_refine.latent_upscale_precision": ["Precision", "精度"],
     "global_refine.latent_upscale_device": ["Device", "设备"],
@@ -108,7 +108,7 @@ const POST_OPTION_LABELS = {
     "global_refine.upscale_method": {
         lanczos: ["Lanczos", "Lanczos"], upscale_model: ["Upscale Model", "放大模型"],
         nvidia_rtx_vsr: ["NVIDIA RTX VSR", "NVIDIA RTX VSR"],
-        h3_learned_latent: ["H3 Learned Latent (LBH)", "H3 Learned Latent (LBH)"],
+        h3_learned_latent: ["H3 Learned Latent", "H3 Learned Latent"],
     },
     "global_refine.latent_upscale_variant": {
         "2d": ["2D + Temporal (recommended)", "2D + Temporal（推荐）"], "3d": ["Full 3D", "Full 3D"],
@@ -378,9 +378,9 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
           <div class="mmx-post-section-head"><h4 data-post-text="upscale">Upscale</h4><label class="mmx-post-subenable"><input type="checkbox" data-upscale-enabled> <span data-post-text="enabled">ON / OFF</span></label></div>
           <div class="mmx-post-section-body" data-upscale-body>
             <div class="mmx-post-grid">
-              ${field("Method", "global_refine.upscale_method", "select", options([["lanczos","Lanczos"],["upscale_model","Upscale Model"],["nvidia_rtx_vsr","NVIDIA RTX VSR"],["h3_learned_latent","H3 Learned Latent (LBH)"]]))}
+              ${field("Method", "global_refine.upscale_method", "select", options([["lanczos","Lanczos"],["upscale_model","Upscale Model"],["nvidia_rtx_vsr","NVIDIA RTX VSR"],["h3_learned_latent","H3 Learned Latent"]]))}
               ${conditional("upscale_model", field("Model", "global_refine.upscale_model", "select", '<option value="">—</option>'))}
-              ${conditional("learned_latent", field("LBH Model", "global_refine.latent_upscale_model", "text", 'placeholder="*.safetensors / *.pth"'))}
+              ${conditional("learned_latent", field("H3 Latent Model", "global_refine.latent_upscale_model", "text", 'placeholder="*.safetensors / *.pth / *.pt"'))}
               ${conditional("learned_latent", field("Latent Variant", "global_refine.latent_upscale_variant", "select", options([["2d","2D + Temporal (recommended)"],["3d","Full 3D"]])))}
               ${conditional("learned_latent", field("Precision", "global_refine.latent_upscale_precision", "select", options([["fp16","FP16"],["bf16","BF16"],["fp32","FP32"]])))}
               ${conditional("learned_latent", field("Device", "global_refine.latent_upscale_device", "select", options([["cuda","CUDA"],["cpu","CPU"]])))}
