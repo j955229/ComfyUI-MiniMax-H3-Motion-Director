@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {faceRefineVisibility,globalRefineSummary,globalRefineVisibility,normalizePostprocessConfig,setGlobalUpscaleEnabled} from "../minimax_postprocess_ui.mjs";
 
 let cfg=normalizePostprocessConfig({global_refine:{enabled:true,mode:"refine",seed_mode:"inherit",resolution_mode:"follow_director",upscale_method:"lanczos"}});
@@ -17,6 +18,11 @@ assert.equal(latent.global_refine.latent_upscale_precision,"bf16");
 assert.equal(latent.global_refine.latent_upscale_device,"cpu");
 assert.equal(globalRefineVisibility(latent).learnedLatent,true);
 assert.match(globalRefineSummary(latent,1376,768,"zh"),/H3 Learned Latent/);
+
+const uiSource=fs.readFileSync(new URL("../minimax_postprocess_ui.mjs",import.meta.url),"utf8");
+assert.doesNotMatch(uiSource,/Requires the separately installed LBH|需要另外安装 LBH/);
+assert.match(uiSource,/No separate LBH custom node is required/);
+assert.match(uiSource,/无需另装 LBH 自定义节点/);
 
 const face=normalizePostprocessConfig({face_refine:{enabled:true,detector:"ultralytics",canvas_mode:"manual",mask_mode:"sam",identity_track:true,fallback_detector:"person_yolov8m-seg.pt"}});
 assert.deepEqual(faceRefineVisibility(face),{detectorModel:true,manualCanvas:true,sam:true,identity:true,fallback:true});
