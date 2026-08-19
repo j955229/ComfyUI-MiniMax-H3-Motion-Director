@@ -47,8 +47,8 @@ def sync_h3_keyframe_conditioning(conditioning: Any, vae, *, width: int, height:
         return conditioning
     try:
         from ..patches import MC_KEY
-    except Exception:  # tests / old ComfyUI install
-        MC_KEY = "__motion_director_context__"
+    except Exception:  # tests / alternate package loading
+        MC_KEY = "motion_context_index"
 
     out = []
     for entry in conditioning:
