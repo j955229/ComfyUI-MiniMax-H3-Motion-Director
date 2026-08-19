@@ -157,6 +157,11 @@ function installIssue16Interactions(controller, options, selectionState) {
         if (strip) stripScrollLeft = strip.scrollLeft;
     }, true);
 
+    root.addEventListener("pointerdown", () => {
+        const strip = root.querySelector(".mmx-mixed-cards");
+        if (strip) stripScrollLeft = strip.scrollLeft;
+    }, true);
+
     root.addEventListener("change", (event) => {
         const target = event.target;
         if (!target || target.tagName !== "INPUT" || target.type !== "checkbox") return;
