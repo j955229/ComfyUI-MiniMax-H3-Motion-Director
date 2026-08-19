@@ -1,9 +1,10 @@
 const DEFAULT_CONFIG = Object.freeze({
-    version: 5,
+    version: 8,
     global_refine: {
         enabled: false, mode: "refine", second_sampling_enabled: true, denoise: 0.25, steps: 0,
         seed_mode: "inherit", seed_offset: 1, skip_fl2v: false,
         upscale_method: "lanczos", upscale_model: "",
+        latent_upscale_model: "", latent_upscale_variant: "2d", latent_upscale_precision: "fp16", latent_upscale_device: "cuda",
         vsr_quality: "high",
         resolution_mode: "follow_director", aspect: "16:9", megapixels: 1,
         width: 1376, height: 768,
@@ -30,7 +31,7 @@ const DEFAULT_CONFIG = Object.freeze({
 });
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
-const inChoice = (value, choices, fallback) => choices.includes(value) ? value : fallback;
+const inChoice = (value, choices, fallback) => choices.includes(String(value || "").toLowerCase()) ? String(value || "").toLowerCase() : fallback;
 
 const POST_TEXT = {
     en: {
@@ -44,6 +45,7 @@ const POST_TEXT = {
         no_face_detector: "No face detector model found. face_yolov8m.pt is recommended.",
         runtime_detected: "Runtime detected (validated when generation starts)",
         missing_no_downgrade: "Not installed (stage will fail without downgrade)",
+        lbh_note: "Requires the separately installed LBH MiniMax H3 Latent Upscaler. Enter a checkpoint filename from models/latent_upscale_models.",
     },
     zh: {
         global_title: "全局精修", face_title: "人脸精修", sampling: "二次采样",
@@ -56,6 +58,7 @@ const POST_TEXT = {
         no_face_detector: "未找到人脸检测模型，建议放入 face_yolov8m.pt。",
         runtime_detected: "已检测到运行库（生成时验证）",
         missing_no_downgrade: "未安装（此阶段会失败，不会自动降级）",
+        lbh_note: "需要另外安装 LBH MiniMax H3 Latent Upscaler。模型文件放在 models/latent_upscale_models，并在下方填写文件名。",
     },
 };
 
@@ -67,6 +70,10 @@ const POST_LABELS = {
     "global_refine.skip_fl2v": ["Skip FL2V", "跳过 FL2V"],
     "global_refine.upscale_method": ["Method", "放大方法"],
     "global_refine.upscale_model": ["Model", "模型"],
+    "global_refine.latent_upscale_model": ["LBH Model", "LBH 模型"],
+    "global_refine.latent_upscale_variant": ["Latent Variant", "Latent 版本"],
+    "global_refine.latent_upscale_precision": ["Precision", "精度"],
+    "global_refine.latent_upscale_device": ["Device", "设备"],
     "global_refine.vsr_quality": ["VSR Quality", "VSR 质量"],
     "global_refine.resolution_mode": ["Resolution", "分辨率模式"],
     "global_refine.aspect": ["Aspect", "画幅比"],
@@ -101,7 +108,13 @@ const POST_OPTION_LABELS = {
     "global_refine.upscale_method": {
         lanczos: ["Lanczos", "Lanczos"], upscale_model: ["Upscale Model", "放大模型"],
         nvidia_rtx_vsr: ["NVIDIA RTX VSR", "NVIDIA RTX VSR"],
+        h3_learned_latent: ["H3 Learned Latent (LBH)", "H3 Learned Latent (LBH)"],
     },
+    "global_refine.latent_upscale_variant": {
+        "2d": ["2D + Temporal (recommended)", "2D + Temporal（推荐）"], "3d": ["Full 3D", "Full 3D"],
+    },
+    "global_refine.latent_upscale_precision": { fp16: ["FP16", "FP16"], bf16: ["BF16", "BF16"], fp32: ["FP32", "FP32"] },
+    "global_refine.latent_upscale_device": { cuda: ["CUDA", "CUDA"], cpu: ["CPU", "CPU"] },
     "global_refine.vsr_quality": {
         low: ["Low", "Low"], medium: ["Medium", "Medium"], high: ["High", "High"], ultra: ["Ultra", "Ultra"],
     },
@@ -150,7 +163,11 @@ export function normalizePostprocessConfig(raw) {
     global.seed_offset = Number.isFinite(seedOffset)
         ? Math.max(-2147483648, Math.min(2147483647, Math.trunc(seedOffset)))
         : 1;
-    global.upscale_method = inChoice(global.upscale_method, ["lanczos", "upscale_model", "nvidia_rtx_vsr"], "lanczos");
+    global.upscale_method = inChoice(global.upscale_method, ["lanczos", "upscale_model", "nvidia_rtx_vsr", "h3_learned_latent"], "lanczos");
+    global.latent_upscale_model = String(global.latent_upscale_model || "").trim();
+    global.latent_upscale_variant = inChoice(global.latent_upscale_variant, ["2d", "3d"], "2d");
+    global.latent_upscale_precision = inChoice(global.latent_upscale_precision, ["fp16", "bf16", "fp32"], "fp16");
+    global.latent_upscale_device = inChoice(global.latent_upscale_device, ["cuda", "cpu"], "cuda");
     global.vsr_quality = inChoice(global.vsr_quality, ["low", "medium", "high", "ultra"], "high");
     global.resolution_mode = inChoice(global.resolution_mode, ["follow_director", "aspect_megapixels", "custom"], "follow_director");
     global.rtx_deblur_enabled = !!global.rtx_deblur_enabled;
@@ -177,7 +194,7 @@ export function normalizePostprocessConfig(raw) {
     result.save.codec = String(result.save.codec || "auto").trim().toLowerCase().slice(0, 64) || "auto";
     result.save.encoding = result.save.encoding === "re-encode" ? "re-encode" : "auto";
     result.save.crf = Math.max(0, Math.min(51, Math.round(Number(result.save.crf) || 23)));
-    result.version = 5;
+    result.version = 8;
     return result;
 }
 
@@ -211,6 +228,7 @@ export function globalRefineVisibility(config) {
         upscaleEnabled,
         seedOffset: global.second_sampling_enabled && global.seed_mode === "offset",
         upscaleModel: upscaleEnabled && global.upscale_method === "upscale_model",
+        learnedLatent: upscaleEnabled && global.upscale_method === "h3_learned_latent",
         vsr: upscaleEnabled && global.upscale_method === "nvidia_rtx_vsr",
         aspectMegapixels: upscaleEnabled && global.resolution_mode === "aspect_megapixels",
         customSize: upscaleEnabled && global.resolution_mode === "custom",
@@ -242,6 +260,8 @@ export function globalRefineSummary(config, width = 864, height = 480, locale = 
         if (global.upscale_method === "nvidia_rtx_vsr") {
             const quality = String(global.vsr_quality || "high");
             method = `RTX VSR ${quality.charAt(0).toUpperCase()}${quality.slice(1)}`;
+        } else if (global.upscale_method === "h3_learned_latent") {
+            method = `H3 Learned Latent ${String(global.latent_upscale_variant || "2d").toUpperCase()}`;
         }
         parts.push(`${method} → ${targetW}×${targetH}`);
     }
@@ -358,8 +378,13 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
           <div class="mmx-post-section-head"><h4 data-post-text="upscale">Upscale</h4><label class="mmx-post-subenable"><input type="checkbox" data-upscale-enabled> <span data-post-text="enabled">ON / OFF</span></label></div>
           <div class="mmx-post-section-body" data-upscale-body>
             <div class="mmx-post-grid">
-              ${field("Method", "global_refine.upscale_method", "select", options([["lanczos","Lanczos"],["upscale_model","Upscale Model"],["nvidia_rtx_vsr","NVIDIA RTX VSR"]]))}
+              ${field("Method", "global_refine.upscale_method", "select", options([["lanczos","Lanczos"],["upscale_model","Upscale Model"],["nvidia_rtx_vsr","NVIDIA RTX VSR"],["h3_learned_latent","H3 Learned Latent (LBH)"]]))}
               ${conditional("upscale_model", field("Model", "global_refine.upscale_model", "select", '<option value="">—</option>'))}
+              ${conditional("learned_latent", field("LBH Model", "global_refine.latent_upscale_model", "text", 'placeholder="*.safetensors / *.pth"'))}
+              ${conditional("learned_latent", field("Latent Variant", "global_refine.latent_upscale_variant", "select", options([["2d","2D + Temporal (recommended)"],["3d","Full 3D"]])))}
+              ${conditional("learned_latent", field("Precision", "global_refine.latent_upscale_precision", "select", options([["fp16","FP16"],["bf16","BF16"],["fp32","FP32"]])))}
+              ${conditional("learned_latent", field("Device", "global_refine.latent_upscale_device", "select", options([["cuda","CUDA"],["cpu","CPU"]])))}
+              <p class="mmx-post-note mmx-post-wide" data-conditional="learned_latent" data-post-text="lbh_note"></p>
               ${conditional("vsr_quality", field("VSR Quality", "global_refine.vsr_quality", "select", options([["low","Low"],["medium","Medium"],["high","High"],["ultra","Ultra"]])))}
               <div class="mmx-post-capability mmx-post-wide" data-conditional="vsr_status" data-capability="nvidia_rtx_vsr"></div>
             </div>
@@ -491,6 +516,7 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
         root.querySelector("[data-upscale-body]").hidden = !visible.upscaleEnabled;
         setConditional("seed_offset", !visible.seedOffset);
         setConditional("upscale_model", !visible.upscaleModel);
+        setConditional("learned_latent", !visible.learnedLatent);
         setConditional("vsr_quality", !visible.vsr);
         setConditional("vsr_status", !visible.vsr);
         setConditional("aspect", !visible.aspectMegapixels);
