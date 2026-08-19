@@ -26,37 +26,48 @@ def segment(asset_items, prompt="scene", task="r2v", seg_id="s1", frames=240):
     )
 
 
-def plan(seg, roles, fps=24.0):
+def plan(seg, roles, fps=24.0, legacy=None):
+    raw = {"segments": [{"id": "s1"}], "audioRoles": roles, "output": {"audioMode": "generate"}}
+    if legacy is not None:
+        raw["dialogueDrive"] = legacy
     return SimpleNamespace(
-        segments=[seg], raw={"segments": [{"id": "s1"}], "audioRoles": roles, "output": {"audioMode": "generate"}},
+        segments=[seg], raw=raw,
         edit_mode="segment", frame_rate=fps, global_task_key=seg.task_key, run_indices=None,
     )
 
 
-def test_prepare_multiple_dialogue_drives_trims_runtime_audio_and_adds_timed_prompt():
-    assert hasattr(mod, "prepare_audio_role_plan")
-    a = audio("a", 6, sr=10, index=0)
-    b = audio("b", 5, sr=10, index=1)
-    seg = segment([a, b], frames=240)
+def test_retired_dialogue_role_becomes_normal_reference_and_keeps_editor_trim():
+    assert not hasattr(mod, "AUDIO_ROLE_DIALOGUE_DRIVE")
+    src = audio("a", 6, sr=10)
+    original = src.audio["waveform"].clone()
+    seg = segment([src], prompt="scene")
     roles = {"version": 1, "segments": {"s1": {
-        "a": {"role": "dialogue_drive", "sourceDuration": 6, "trimStart": 1, "trimEnd": 6, "timelineStart": 0},
-        "b": {"role": "dialogue_drive", "sourceDuration": 5, "trimStart": 0, "trimEnd": 5, "timelineStart": 5},
+        "a": {"role": "dialogue_drive", "sourceDuration": 6, "trimStart": 1, "trimEnd": 5, "timelineStart": 3},
     }}}
     active = mod.prepare_audio_role_plan(plan(seg, roles))
-    assert len(active) == 2
-    assert a.audio["waveform"].shape[-1] == 50
-    assert b.audio["waveform"].shape[-1] == 50
-    assert "00:00.000–00:05.000" in seg.prompt
-    assert "00:05.000–00:10.000" in seg.prompt
-    assert seg.prompt.count("partially_copy") == 2
+    assert active == []
+    assert seg.prompt == "scene"
+    assert torch.equal(src.audio["waveform"], original[..., 10:50])
+    assert torch.equal(getattr(src, "_mmx_audio_role_base_audio")["waveform"], original)
 
 
-def test_overlapping_drive_intervals_fail_before_sampling():
+def test_legacy_dialogue_drive_state_is_ignored():
+    src = audio("a", 5, sr=10)
+    original = src.audio["waveform"].clone()
+    seg = segment([src], prompt="scene")
+    p = plan(seg, {"version": 2, "segments": {"s1": {}}}, legacy={"segmentAssetIds": {"s1": "a"}})
+    active = mod.prepare_audio_role_plan(p)
+    assert active == []
+    assert seg.prompt == "scene"
+    assert torch.equal(src.audio["waveform"], original)
+
+
+def test_overlapping_exact_drive_intervals_fail_before_sampling():
     a = audio("a", 6, sr=10)
     b = audio("b", 5, sr=10, index=1)
     seg = segment([a, b])
-    roles = {"version": 1, "segments": {"s1": {
-        "a": {"role": "dialogue_drive", "sourceDuration": 6, "trimStart": 0, "trimEnd": 6, "timelineStart": 0},
+    roles = {"version": 2, "segments": {"s1": {
+        "a": {"role": "audio_drive", "sourceDuration": 6, "trimStart": 0, "trimEnd": 6, "timelineStart": 0},
         "b": {"role": "audio_drive", "sourceDuration": 5, "trimStart": 0, "trimEnd": 5, "timelineStart": 5},
     }}}
     try:
@@ -71,7 +82,7 @@ def test_exact_audio_overlay_replaces_interval_and_preserves_source_samples():
     assert hasattr(mod, "apply_exact_audio_drive_outputs")
     src = audio("a", 2, sr=10)
     seg = segment([src], frames=100)
-    roles = {"version": 1, "segments": {"s1": {
+    roles = {"version": 2, "segments": {"s1": {
         "a": {"role": "audio_drive", "sourceDuration": 2, "trimStart": 0, "trimEnd": 2, "timelineStart": 3},
     }}}
     p = plan(seg, roles, fps=10.0)
@@ -97,7 +108,7 @@ def test_multiple_exact_drives_must_share_sample_rate_for_exact_pcm():
     a = audio("a", 5, sr=10)
     b = audio("b", 5, sr=20, index=1)
     seg = segment([a, b])
-    roles = {"version": 1, "segments": {"s1": {
+    roles = {"version": 2, "segments": {"s1": {
         "a": {"role": "audio_drive", "sourceDuration": 5, "trimStart": 0, "trimEnd": 5, "timelineStart": 0},
         "b": {"role": "audio_drive", "sourceDuration": 5, "trimStart": 0, "trimEnd": 5, "timelineStart": 5},
     }}}
@@ -107,6 +118,7 @@ def test_multiple_exact_drives_must_share_sample_rate_for_exact_pcm():
         assert "sample rate" in str(exc).lower()
     else:
         raise AssertionError("expected sample-rate validation failure")
+
 
 def test_exact_drive_injection_replaces_only_masked_audio_latent_range(monkeypatch):
     import types
@@ -122,7 +134,7 @@ def test_exact_drive_injection_replaces_only_masked_audio_latent_range(monkeypat
 
     src = audio("a", 2, sr=10)
     seg = segment([src], frames=100)
-    roles = {"version": 1, "segments": {"s1": {
+    roles = {"version": 2, "segments": {"s1": {
         "a": {"role": "audio_drive", "sourceDuration": 2, "trimStart": 0, "trimEnd": 2, "timelineStart": 3},
     }}}
     p = plan(seg, roles, fps=10.0)
@@ -147,11 +159,12 @@ def test_exact_drive_injection_replaces_only_masked_audio_latent_range(monkeypat
     assert torch.all(mask[..., 6:10] == 0)
     assert torch.all(mask[..., 10:] == 1)
 
+
 def test_normal_reference_non_destructive_editor_trim_affects_only_runtime_reference():
     src = audio("a", 5, sr=10)
     original = src.audio["waveform"].clone()
     seg = segment([src])
-    roles = {"version": 1, "segments": {"s1": {
+    roles = {"version": 2, "segments": {"s1": {
         "a": {"role": "reference", "sourceDuration": 5, "trimStart": 1, "trimEnd": 4, "timelineStart": 0},
     }}}
     mod.prepare_audio_role_plan(plan(seg, roles))

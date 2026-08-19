@@ -8,7 +8,6 @@ import {
 } from "./minimax_reference_assets.mjs";
 import {
     AUDIO_ROLE_AUDIO_DRIVE,
-    AUDIO_ROLE_DIALOGUE_DRIVE,
     AUDIO_ROLE_REFERENCE,
     audioPlacement,
     audioRoleScopeKey,
@@ -16,11 +15,10 @@ import {
     effectiveAudioDuration,
     ensureAudioRoleState,
     getAudioRole,
-    listAudioRoles,
     moveAudioRole,
     setAudioRole,
     validateAudioRoleIntervals,
-} from "./minimax_dialogue_drive_core.mjs";
+} from "./minimax_audio_roles_core.mjs";
 import {
     clampTrimSelection,
     createAudioEditHistory,
@@ -37,7 +35,6 @@ function words() {
     if (getLocale() === "en") return {
         reference: "Normal reference",
         audioDrive: "Original Audio Drive",
-        dialogueDrive: "Dialogue Drive",
         timeline: "Drive timeline",
         edit: "Edit audio",
         editorTitle: "Edit audio",
@@ -60,7 +57,6 @@ function words() {
     return {
         reference: "普通参考",
         audioDrive: "原音驱动",
-        dialogueDrive: "对白驱动",
         timeline: "驱动时间轴",
         edit: "编辑音频",
         editorTitle: "编辑音频",
@@ -174,7 +170,6 @@ function ensureStyle() {
 .mmx-audio-tracks{position:relative;min-height:30px;border:1px solid #263229;border-radius:5px;background:repeating-linear-gradient(90deg,#0d110e 0,#0d110e calc(25% - 1px),#1b241e calc(25% - 1px),#1b241e 25%);overflow:hidden}
 .mmx-audio-drive-block{position:absolute;height:24px;border-radius:5px;display:flex;align-items:center;gap:5px;padding:0 7px;box-sizing:border-box;cursor:grab;user-select:none;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:9px;font-weight:650;touch-action:none}
 .mmx-audio-drive-block:active{cursor:grabbing}
-.mmx-audio-drive-block[data-role="dialogue_drive"]{background:#173b27;border:1px solid #4dba72;color:#c8f5d5}
 .mmx-audio-drive-block[data-role="audio_drive"]{background:#302717;border:1px solid #c69b49;color:#ffe3a8}
 .mmx-audio-drive-block.invalid{border-color:#ff725f;background:#3a1815;color:#ffd0c9}
 .mmx-audio-drive-block .time{opacity:.72;font-weight:500}
@@ -194,7 +189,6 @@ function roleOptions(select, current) {
     const opts = [
         [AUDIO_ROLE_REFERENCE, w.reference],
         [AUDIO_ROLE_AUDIO_DRIVE, w.audioDrive],
-        [AUDIO_ROLE_DIALOGUE_DRIVE, w.dialogueDrive],
     ];
     select.innerHTML = "";
     for (const [value, label] of opts) {
@@ -212,7 +206,7 @@ function activeItems(timeline, scope, audios, options) {
 
 function nextDriveStart(timeline, scope, assetId, audios, segmentSec, options) {
     const rows = activeItems(timeline, scope, audios, options)
-        .filter((r) => r.assetId !== assetId && (r.role === AUDIO_ROLE_AUDIO_DRIVE || r.role === AUDIO_ROLE_DIALOGUE_DRIVE));
+        .filter((r) => r.assetId !== assetId && r.role === AUDIO_ROLE_AUDIO_DRIVE);
     let end = 0;
     for (const row of rows) end = Math.max(end, audioPlacement(row, segmentSec).end);
     return end;
@@ -620,7 +614,7 @@ function renderTimeline(host, ctx) {
     let panel = host.querySelector(`:scope > .${PANEL_CLASS}`);
     if (!panel) { panel = document.createElement("div"); panel.className = PANEL_CLASS; host.appendChild(panel); }
     const rows = activeItems(ctx.timeline, ctx.scope, ctx.audios, ctx.options)
-        .filter((r) => r.role === AUDIO_ROLE_AUDIO_DRIVE || r.role === AUDIO_ROLE_DIALOGUE_DRIVE);
+        .filter((r) => r.role === AUDIO_ROLE_AUDIO_DRIVE);
     if (!rows.length) { panel.hidden = true; return; }
     panel.hidden = false;
     const validation = validateAudioRoleIntervals(rows, ctx.segmentSec);

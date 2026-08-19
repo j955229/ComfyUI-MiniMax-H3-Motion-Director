@@ -1,14 +1,12 @@
-"""Per-reference-audio roles for MiniMax H3 R2V / RV2V.
+"""Per-reference-audio handling for MiniMax H3 R2V / RV2V.
 
-Three roles share the existing reference-audio upload path:
+Two roles share the existing reference-audio upload path:
 - reference: ordinary H3 reference audio.
-- dialogue_drive: timed ``partially_copy`` dialogue conditioning while H3 keeps
-  the target soundtrack generative.
-- audio_drive: timed exact PCM drive.  The selected source PCM is injected into
+- audio_drive: timed exact PCM drive. The selected source PCM is injected into
   the H3 joint AV latent only for its configured interval and the same original
   samples replace that interval in the exported soundtrack.
 
-All trims are runtime tensor views/copies.  Uploaded source files are never
+All trims are runtime tensor views/copies. Uploaded source files are never
 rewritten.
 """
 
@@ -23,9 +21,7 @@ import torch
 AUDIO_MODE_GENERATE = "generate"
 AUDIO_ROLE_REFERENCE = "reference"
 AUDIO_ROLE_AUDIO_DRIVE = "audio_drive"
-AUDIO_ROLE_DIALOGUE_DRIVE = "dialogue_drive"
 AUDIO_ROLE_TASKS = frozenset({"r2v", "rv2v"})
-DIALOGUE_DRIVE_TASKS = AUDIO_ROLE_TASKS
 _BASE_PROMPT_ATTR = "_mmx_audio_role_base_prompt"
 _BASE_AUDIO_ATTR = "_mmx_audio_role_base_audio"
 _ACTIVE_ATTR = "_mmx_audio_role_active"
@@ -38,9 +34,7 @@ def _round_ms(value: Any) -> float:
 
 def _role(value: Any) -> str:
     raw = str(value or "").strip().lower()
-    if raw in {AUDIO_ROLE_AUDIO_DRIVE, AUDIO_ROLE_DIALOGUE_DRIVE}:
-        return raw
-    return AUDIO_ROLE_REFERENCE
+    return AUDIO_ROLE_AUDIO_DRIVE if raw == AUDIO_ROLE_AUDIO_DRIVE else AUDIO_ROLE_REFERENCE
 
 
 def _raw_segment(plan: Any, segment: Any) -> dict[str, Any]:
@@ -61,20 +55,6 @@ def _audio_roles_root(plan: Any) -> dict[str, Any]:
     raw = getattr(plan, "raw", None) or {}
     root = raw.get("audioRoles") or raw.get("audio_roles") or {}
     return root if isinstance(root, dict) else {}
-
-
-def _legacy_dialogue_asset(plan: Any, segment: Any) -> str:
-    raw = getattr(plan, "raw", None) or {}
-    legacy = raw.get("dialogueDrive") or raw.get("dialogue_drive") or {}
-    if not isinstance(legacy, dict):
-        return ""
-    if str(getattr(plan, "edit_mode", "") or "").strip().lower() == "global":
-        return str(legacy.get("globalAssetId") or legacy.get("global_asset_id") or "").strip()
-    assignments = legacy.get("segmentAssetIds") or legacy.get("segment_asset_ids") or {}
-    if not isinstance(assignments, dict):
-        return ""
-    key = _scope_key(plan, segment)
-    return str(assignments.get(key) or assignments.get(str(getattr(segment, "timeline_index", 0))) or "").strip()
 
 
 def _role_bucket(plan: Any, segment: Any) -> dict[str, Any]:
@@ -105,11 +85,7 @@ def _audio_duration(audio: Any) -> float:
 def _raw_config_for(plan: Any, segment: Any, asset_id: str) -> dict[str, Any]:
     bucket = _role_bucket(plan, segment)
     value = bucket.get(asset_id) or {}
-    if isinstance(value, dict) and value:
-        return value
-    if asset_id and asset_id == _legacy_dialogue_asset(plan, segment):
-        return {"role": AUDIO_ROLE_DIALOGUE_DRIVE}
-    return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _normalize_config(raw: dict[str, Any], audio: dict | None = None) -> dict[str, Any]:
@@ -128,9 +104,12 @@ def _normalize_config(raw: dict[str, Any], audio: dict | None = None) -> dict[st
         trim_end = max(trim_start, float(trim_end_raw or 0.0))
         if source_duration > 0:
             trim_end = min(trim_end, source_duration)
-    timeline_start = max(0.0, float(raw.get("timelineStart", raw.get("timeline_start", 0.0)) or 0.0))
+    role = _role(raw.get("role"))
+    timeline_start = 0.0
+    if role == AUDIO_ROLE_AUDIO_DRIVE:
+        timeline_start = max(0.0, float(raw.get("timelineStart", raw.get("timeline_start", 0.0)) or 0.0))
     return {
-        "role": _role(raw.get("role")),
+        "role": role,
         "sourceDuration": _round_ms(source_duration),
         "trimStart": _round_ms(trim_start),
         "trimEnd": _round_ms(trim_end),
@@ -175,23 +154,6 @@ def _trim_audio_runtime(item: Any, cfg: dict[str, Any]) -> None:
     start = max(0, min(int(round(cfg["trimStart"] * sr)), int(wave.shape[-1])))
     end = max(start, min(int(round(cfg["trimEnd"] * sr)), int(wave.shape[-1])))
     item.audio["waveform"] = wave[..., start:end].contiguous()
-
-
-def dialogue_drive_instruction(tag: str, start: float = 0.0, end: float | None = None) -> str:
-    audio_tag = str(tag or "").strip()
-    if not audio_tag:
-        raise ValueError("Dialogue Drive requires a valid MiniMax <Audio N> tag.")
-    end = float(start if end is None else end)
-    window = f"{_format_time(start)}–{_format_time(end)}"
-    return (
-        f"{audio_tag}: partially_copy - During {window}, treat the spoken dialogue in {audio_tag} "
-        "as the foreground speech performance. The speaking on-screen subject described by the "
-        "prompt physically says it with mouth and jaw motion synchronized to the source timing. "
-        "Preserve spoken content, original language, voice identity, pauses, cadence, emotion and "
-        "delivery; do not paraphrase, translate, omit, reorder or duplicate it. Copy only the "
-        "dialogue/performance layer; keep the target H3 soundtrack generative so ambience, Foley/SFX "
-        "and non-diegetic background music may be generated outside and around that dialogue."
-    )
 
 
 def audio_drive_instruction(tag: str, start: float, end: float, segment_duration: float) -> str:
@@ -252,7 +214,6 @@ def prepare_audio_role_plan(plan: Any, *, audio_mode: str = AUDIO_MODE_GENERATE)
         else:
             segment.prompt = base_prompt
 
-        # Restore runtime audio before applying a new non-destructive trim.
         for item in getattr(segment, "ref_audios", None) or []:
             base_audio = getattr(item, _BASE_AUDIO_ATTR, None)
             if isinstance(base_audio, dict):
@@ -270,9 +231,6 @@ def prepare_audio_role_plan(plan: Any, *, audio_mode: str = AUDIO_MODE_GENERATE)
                 continue
             raw_cfg = _raw_config_for(plan, segment, asset_id)
             cfg = _normalize_config(raw_cfg, getattr(item, "audio", None))
-            # The editor is available for every uploaded reference audio. Apply its
-            # trim to the runtime AUDIO object even when the role remains ordinary
-            # reference; the original uploaded waveform is retained in _BASE_AUDIO_ATTR.
             has_editor_trim = bool(raw_cfg) and (
                 cfg["trimStart"] > 0.0005
                 or (cfg["sourceDuration"] > 0 and cfg["trimEnd"] < cfg["sourceDuration"] - 0.0005)
@@ -307,14 +265,13 @@ def prepare_audio_role_plan(plan: Any, *, audio_mode: str = AUDIO_MODE_GENERATE)
             )
             segment_active.append(role)
             active.append(role)
-            if role.role == AUDIO_ROLE_AUDIO_DRIVE:
-                audio = getattr(item, "audio", None) or {}
-                wave = audio.get("waveform")
-                sr = int(audio.get("sample_rate") or 0)
-                if sr > 0:
-                    exact_rates.add(sr)
-                if isinstance(wave, torch.Tensor) and wave.ndim == 3:
-                    exact_channels.add(int(wave.shape[1]))
+            audio = getattr(item, "audio", None) or {}
+            wave = audio.get("waveform")
+            sr = int(audio.get("sample_rate") or 0)
+            if sr > 0:
+                exact_rates.add(sr)
+            if isinstance(wave, torch.Tensor) and wave.ndim == 3:
+                exact_channels.add(int(wave.shape[1]))
 
         ordered = sorted(segment_active, key=lambda x: (x.start, x.end, x.asset_id))
         for left, right in zip(ordered, ordered[1:]):
@@ -325,20 +282,15 @@ def prepare_audio_role_plan(plan: Any, *, audio_mode: str = AUDIO_MODE_GENERATE)
                     f"{right.asset_id!r} ({right.start:.3f}-{right.end:.3f}s)."
                 )
 
-        instructions: list[str] = []
-        for role in ordered:
-            if role.role == AUDIO_ROLE_DIALOGUE_DRIVE:
-                instructions.append(dialogue_drive_instruction(role.tag, role.start, role.end))
-            else:
-                instructions.append(audio_drive_instruction(role.tag, role.start, role.end, duration))
-        if instructions:
+        if ordered:
+            instructions = [audio_drive_instruction(role.tag, role.start, role.end, duration) for role in ordered]
             segment.prompt = f"{base_prompt.rstrip()}\n\n" + "\n".join(instructions)
         setattr(segment, _ACTIVE_ATTR, ordered)
 
     if active and str(audio_mode or "").strip().lower() != AUDIO_MODE_GENERATE:
         raise ValueError(
-            "Motion Director reference-audio drive roles require audio output mode Generate. "
-            "Generated audio remains the base soundtrack; exact Audio Drive intervals are replaced "
+            "Motion Director Audio Drive requires audio output mode Generate. "
+            "Generated audio remains the base soundtrack; configured Audio Drive intervals are replaced "
             "with their original PCM after sampling."
         )
     if len(exact_rates) > 1:
@@ -352,26 +304,6 @@ def prepare_audio_role_plan(plan: Any, *, audio_mode: str = AUDIO_MODE_GENERATE)
             "driven interval can remain sample-exact in one output soundtrack."
         )
     return active
-
-
-# Backward-compatible name used by older tests/integrations.
-def prepare_dialogue_drive_plan(plan: Any, *, audio_mode: str = AUDIO_MODE_GENERATE):
-    return prepare_audio_role_plan(plan, audio_mode=audio_mode)
-
-
-def dialogue_drive_asset_id(plan: Any, segment: Any) -> str:
-    for role in getattr(segment, _ACTIVE_ATTR, []) or []:
-        if role.role == AUDIO_ROLE_DIALOGUE_DRIVE:
-            return role.asset_id
-    legacy = _legacy_dialogue_asset(plan, segment)
-    return legacy
-
-
-def dialogue_drive_tag(segment: Any, asset_id: str) -> str:
-    for item in getattr(segment, "ref_audios", None) or []:
-        if _audio_asset_id(item) == str(asset_id or ""):
-            return _tag_for(segment, item)
-    return ""
 
 
 def build_audio_drive_latent_mask(
@@ -593,7 +525,6 @@ def apply_exact_audio_drive_outputs(
         for offset_seconds, role in placements:
             src = role.item.audio
             src_wave = src["waveform"][:1]
-            # prepare_audio_role_plan validates exact clips share SR/channels.
             if int(src.get("sample_rate") or 0) != target_sr or int(src_wave.shape[1]) != channels:
                 raise ValueError("Motion Director Audio Drive exact PCM format changed after validation.")
             pos = max(0, int(round(float(offset_seconds) * target_sr)))
@@ -630,16 +561,15 @@ def _append_report(result: Any, active: list[ActiveAudioRole]) -> Any:
         return result
     lines = ["", "[Reference Audio Roles]"]
     for role in active:
-        label = "Dialogue Drive" if role.role == AUDIO_ROLE_DIALOGUE_DRIVE else "Audio Drive (exact PCM)"
         lines.append(
-            f"- Segment {role.segment_index + 1}: {role.tag} {label} "
+            f"- Segment {role.segment_index + 1}: {role.tag} Audio Drive (exact PCM) "
             f"{_format_time(role.start)}–{_format_time(role.end)}"
         )
     return (*result[:3], result[3] + "\n" + "\n".join(lines), *result[4:])
 
 
 def install_audio_drive_support() -> None:
-    """Install role preparation, timed exact-latent drive and exact PCM export."""
+    """Install exact role preparation, timed latent drive and exact PCM export."""
     global _INSTALLED
     if _INSTALLED:
         return
@@ -677,9 +607,8 @@ def install_audio_drive_support() -> None:
     def execute(plan, *args, **kwargs):
         audio_mode = audio_export.resolve_audio_mode(plan)
         active = prepare_audio_role_plan(plan, audio_mode=audio_mode)
-        exact = any(r.role == AUDIO_ROLE_AUDIO_DRIVE for r in active)
-        if not exact:
-            return _append_report(original_execute(plan, *args, **kwargs), active)
+        if not active:
+            return original_execute(plan, *args, **kwargs)
         audio_vae = kwargs.get("audio_vae")
         if audio_vae is None:
             raise ValueError("Motion Director Audio Drive requires the MiniMax H3 audio_vae input.")
@@ -720,17 +649,11 @@ __all__ = [
     "AUDIO_MODE_GENERATE",
     "AUDIO_ROLE_REFERENCE",
     "AUDIO_ROLE_AUDIO_DRIVE",
-    "AUDIO_ROLE_DIALOGUE_DRIVE",
     "AUDIO_ROLE_TASKS",
-    "DIALOGUE_DRIVE_TASKS",
     "ActiveAudioRole",
     "apply_exact_audio_drive_outputs",
     "audio_drive_instruction",
     "build_audio_drive_latent_mask",
-    "dialogue_drive_asset_id",
-    "dialogue_drive_instruction",
-    "dialogue_drive_tag",
     "install_audio_drive_support",
     "prepare_audio_role_plan",
-    "prepare_dialogue_drive_plan",
 ]
