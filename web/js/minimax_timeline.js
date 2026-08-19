@@ -163,7 +163,7 @@ import {
     createDefaultMixedTimeline,
     mountMixedUI,
     syncMixedGlobalsFromWidgets,
-} from "./minimax_mixed_ui.mjs?boot=mixed_native_v7";
+} from "./minimax_mixed_ui.mjs?boot=mixed_issue16_v2";
 import { normalizeMixedTimeline } from "./minimax_mixed_state.mjs?boot=mixed_native_v6";
 
 const RULER_H = 24;

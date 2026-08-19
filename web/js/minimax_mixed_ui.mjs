@@ -12,7 +12,7 @@ import {
     selectionIndicesForIds,
     toggleSelectedId,
     preserveExplicitEmptyRunSelection,
-} from "./minimax_mixed_interactions.mjs?boot=issue16_v1";
+} from "./minimax_mixed_interactions.mjs?boot=issue16_v2";
 
 export {
     createDefaultMixedTimeline,

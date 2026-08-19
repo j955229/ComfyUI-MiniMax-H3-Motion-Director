@@ -18,7 +18,7 @@ import {
 } from "./minimax_director_runtime_fix_core.mjs?boot=continuity_runtime_fix_v4";
 import {
     enforceStandaloneSplitPointVisibility,
-} from "./minimax_mixed_ui.mjs?boot=mixed_native_v8";
+} from "./minimax_mixed_ui.mjs?boot=mixed_issue16_v2";
 
 const DIRECTOR_CLASS = "MiniMaxH3MotionDirector";
 
