@@ -109,7 +109,6 @@ def test_adapter_does_not_require_external_lbh_node_registry(monkeypatch):
         width=128,
         height=64,
         model_name="model.safetensors",
-        variant="3d",
         precision="fp16",
         device="cpu",
     )
@@ -118,7 +117,7 @@ def test_adapter_does_not_require_external_lbh_node_registry(monkeypatch):
     assert video_out.shape[-2:] == (4, 8)
     assert torch.equal(audio_out, audio)
     assert torch.equal(audio_mask_out, audio_mask)
-    assert calls[0]["variant"] == "3d"
+    assert calls[0]["variant"] == "auto"
 
 
 def test_runtime_model_variant_detection_uses_checkpoint_layout_only():
@@ -194,7 +193,7 @@ def test_2d_runtime_accepts_one_latent_cell_rounding_from_uniform_scale(monkeypa
     y = runtime.run_h3_latent_upscaler(
         x,
         model_name="model.safetensors",
-        variant="2d",
+        variant="auto",
         target_h=48,
         target_w=86,
         precision="fp32",
@@ -211,7 +210,7 @@ def test_2d_runtime_still_rejects_real_aspect_ratio_change():
         runtime.run_h3_latent_upscaler(
             x,
             model_name="model.safetensors",
-            variant="2d",
+            variant="auto",
             target_h=64,
             target_w=64,
             precision="fp32",
