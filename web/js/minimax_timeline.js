@@ -12,7 +12,7 @@ import {
     faceRefineSummary,
     globalRefineSummary,
     mountPostprocessUI,
-} from "./minimax_postprocess_ui.mjs?boot=postprocess_output_v7";
+} from "./minimax_postprocess_ui.mjs?boot=postprocess_output_v8";
 import { mountOutputUI } from "./minimax_output_ui.mjs?boot=live_results_v2";
 import { resolveExternalGroupTerminal } from "./minimax_external_groups.mjs";
 import {
