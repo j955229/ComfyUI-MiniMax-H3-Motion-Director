@@ -169,10 +169,7 @@ def test_internal_2d_temporal_model_can_round_trip_a_small_compatible_state_dict
     assert y.shape == (1, 24, 2, 4, 6)
 
 
-def test_2d_runtime_accepts_one_latent_cell_rounding_from_uniform_scale(monkeypatch):
-    """A normal snapped 16:9 target must not be mistaken for aspect-ratio conversion."""
-    _install_comfy_stubs()
-    runtime, _ = _reload()
+def _small_2d_state(runtime):
     model = runtime._Compat2DTemporalResizer(
         in_channels=24,
         channels=32,
@@ -182,7 +179,14 @@ def test_2d_runtime_accepts_one_latent_cell_rounding_from_uniform_scale(monkeypa
         temporal_every=1,
         use_temporal=False,
     )
-    state = model.state_dict()
+    return model.state_dict()
+
+
+def test_2d_runtime_accepts_one_latent_cell_rounding_from_uniform_scale(monkeypatch):
+    """A normal snapped 16:9 target must not be mistaken for aspect-ratio conversion."""
+    _install_comfy_stubs()
+    runtime, _ = _reload()
+    state = _small_2d_state(runtime)
     monkeypatch.setattr(runtime, "_checkpoint_path", lambda _name: "/tmp/model.safetensors")
     monkeypatch.setattr(runtime, "_load_checkpoint", lambda _path: state)
 
@@ -202,9 +206,12 @@ def test_2d_runtime_accepts_one_latent_cell_rounding_from_uniform_scale(monkeypa
     assert y.shape == (1, 24, 1, 48, 86)
 
 
-def test_2d_runtime_still_rejects_real_aspect_ratio_change():
+def test_2d_runtime_still_rejects_real_aspect_ratio_change(monkeypatch):
     _install_comfy_stubs()
     runtime, _ = _reload()
+    state = _small_2d_state(runtime)
+    monkeypatch.setattr(runtime, "_checkpoint_path", lambda _name: "/tmp/model.safetensors")
+    monkeypatch.setattr(runtime, "_load_checkpoint", lambda _path: state)
     x = torch.randn(1, 24, 1, 27, 48)
     try:
         runtime.run_h3_latent_upscaler(
