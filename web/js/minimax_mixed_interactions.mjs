@@ -47,3 +47,18 @@ export function autoScrollDelta(pointerX, rect, { threshold = 56, step = 32 } = 
   if (x >= right - threshold) return Math.abs(step);
   return 0;
 }
+
+export function preserveExplicitEmptyRunSelection(raw = {}, normalized = {}) {
+  const out = normalized && typeof normalized === 'object' ? normalized : {};
+  if (
+    raw && typeof raw === 'object'
+    && String(raw.timelineMode || '').toLowerCase() === 'mixed'
+    && raw.runSelectEnabled === true
+    && Array.isArray(raw.runSelection)
+    && raw.runSelection.length === 0
+  ) {
+    out.runSelectEnabled = true;
+    out.runSelection = [];
+  }
+  return out;
+}
