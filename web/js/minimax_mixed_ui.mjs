@@ -1,7 +1,7 @@
 import {
     createDefaultMixedTimeline,
     mountMixedUI as mountMixedUIV2,
-    parseOrCreateMixedTimeline,
+    parseOrCreateMixedTimeline as parseOrCreateMixedTimelineV2,
     syncMixedGlobalsFromWidgets,
 } from "./minimax_mixed_ui_v2.mjs?boot=mixed_native_v7";
 import { getLocale } from "./minimax_i18n.js";
@@ -11,13 +11,19 @@ import {
     selectedIdsFromTimeline,
     selectionIndicesForIds,
     toggleSelectedId,
+    preserveExplicitEmptyRunSelection,
 } from "./minimax_mixed_interactions.mjs?boot=issue16_v1";
 
 export {
     createDefaultMixedTimeline,
-    parseOrCreateMixedTimeline,
     syncMixedGlobalsFromWidgets,
 };
+
+export function parseOrCreateMixedTimeline(editor) {
+    let raw = null;
+    try { raw = JSON.parse(String(editor?.timelineWidget?.value || "{}")); } catch { raw = null; }
+    return preserveExplicitEmptyRunSelection(raw, parseOrCreateMixedTimelineV2(editor));
+}
 
 const guardedEditors = new WeakSet();
 const INTERACTION_STYLE_ID = "mmx-mixed-issue16-interactions";
@@ -285,10 +291,19 @@ export function mountMixedUI(options) {
 
     controller = mountMixedUIV2({ ...options, onChange });
 
+    const syncRunCheckboxes = () => {
+        const toggle = controller.root.querySelector(".mmx-mixed-toggle input[type=checkbox]");
+        if (toggle) toggle.checked = selectionState.modeEnabled;
+        controller.root.querySelectorAll(".mmx-mixed-card-head input[type=checkbox]").forEach((checkbox, index) => {
+            checkbox.checked = controller.state.runSelection.includes(index);
+        });
+    };
+
     controller.state.runSelectEnabled = selectionState.modeEnabled;
     controller.state.runSelection = selectionState.modeEnabled
         ? selectionIndicesForIds(controller.state.segments || [], selectionState.ids)
         : [];
+    syncRunCheckboxes();
 
     const interactions = installIssue16Interactions(controller, options, selectionState);
     const rawSetState = controller.setState.bind(controller);
@@ -300,9 +315,7 @@ export function mountMixedUI(options) {
         controller.state.runSelection = selectionState.modeEnabled
             ? selectionIndicesForIds(controller.state.segments || [], selectionState.ids)
             : [];
-        controller.root.querySelectorAll(".mmx-mixed-card-head input[type=checkbox]").forEach((checkbox, index) => {
-            checkbox.checked = controller.state.runSelection.includes(index);
-        });
+        syncRunCheckboxes();
         interactions.refresh();
     };
 
