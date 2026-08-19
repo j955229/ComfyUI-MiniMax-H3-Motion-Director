@@ -48,7 +48,7 @@ const POST_TEXT = {
         lbh_note: "Director scans compatible MiniMax H3 learned-latent checkpoints from models/latent_upscale_models automatically. Place the checkpoint there and select it below. No separate LBH custom node is required.",
     },
     zh: {
-        global_title: "全局精修", face_title: "Face Refine", sampling: "二次采样",
+        global_title: "全局精修", face_title: "人脸精修", sampling: "二次采样",
         upscale: "放大", output_resolution: "输出分辨率",
         detection_canvas: "检测", tracking_denoise: "精修",
         stitch: "回贴", advanced: "高级设置", enabled: "开 / 关", disabled: "已停用",
