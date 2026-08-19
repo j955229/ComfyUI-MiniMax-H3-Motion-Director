@@ -69,6 +69,34 @@ def test_sync_keyframes_leaves_motion_context_for_existing_repin(monkeypatch):
     monkeypatch.setattr(nodes, "VAEDecode", Decode)
     monkeypatch.setattr(nodes, "VAEEncode", Encode)
     key = torch.zeros((1, 24, 1, 2, 4))
-    conditioning = [[torch.zeros(1), {"minimax_keyframes": [{"motion_context_index": 0, "latent": key}]}]]
+    conditioning = [[torch.zeros(1), {"minimax_frame_count": 244, "minimax_keyframes": [{"motion_context_index": 0, "latent": key}]}]]
     out = sync_h3_keyframe_conditioning(conditioning, FakeVAE(), width=128, height=64)
     assert out[0][1]["minimax_keyframes"][0]["latent"] is key
+
+
+def test_sync_keyframes_resizes_five_frame_source_bridge_anchors(monkeypatch):
+    import nodes
+
+    class Decode:
+        def decode(self, vae, latent):
+            return (vae.decode(latent["samples"]),)
+
+    class Encode:
+        def encode(self, vae, images):
+            return ({"samples": vae.encode(images)},)
+
+    monkeypatch.setattr(nodes, "VAEDecode", Decode)
+    monkeypatch.setattr(nodes, "VAEEncode", Encode)
+    first = torch.zeros((1, 24, 1, 2, 4))
+    last = torch.ones((1, 24, 1, 2, 4))
+    conditioning = [[torch.zeros(1), {
+        "minimax_frame_count": 5,
+        "minimax_keyframes": [
+            {"resolved_frame_index": 0, "motion_context_index": 0, "latent": first},
+            {"resolved_frame_index": 0, "motion_context_index": 4, "latent": last},
+        ],
+    }]]
+    out = sync_h3_keyframe_conditioning(conditioning, FakeVAE(), width=128, height=64)
+    keyframes = out[0][1]["minimax_keyframes"]
+    assert keyframes[0]["latent"].shape[-2:] == (4, 8)
+    assert keyframes[1]["latent"].shape[-2:] == (4, 8)
