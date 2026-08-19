@@ -240,6 +240,8 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     legacy_steps = g_raw.get("steps", 0)
     g["denoise_schedule"] = _schedule_text(g_raw.get("denoise_schedule"), legacy_denoise)
     g["steps_schedule"] = _schedule_text(g_raw.get("steps_schedule"), legacy_steps)
+    # Keep legacy scalar fields in sync with pass 1 so older report/cache callers
+    # remain valid while schedule-aware sampling uses the full strings below.
     g["denoise"] = _first_schedule_float(g["denoise_schedule"], 0.25, 0.01, 1.0)
     g["steps"] = _first_schedule_int(g["steps_schedule"], 0, 0, 200)
 
@@ -350,15 +352,50 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
 
     s = result["save"]
     s["auto_save"] = _bool(s_raw.get("auto_save"), False)
-    s["output_path"] = str(s_raw.get("output_path") or "").strip()[:2048]
-    prefix = str(s_raw.get("filename_prefix") or "MiniMaxH3_Director").strip()
+
+    s["output_path"] = str(
+        s_raw.get("output_path") or ""
+    ).strip()[:2048]
+
+    prefix = str(
+        s_raw.get("filename_prefix")
+        or "MiniMaxH3_Director"
+    ).strip()
+
     if prefix.replace("\\", "/") == "video/MiniMaxH3_Director":
         prefix = "MiniMaxH3_Director"
-    s["filename_prefix"] = prefix[:255] or "MiniMaxH3_Director"
-    s["format"] = str(s_raw.get("format") or "auto").strip().lower()[:32] or "auto"
-    s["codec"] = str(s_raw.get("codec") or "auto").strip().lower()[:64] or "auto"
-    s["encoding"] = _choice(s_raw.get("encoding"), {"auto", "re-encode"}, "auto")
-    s["crf"] = _int(s_raw.get("crf"), 23, 0, 51)
+
+    s["filename_prefix"] = (
+        prefix[:255]
+        or "MiniMaxH3_Director"
+    )
+
+    s["format"] = (
+        str(s_raw.get("format") or "auto")
+        .strip()
+        .lower()[:32]
+        or "auto"
+    )
+
+    s["codec"] = (
+        str(s_raw.get("codec") or "auto")
+        .strip()
+        .lower()[:64]
+        or "auto"
+    )
+
+    s["encoding"] = _choice(
+        s_raw.get("encoding"),
+        {"auto", "re-encode"},
+        "auto",
+    )
+
+    s["crf"] = _int(
+        s_raw.get("crf"),
+        23,
+        0,
+        51,
+    )
     result["version"] = POSTPROCESS_CONFIG_VERSION
     return result
 
