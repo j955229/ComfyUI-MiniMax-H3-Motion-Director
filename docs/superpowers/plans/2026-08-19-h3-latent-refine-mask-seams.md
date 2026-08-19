@@ -17,6 +17,8 @@
 - No automatic seam-frame deletion.
 - No LBH source or weights are vendored or redistributed.
 - Director itself loads compatible learned-latent checkpoints; `NODE_CLASS_MAPPINGS` from another custom node must not be required.
+- Checkpoint state-dict layout is the only source of truth for 2D + Temporal versus Full 3D runtime selection; the user never selects a runtime variant separately.
+- Legacy saved `latent_upscale_variant` values are discarded and never forwarded to learned-latent inference.
 - A missing/incompatible checkpoint fails explicitly and falls back only through existing Global Refine first-pass fallback.
 - Director owns final canvas size and validates returned latent H/W/T exactly.
 - Audio masks remain unchanged across spatial video upscale; video masks are nearest-neighbor remapped spatially.
@@ -58,17 +60,18 @@
 - `director/model_paths.py`
 - `tests/test_h3_learned_latent.py`
 - `tests/test_h3_learned_internal_runtime.py`
+- `tests/test_h3_latent_variant_autodetect.py`
 - `tests/test_model_paths.py`
 - `tests/test_postprocess_native_runtime_contract.py`
 
 - [x] Register Director-owned `models/latent_upscale_models` model folder.
 - [x] Load compatible `.safetensors`, `.pth`, and `.pt` checkpoints directly.
 - [x] Detect 2D + Temporal versus Full 3D checkpoint state-dict layouts.
-- [x] Reject a selected variant that does not match the checkpoint layout.
+- [x] Make detected checkpoint layout authoritative even when an old saved config contains the opposite variant value.
 - [x] Run 24-channel H3 video latent inference without importing another custom node.
 - [x] Preserve temporal length.
 - [x] Preserve Audio latent and Audio mask; remap Video mask.
-- [x] Enforce 2D uniform scaling; permit exact final H/W with Full 3D.
+- [x] Enforce 2D uniform scaling with normal integer-grid rounding tolerance; permit exact final H/W with Full 3D.
 - [x] On CUDA, release first-pass ComfyUI model residency before loading the learned-latent model.
 - [x] Release learned-latent model memory before high-resolution H3 refine.
 - [x] Lock a test contract that `NODE_CLASS_MAPPINGS` and LBH node class names are not dependencies.
@@ -82,13 +85,16 @@
 - `web/js/tests/minimax_postprocess_ui.test.mjs`
 - `web/js/tests/minimax_postprocess_bootstrap.test.mjs`
 - `tests/test_postprocess_latent_config.py`
+- `tests/test_h3_latent_model_scan_ui_contract.py`
 - `tests/test_postprocess_boot_token_v8.py`
 
-- [x] Add `h3_learned_latent` method and normalized model/variant/precision/device fields.
+- [x] Add `h3_learned_latent` method and normalized model/precision/device fields.
+- [x] Remove the manual 2D/3D Latent Variant selector.
+- [x] Drop legacy `latent_upscale_variant` from normalized/saved config and cache identity.
 - [x] Keep old saved configs valid and old upscale methods unchanged.
 - [x] Present the method as `H3 Learned Latent`, not as an external-node feature.
-- [x] UI explicitly says no separate LBH custom node is required.
-- [x] Bump/load postprocess UI with `postprocess_output_v8` cache token.
+- [x] UI explicitly says no separate LBH custom node is required and checkpoint weights determine 2D/3D architecture.
+- [x] Keep the existing `postprocess_output_v8` module boot token; a hard browser refresh is required after switching to this branch because the large timeline bootstrap file was intentionally not rewritten just to change the cache token.
 
 ### Task 5: Global Refine and conditioning integration — complete
 
@@ -100,6 +106,7 @@
 
 - [x] Learned-latent branch runs before pixel Decode/Encode.
 - [x] Existing Lanczos/Upscale Model/RTX VSR paths stay on the old pixel path.
+- [x] Do not forward any manual `latent_upscale_variant` value into the learned-latent adapter.
 - [x] Preserve existing H3 `noise_mask` even when Motion Context is off (important for Audio Drive).
 - [x] Synchronize target keyframe latents to final canvas.
 - [x] Leave normal Motion Context keyframes to existing RGB re-pin.
@@ -109,11 +116,12 @@
 
 ### Task 6: Verification
 
-- [x] Native learned-latent core regression: 24 tests passed after replacing the external-node adapter.
-- [x] Model-folder registration included in focused regression; corrected core set reached 25 tests passed.
-- [x] Python syntax compilation passed for affected runtime/refine modules in the isolated local mirror.
-- [x] Remote branch contains `postprocess_output_v8` and is synchronized with current `main`.
+- [x] Native learned-latent core regression previously reached 24 tests passed after replacing the external-node adapter.
+- [x] Model-folder registration was included in focused regression; the corrected core set previously reached 25 tests passed.
+- [x] Python syntax compilation previously passed for affected runtime/refine modules in the isolated local mirror.
+- [x] Manual runtime variant mismatch reproduced from the user's real error and checkpoint-driven backend selection was added.
 - [x] No Draft state introduced.
 - [x] No existing pixel backend removed.
 - [x] No separate LBH custom-node installation required.
+- [ ] Fresh full branch regression after the final UI/config variant-removal commits still requires an environment containing the complete repository checkout.
 - [ ] Real CUDA video inference with the user's actual learned-latent checkpoint remains a runtime validation step because the test environment does not contain the checkpoint/GPU ComfyUI stack.
