@@ -454,10 +454,24 @@ def run_h3_latent_upscaler(
     selected = str(variant or "2d").lower()
     scale_h = target_h / float(source_h)
     scale_w = target_w / float(source_w)
-    if selected == "2d" and abs(scale_h - scale_w) > 1e-6:
-        raise ValueError(
-            "2D + Temporal learned latent upscale uses one uniform scale; use Full 3D for aspect-ratio changes."
+    uniform_scale = None
+    if selected == "2d":
+        # Integer latent dimensions independently round a common uniform scale.
+        # Accept only targets for which one such scale can produce both H and W;
+        # this allows normal grid snapping without permitting real AR changes.
+        lower = max(
+            (target_h - 0.5) / float(source_h),
+            (target_w - 0.5) / float(source_w),
         )
+        upper = min(
+            (target_h + 0.5) / float(source_h),
+            (target_w + 0.5) / float(source_w),
+        )
+        if lower > upper + 1e-12:
+            raise ValueError(
+                "2D + Temporal learned latent upscale uses one uniform scale; use Full 3D for aspect-ratio changes."
+            )
+        uniform_scale = (lower + upper) * 0.5
 
     path = _checkpoint_path(model_name)
     state = _load_checkpoint(path)
@@ -479,7 +493,7 @@ def run_h3_latent_upscaler(
         with torch.inference_mode():
             x.sub_(mean).div_(std)
             if selected == "2d":
-                out = model(x, scale=scale_w, target_hw=(target_h, target_w))
+                out = model(x, scale=float(uniform_scale), target_hw=(target_h, target_w))
             else:
                 scale = (scale_h + scale_w) * 0.5
                 out = model(x, scale=scale, target_size=(int(x.shape[2]), target_h, target_w))
