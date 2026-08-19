@@ -83,7 +83,6 @@ def upscale_h3_av_latent(
     width: int,
     height: int,
     model_name: str,
-    variant: str = "2d",
     precision: str = "fp16",
     device: str = "cuda",
 ) -> dict:
@@ -91,9 +90,6 @@ def upscale_h3_av_latent(
     if not str(model_name or "").strip():
         raise ValueError("H3 learned latent upscale requires a checkpoint filename.")
     target_w, target_h = _validate_target(width, height)
-    selected = str(variant or "2d").strip().lower()
-    if selected not in {"2d", "3d"}:
-        raise ValueError(f"Unsupported H3 learned latent variant: {variant}")
 
     video_latent, audio_latent = _split_av(latent)
     source = video_latent.get("samples") if isinstance(video_latent, dict) else None
@@ -111,7 +107,6 @@ def upscale_h3_av_latent(
         upscaled = _runtime.run_h3_latent_upscaler(
             source,
             model_name=str(model_name),
-            variant=selected,
             target_h=target_h,
             target_w=target_w,
             precision=str(precision),
