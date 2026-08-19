@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-![Version](https://img.shields.io/badge/version-v1.1.5-2ea44f)
+![Version](https://img.shields.io/badge/version-v1.1.5%20HotFix%231-2ea44f)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![ComfyUI](https://img.shields.io/badge/ComfyUI-custom%20node-6f42c1)
 
@@ -10,7 +10,7 @@
 
 Build `T2V / I2V / FL2V / R2V / V2V / RV2V` shots in one production interface, mix generation methods segment by segment, carry visual and generated-audio context across shots, rerun only the segments that need work, manage reusable assets, preview the pipeline live, refine the result, and export the final video without turning the ComfyUI graph into a wall of nodes.
 
-> Current version: **v1.1.5**
+> Current version: **v1.1.5 HotFix#1** · Registry package: **1.1.6**
 
 <!-- IMAGE SLOT 1
 Place your Mixed + Selective Run screenshot here:
