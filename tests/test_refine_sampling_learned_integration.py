@@ -98,7 +98,6 @@ def test_learned_latent_path_skips_pixel_decode_encode(monkeypatch):
             "mode": "upscale",
             "upscale_method": "h3_learned_latent",
             "latent_upscale_model": "h3.safetensors",
-            "latent_upscale_variant": "3d",
             "latent_upscale_precision": "fp16",
             "latent_upscale_device": "cuda",
             "width": 128,
@@ -126,6 +125,7 @@ def test_learned_latent_path_skips_pixel_decode_encode(monkeypatch):
     assert out.samples["noise_mask"] == "native-mask"
     assert calls["upscale"][0]["width"] == 128
     assert calls["upscale"][0]["height"] == 64
+    assert "variant" not in calls["upscale"][0]
     assert calls["sync"] == [{"width": 128, "height": 64}]
 
 
