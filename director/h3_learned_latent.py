@@ -107,6 +107,7 @@ def upscale_h3_av_latent(
         upscaled = _runtime.run_h3_latent_upscaler(
             source,
             model_name=str(model_name),
+            variant="auto",  # runtime keeps this legacy kwarg but checkpoint layout is authoritative
             target_h=target_h,
             target_w=target_w,
             precision=str(precision),
