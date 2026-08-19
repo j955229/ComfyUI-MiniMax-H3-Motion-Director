@@ -30,14 +30,14 @@ else:
 
     _log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director")
 
-    # Face Refine owns these ComfyUI model categories. Register them here so
-    # model discovery never depends on another custom node loading first.
+    # Director owns these ComfyUI model categories. Register them here so model
+    # discovery never depends on another custom node loading first.
     try:
         from .director.model_paths import register_director_model_paths
 
         register_director_model_paths()
     except Exception as _model_path_exc:  # pragma: no cover - ComfyUI startup only
-        _log.warning("Face Refine model folders failed to register: %s", _model_path_exc)
+        _log.warning("Director model folders failed to register: %s", _model_path_exc)
 
     # Apply and self-test before any graph can execute. Failure is retained and
     # reported by the Director instead of silently generating misaligned layouts.
