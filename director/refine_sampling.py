@@ -597,7 +597,6 @@ def apply_global_refine(
                 width=width,
                 height=height,
                 model_name=str(config.get("latent_upscale_model") or ""),
-                variant=str(config.get("latent_upscale_variant") or "2d"),
                 precision=str(config.get("latent_upscale_precision") or "fp16"),
                 device=str(config.get("latent_upscale_device") or "cuda"),
             )
