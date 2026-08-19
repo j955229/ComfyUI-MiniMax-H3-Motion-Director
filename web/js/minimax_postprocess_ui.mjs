@@ -400,7 +400,7 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
         <div class="mmx-post-head"><h3 data-post-text="face_title">Face Refine</h3><label class="mmx-post-enable"><input type="checkbox" data-path="face_refine.enabled"> <span data-post-text="enabled">ON / OFF</span></label></div>
         <p class="mmx-post-summary" data-summary="face_refine"></p>
         <div class="mmx-post-section"><h4 data-post-text="detection_canvas">Detection</h4><p class="mmx-post-note" data-post-text="detection_note"></p><div class="mmx-post-grid">
-          ${conditional("face_detector_model", field("Face Detector Model", "global_refine.detector_model", "select", '<option value="">—</option>'))}
+          ${conditional("face_detector_model", field("Face Detector Model", "face_refine.detector_model", "select", '<option value="">—</option>'))}
           ${field("Confidence", "face_refine.confidence", "number", 'min="0.05" max="0.95" step="0.05"')}
           ${field("Target Face", "face_refine.select", "select", options([["largest","largest"],["most_central","most_central"]]))}
           <div class="mmx-post-capability mmx-post-wide" data-capability="face_detector"></div>
