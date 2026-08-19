@@ -5,6 +5,7 @@ import {
   selectionIndicesForIds,
   toggleSelectedId,
   moveSegmentById,
+  preserveExplicitEmptyRunSelection,
 } from '../minimax_mixed_interactions.mjs';
 
 const segments = Array.from({length: 20}, (_, i) => ({id: `seg_${i + 1}`}));
@@ -30,5 +31,19 @@ assert.deepEqual(selectionIndicesForIds(moved, new Set(['seg_18', 'seg_5'])), [2
 assert.equal(autoScrollDelta(5, {left: 0, right: 500}), -32);
 assert.equal(autoScrollDelta(495, {left: 0, right: 500}), 32);
 assert.equal(autoScrollDelta(250, {left: 0, right: 500}), 0);
+
+const migrated = preserveExplicitEmptyRunSelection(
+  {timelineMode: 'mixed', runSelectEnabled: true, runSelection: []},
+  {timelineMode: 'mixed', runSelectEnabled: true, runSelection: [0, 1, 2]},
+);
+assert.deepEqual(migrated.runSelection, [], 'reload must preserve an explicitly empty Selective Run selection');
+assert.deepEqual(
+  preserveExplicitEmptyRunSelection(
+    {timelineMode: 'mixed', runSelectEnabled: true},
+    {timelineMode: 'mixed', runSelectEnabled: true, runSelection: [0, 1]},
+  ).runSelection,
+  [0, 1],
+  'legacy state without runSelection keeps its existing migration behavior',
+);
 
 console.log('mixed interaction tests passed');
