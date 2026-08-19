@@ -249,12 +249,10 @@ async def minimax_postprocess_capabilities(_request):
                 continue
         return sorted(dict.fromkeys(str(value) for value in result))
 
-    from .h3_latent_upscaler_runtime import list_h3_latent_models
-
     return web.json_response({
         "diffusion_models": filenames("diffusion_models"),
         "upscale_models": filenames("upscale_models"),
-        "latent_upscale_models": list_h3_latent_models(),
+        "latent_upscale_models": filenames("latent_upscale_models"),
         "face_detectors": filenames("ultralytics_bbox", "ultralytics"),
         "sam_models": filenames("sams", "sam", "ultralytics_segm"),
         "dependencies": {
