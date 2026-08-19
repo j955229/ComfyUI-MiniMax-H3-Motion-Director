@@ -55,9 +55,10 @@ Director owns the inference runtime. It does not inspect or call a third-party `
 
 - Checkpoints are discovered from Director's registered `latent_upscale_models` model category, physically backed by `ComfyUI/models/latent_upscale_models`.
 - Compatible `.safetensors`, `.pth`, and `.pt` checkpoints are loaded directly.
-- The runtime detects a compatible 2D + Temporal or Full 3D checkpoint layout from its state dict and rejects an explicitly selected variant that does not match the checkpoint.
-- Both variants operate on MiniMax H3 24-channel video latents and preserve temporal length.
-- 2D + Temporal uses a uniform spatial scale and therefore cannot change aspect ratio.
+- The checkpoint state dict is the single source of truth for architecture selection: a compatible 2D + Temporal layout runs the 2D runtime, while a compatible Full 3D layout runs the 3D runtime. The user does not select the runtime separately.
+- Legacy saved `latent_upscale_variant` values are discarded during config normalization and never forwarded into inference.
+- Both runtime variants operate on MiniMax H3 24-channel video latents and preserve temporal length.
+- 2D + Temporal uses a uniform spatial scale and therefore cannot change aspect ratio except for normal integer latent-grid rounding.
 - Full 3D supports an exact Director-resolved target H/W while preserving T.
 - FP16, BF16, and FP32 inference are supported; device may be CUDA or CPU.
 - A missing/incompatible checkpoint fails explicitly and Global Refine falls back to the first-pass result. There is no silent switch to a pixel backend.
@@ -70,7 +71,7 @@ Director owns:
 
 - final canvas resolution and alignment;
 - checkpoint discovery/model-folder registration;
-- learned-latent model loading and inference;
+- checkpoint architecture detection and learned-latent model loading/inference;
 - AV separation/rejoin;
 - noise-mask remapping;
 - high-resolution conditioning rebuild/synchronization;
@@ -137,19 +138,21 @@ Focused tests cover:
 - existing Audio Drive mask composition preserving video masks;
 - Director-native learned-latent runtime operation with an empty external node registry;
 - 2D/3D compatible state-dict layout detection and round-trip model construction;
+- checkpoint-driven architecture selection with legacy manual variant values ignored;
 - target-size validation, AV preservation, and CUDA model-unload ordering;
-- Global Refine config normalization/migration for the new backend and variant/model fields;
+- Global Refine config normalization/migration for the new backend and model/precision/device fields;
 - Motion Context and Source Bridge high-resolution keyframe synchronization;
 - exact segment slicing for context spans 0, 5, 22, and 39;
 - H3 frame-alignment surplus trimming;
 - rejection of short decoded outputs;
 - seam diagnostics being non-destructive;
 - UI text explicitly stating that no separate LBH custom node is required;
+- no manual 2D/3D runtime selector in the Global Refine UI;
 - no regression to existing pixel-space refine behavior.
 
 ## Compatibility
 
-- Existing saved workflows remain valid through postprocess-config migration/defaulting.
+- Existing saved workflows remain valid through postprocess-config migration/defaulting; obsolete `latent_upscale_variant` values are dropped.
 - Existing Global Refine pixel-space settings retain their meaning.
 - `h3_learned_latent` introduces no second custom-node dependency.
 - Selecting `h3_learned_latent` requires a compatible learned-latent checkpoint in `ComfyUI/models/latent_upscale_models`.
