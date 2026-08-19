@@ -65,3 +65,7 @@ export function orderDriveRows(rows = [], orderedAssetIds = []) {
     return aIndex - bIndex || aId.localeCompare(bId);
   });
 }
+
+export function shouldCloseEditorBackdrop(pointerDownWasBackdrop, pointerUpWasBackdrop) {
+  return Boolean(pointerDownWasBackdrop && pointerUpWasBackdrop);
+}

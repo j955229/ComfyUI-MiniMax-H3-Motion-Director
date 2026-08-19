@@ -45,6 +45,16 @@ test("drive row order follows stable asset order rather than timeline position",
   assert.deepEqual(core.orderDriveRows(rows, ["c", "a", "b"]).map((row) => row.assetId), ["c", "a", "b"]);
 });
 
+
+test("backdrop closes only when the pointer gesture starts and ends on the backdrop", async () => {
+  const core = await loadCore();
+  assert.equal(typeof core.shouldCloseEditorBackdrop, "function");
+  assert.equal(core.shouldCloseEditorBackdrop(true, true), true);
+  assert.equal(core.shouldCloseEditorBackdrop(false, true), false);
+  assert.equal(core.shouldCloseEditorBackdrop(true, false), false);
+  assert.equal(core.shouldCloseEditorBackdrop(false, false), false);
+});
+
 import { readFileSync } from "node:fs";
 const uiSource = readFileSync(new URL("../zz_minimax_audio_drive_ui.js", import.meta.url), "utf8");
 
@@ -63,4 +73,13 @@ test("audio editor exposes draggable selection playhead undo redo and explicit c
   assert.equal(uiSource.includes('input class="loop"'), false);
   assert.equal(uiSource.includes("loopInput"), false);
   assert.equal(uiSource.includes("moveTrimSelection("), true);
+});
+
+const backdropGuardSource = readFileSync(new URL("../zzzz_minimax_audio_editor_backdrop_guard.js", import.meta.url), "utf8");
+
+test("audio editor backdrop guard suppresses drag-release clicks without disabling deliberate backdrop clicks", () => {
+  assert.equal(backdropGuardSource.includes("shouldCloseEditorBackdrop("), true);
+  assert.equal(backdropGuardSource.includes('document.addEventListener("pointerdown"'), true);
+  assert.equal(backdropGuardSource.includes('document.addEventListener("click"'), true);
+  assert.equal(backdropGuardSource.includes("stopImmediatePropagation()"), true);
 });
