@@ -451,9 +451,16 @@ def run_h3_latent_upscaler(
     if target_h < source_h or target_w < source_w:
         raise ValueError("H3 learned latent runtime supports upscale only.")
 
-    selected = str(variant or "2d").lower()
     scale_h = target_h / float(source_h)
     scale_w = target_w / float(source_w)
+
+    # The checkpoint layout is the architecture source of truth. Older saved
+    # Director configs may still contain an independent 2d/3d UI value; that
+    # value must never override the actual state_dict layout.
+    path = _checkpoint_path(model_name)
+    state = _load_checkpoint(path)
+    selected = detect_checkpoint_variant(state)
+
     uniform_scale = None
     if selected == "2d":
         # Integer latent dimensions independently round a common uniform scale.
@@ -469,13 +476,11 @@ def run_h3_latent_upscaler(
         )
         if lower > upper + 1e-12:
             raise ValueError(
-                "2D + Temporal learned latent upscale uses one uniform scale; use Full 3D for aspect-ratio changes."
+                "2D + Temporal learned latent upscale uses one uniform scale; use a Full 3D checkpoint for aspect-ratio changes."
             )
         uniform_scale = (lower + upper) * 0.5
 
-    path = _checkpoint_path(model_name)
-    state = _load_checkpoint(path)
-    model = build_model_for_checkpoint(state, variant=selected)
+    model = build_model_for_checkpoint(state)
     missing, unexpected = model.load_state_dict(state, strict=False)
     if missing:
         raise RuntimeError("H3 learned latent checkpoint is missing required weights: " + ", ".join(missing[:8]))
