@@ -10,6 +10,7 @@ from typing import Any
 import torch
 
 from .h3_noise_mask import remap_h3_noise_mask, with_noise_mask
+from .vram_cleanup import cleanup_segment_vram
 
 VAE_DOWNSAMPLE = 16
 _NODE_2D = "MinimaxH3LatentUpscalerNode2D"
@@ -161,6 +162,14 @@ def upscale_h3_av_latent(
     source_t = int(source.shape[-3]) if source.ndim == 5 else 1
     if target_h < source_h or target_w < source_w:
         raise ValueError("H3 learned latent backend supports upscale only.")
+
+    # LBH loads its neural upscaler directly onto the requested device instead
+    # of going through ComfyUI's model patcher. On CUDA, release the first-pass
+    # H3/VAE residency first so the upscaler does not have to coexist with the
+    # full generation stack. The retained MODEL/VAE objects remain valid and
+    # ComfyUI reloads them normally when the next VAE/refine operation runs.
+    if str(device or "cuda").strip().lower() == "cuda":
+        cleanup_segment_vram(enabled=True, unload_models=True)
 
     try:
         if selected == "2d":
