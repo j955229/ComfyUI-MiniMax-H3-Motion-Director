@@ -5,7 +5,7 @@
 This change upgrades three existing Director paths without introducing a Draft/Review state machine:
 
 1. Preserve and validate MiniMax H3 native per-token video/audio noise masks through Director sampling and refine paths.
-2. Add an H3 learned-latent upscale backend for Global Refine by adapting an installed `LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler` node while keeping Director in control of canvas size, conditioning, masks, and VRAM lifecycle.
+2. Add a Director-native H3 learned-latent upscale backend for Global Refine. Director loads compatible 24-channel H3 learned-latent checkpoints directly from `ComfyUI/models/latent_upscale_models`; no second custom-node package is required.
 3. Add strict segment-boundary validation so Motion Context prefixes and H3 frame-alignment surplus never leak into exported segment chunks; add non-destructive seam diagnostics.
 
 ## Non-goals
@@ -15,7 +15,7 @@ This change upgrades three existing Director paths without introducing a Draft/R
 - No automatic removal of seam frames based on image-difference heuristics.
 - No broad executor, Material Library, Mixed Mode, Source Bridge, or UI rewrite.
 - Existing pixel-space Global Refine backends remain available.
-- No copied implementation from the LBH repository. The repository currently has no explicit LICENSE file, so Director integrates it as an optional external custom-node dependency rather than vendoring its source.
+- No LBH source or weights are vendored or redistributed. Compatible checkpoints remain user-supplied model assets.
 
 ## User workflow
 
@@ -49,40 +49,47 @@ For a spatial video-latent upscale:
 
 Global Refine gains a latent-space backend named `h3_learned_latent` alongside the existing pixel-space methods.
 
-### External compatibility
+### Native runtime and checkpoint compatibility
 
-The backend targets the currently installed LBH MiniMax H3 latent-upscaler custom node and its checkpoints in ComfyUI's `models/latent_upscale_models` directory.
+Director owns the inference runtime. It does not inspect or call a third-party `NODE_CLASS_MAPPINGS` registry.
 
-- 2D + Temporal Conv is the default fast variant.
-- Full 3D is an advanced variant.
-- Spatial upscale only; temporal latent length is preserved.
-- Director passes an exact target canvas derived from its own final-resolution resolver.
-- If the LBH custom node is not installed, the selected stage fails explicitly and Global Refine falls back to the first-pass result. There is no silent switch to a pixel backend.
+- Checkpoints are discovered from Director's registered `latent_upscale_models` model category, physically backed by `ComfyUI/models/latent_upscale_models`.
+- Compatible `.safetensors`, `.pth`, and `.pt` checkpoints are loaded directly.
+- The runtime detects a compatible 2D + Temporal or Full 3D checkpoint layout from its state dict and rejects an explicitly selected variant that does not match the checkpoint.
+- Both variants operate on MiniMax H3 24-channel video latents and preserve temporal length.
+- 2D + Temporal uses a uniform spatial scale and therefore cannot change aspect ratio.
+- Full 3D supports an exact Director-resolved target H/W while preserving T.
+- FP16, BF16, and FP32 inference are supported; device may be CUDA or CPU.
+- A missing/incompatible checkpoint fails explicitly and Global Refine falls back to the first-pass result. There is no silent switch to a pixel backend.
 
-Director discovers the external custom node at runtime and calls its public node entrypoint. No LBH source code or model architecture implementation is copied into this repository.
+The user supplies only the checkpoint asset. Installing `LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler` as a second custom node is not required.
 
 ### Director ownership
 
 Director owns:
 
 - final canvas resolution and alignment;
+- checkpoint discovery/model-folder registration;
+- learned-latent model loading and inference;
 - AV separation/rejoin;
 - noise-mask remapping;
 - high-resolution conditioning rebuild/synchronization;
-- external-upscaler cache release / VRAM cleanup before high-resolution H3 sampling;
+- model release / VRAM cleanup around learned-latent inference;
 - refine sampling and fallback reporting.
 
-The learned upscaler must not silently alter Director's resolved final canvas. Director validates the returned latent H/W against the requested target.
+The learned upscaler must not silently alter Director's resolved final canvas. Director validates returned latent H/W and temporal length against the requested target.
 
 ### Conditioning
 
-After latent spatial upscale, known H3 conditioning must match the final sampling canvas. Director rebuilds the segment's official MiniMax H3 conditioning using the same prompt, task, first/last frames, references and audio references at the final canvas, then reapplies Motion Context against the upscaled latent when required.
+After latent spatial upscale, known H3 conditioning must match the final sampling canvas. Director synchronizes target-canvas keyframe latents at the final resolution and then reapplies Motion Context against the upscaled latent when required.
 
-This avoids blindly resizing arbitrary 4D tensors inside CONDITIONING metadata and correctly regenerates H3 keyframe latents for the final canvas.
+Normal Motion Context keyframes remain owned by the existing RGB re-pin path. Source Bridge is special: its five-frame endpoint anchors reuse the Motion Context marker but do not run the normal Motion Context re-pin path, so Director synchronizes those endpoint anchors explicitly after learned-latent upscale.
+
+This avoids blindly resizing arbitrary tensors inside CONDITIONING metadata while preventing PackedLayout spatial mismatches.
 
 ### VRAM lifecycle
 
-LBH currently caches loaded upscaler models. Director therefore explicitly clears the external module's model cache after the upscale call and invokes its normal segment VRAM cleanup before high-resolution H3 refine sampling. This prevents the upscaler from remaining resident alongside H3, VAE, and Face Refine models.
+The learned-latent model is a separate neural network. On CUDA, Director uses its existing `cleanup_segment_vram()` path before loading the upscaler so the first-pass H3/VAE stack does not have to coexist with it. The learned-latent model is released after inference and device cache is cleared before high-resolution H3 refine sampling reloads what it needs.
 
 ## Global Refine compatibility
 
@@ -124,21 +131,25 @@ Diagnostics are non-destructive. Director must not automatically drop one or two
 
 ## Testing
 
-Add focused tests for:
+Focused tests cover:
 
 - nested video/audio mask preservation and spatial video-mask remap;
 - existing Audio Drive mask composition preserving video masks;
-- learned-latent adapter target-size validation, AV preservation, model-cache release, and explicit failure when the external node is absent;
+- Director-native learned-latent runtime operation with an empty external node registry;
+- 2D/3D compatible state-dict layout detection and round-trip model construction;
+- target-size validation, AV preservation, and CUDA model-unload ordering;
 - Global Refine config normalization/migration for the new backend and variant/model fields;
+- Motion Context and Source Bridge high-resolution keyframe synchronization;
 - exact segment slicing for context spans 0, 5, 22, and 39;
 - H3 frame-alignment surplus trimming;
 - rejection of short decoded outputs;
 - seam diagnostics being non-destructive;
-- no regression to existing tests.
+- UI text explicitly stating that no separate LBH custom node is required;
+- no regression to existing pixel-space refine behavior.
 
 ## Compatibility
 
 - Existing saved workflows remain valid through postprocess-config migration/defaulting.
 - Existing Global Refine pixel-space settings retain their meaning.
-- No new required dependency is introduced for users who do not select the learned-latent backend.
-- Selecting `h3_learned_latent` requires the LBH custom node to be installed separately.
+- `h3_learned_latent` introduces no second custom-node dependency.
+- Selecting `h3_learned_latent` requires a compatible learned-latent checkpoint in `ComfyUI/models/latent_upscale_models`.
