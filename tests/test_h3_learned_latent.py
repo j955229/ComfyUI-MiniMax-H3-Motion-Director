@@ -14,20 +14,15 @@ class Nested:
         return self.parts
 
 
-class Out:
-    def __init__(self, *args):
-        self.args = args
-
-
-def install_runtime(*, include_2d=True, include_3d=True):
+def install_runtime():
     for name in ["nodes", "comfy", "comfy.nested_tensor", "comfy.model_management", "comfy_extras", "comfy_extras.nodes_lt"]:
         sys.modules.pop(name, None)
 
-    events = []
     registry = types.ModuleType("nodes")
     registry.NODE_CLASS_MAPPINGS = {}
     sys.modules["nodes"] = registry
 
+    events = []
     comfy = types.ModuleType("comfy")
     nested_mod = types.ModuleType("comfy.nested_tensor")
     nested_mod.NestedTensor = Nested
@@ -61,52 +56,7 @@ def install_runtime(*, include_2d=True, include_3d=True):
     extras.nodes_lt = lt
     sys.modules["comfy_extras"] = extras
     sys.modules["comfy_extras.nodes_lt"] = lt
-
-    fake2d = types.ModuleType("fake_lbh_2d")
-    fake2d.MODEL_CACHE = {"resident": object()}
-    if include_2d:
-        class Node2D:
-            def run(self, latent, model_name, scale, device, precision):
-                events.append("node2d")
-                x = latent["samples"]
-                h = int(round(x.shape[-2] * scale))
-                w = int(round(x.shape[-1] * scale))
-                out = torch.nn.functional.interpolate(
-                    x, size=(x.shape[-3], h, w), mode="trilinear", align_corners=False
-                )
-                return ({"samples": out},)
-
-        Node2D.__module__ = fake2d.__name__
-        fake2d.MinimaxH3LatentUpscalerNode2D = Node2D
-        registry.NODE_CLASS_MAPPINGS["MinimaxH3LatentUpscalerNode2D"] = Node2D
-    sys.modules[fake2d.__name__] = fake2d
-
-    fake3d = types.ModuleType("fake_lbh_3d")
-    fake3d.MODEL_CACHE = {"resident": object()}
-
-    class UpscaleMode:
-        TARGET_DIMENSIONS = "target dimensions"
-
-    fake3d.UpscaleMode = UpscaleMode
-    if include_3d:
-        class Node3D:
-            @classmethod
-            def execute(cls, latent, model_name, mode, align, keep_proportion, device, precision):
-                events.append("node3d")
-                assert mode["mode"] == "target dimensions"
-                x = latent["samples"]
-                h = mode["height"] // 16
-                w = mode["width"] // 16
-                out = torch.nn.functional.interpolate(
-                    x, size=(x.shape[-3], h, w), mode="trilinear", align_corners=False
-                )
-                return Out({"samples": out})
-
-        Node3D.__module__ = fake3d.__name__
-        fake3d.MinimaxH3LatentUpscaler3D = Node3D
-        registry.NODE_CLASS_MAPPINGS["MinimaxH3LatentUpscaler3D"] = Node3D
-    sys.modules[fake3d.__name__] = fake3d
-    return registry, fake2d, fake3d, events
+    return events
 
 
 def reload_mod():
@@ -122,60 +72,75 @@ def make_latent():
     return {"samples": Nested((video, audio)), "noise_mask": Nested((video_mask, audio_mask))}, audio, audio_mask
 
 
-def test_missing_lbh_dependency_is_explicit():
-    install_runtime(include_2d=False, include_3d=False)
+def test_native_runtime_preserves_audio_and_remaps_video_mask(monkeypatch):
+    install_runtime()
     mod = reload_mod()
-    try:
-        mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cuda")
-    except RuntimeError as exc:
-        assert "LBH" in str(exc)
-    else:
-        raise AssertionError("expected missing dependency error")
 
+    def fake_run(source, **kwargs):
+        return torch.nn.functional.interpolate(
+            source,
+            size=(source.shape[-3], kwargs["target_h"], kwargs["target_w"]),
+            mode="trilinear",
+            align_corners=False,
+        )
 
-def test_2d_upscale_preserves_audio_and_remaps_video_mask():
-    _, fake2d, _, events = install_runtime()
-    mod = reload_mod()
+    monkeypatch.setattr(mod._runtime, "run_h3_latent_upscaler", fake_run)
     latent, audio, audio_mask = make_latent()
-    out = mod.upscale_h3_av_latent(latent, width=128, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cuda")
+    out = mod.upscale_h3_av_latent(latent, width=128, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cpu")
     video_out, audio_out = out["samples"].unbind()
     video_mask, audio_mask_out = out["noise_mask"].unbind()
     assert video_out.shape == (1, 24, 2, 4, 8)
     assert torch.equal(audio_out, audio)
     assert video_mask.shape[-2:] == (4, 8)
     assert torch.equal(audio_mask_out, audio_mask)
-    assert fake2d.MODEL_CACHE == {}
-    assert events.index("unload_all_models") < events.index("node2d")
 
 
-def test_cpu_2d_does_not_unload_gpu_model_stack():
-    _, _, _, events = install_runtime()
+def test_cuda_unloads_first_pass_stack_before_native_runtime(monkeypatch):
+    events = install_runtime()
     mod = reload_mod()
-    latent = make_latent()[0]
-    mod.upscale_h3_av_latent(latent, width=128, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cpu")
-    assert "node2d" in events
+
+    def fake_run(source, **kwargs):
+        events.append("native_runtime")
+        return torch.nn.functional.interpolate(
+            source,
+            size=(source.shape[-3], kwargs["target_h"], kwargs["target_w"]),
+            mode="trilinear",
+            align_corners=False,
+        )
+
+    monkeypatch.setattr(mod._runtime, "run_h3_latent_upscaler", fake_run)
+    mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cuda")
+    assert events.index("unload_all_models") < events.index("native_runtime")
+
+
+def test_cpu_path_does_not_unload_first_pass_stack(monkeypatch):
+    events = install_runtime()
+    mod = reload_mod()
+    monkeypatch.setattr(
+        mod._runtime,
+        "run_h3_latent_upscaler",
+        lambda source, **kwargs: torch.nn.functional.interpolate(
+            source,
+            size=(source.shape[-3], kwargs["target_h"], kwargs["target_w"]),
+            mode="trilinear",
+            align_corners=False,
+        ),
+    )
+    mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cpu")
     assert "unload_all_models" not in events
 
 
-def test_2d_rejects_aspect_ratio_change_instead_of_silent_size_drift():
+def test_native_runtime_error_is_not_replaced_by_pixel_fallback(monkeypatch):
     install_runtime()
     mod = reload_mod()
-    latent = make_latent()[0]
+
+    def fail(*args, **kwargs):
+        raise FileNotFoundError("checkpoint missing")
+
+    monkeypatch.setattr(mod._runtime, "run_h3_latent_upscaler", fail)
     try:
-        mod.upscale_h3_av_latent(latent, width=144, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cuda")
-    except ValueError as exc:
-        assert "3D" in str(exc)
+        mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="missing.safetensors", variant="2d", precision="fp16", device="cpu")
+    except FileNotFoundError as exc:
+        assert "checkpoint missing" in str(exc)
     else:
-        raise AssertionError("expected 2D aspect-ratio validation")
-
-
-def test_3d_uses_exact_director_target_and_clears_cache():
-    _, _, fake3d, events = install_runtime()
-    mod = reload_mod()
-    latent, audio, _ = make_latent()
-    out = mod.upscale_h3_av_latent(latent, width=144, height=64, model_name="x.safetensors", variant="3d", precision="bf16", device="cuda")
-    video_out, audio_out = out["samples"].unbind()
-    assert video_out.shape[-2:] == (4, 9)
-    assert torch.equal(audio_out, audio)
-    assert fake3d.MODEL_CACHE == {}
-    assert events.index("unload_all_models") < events.index("node3d")
+        raise AssertionError("expected checkpoint failure")
