@@ -599,6 +599,7 @@ def apply_global_refine(
                 model_name=str(config.get("latent_upscale_model") or ""),
                 precision=str(config.get("latent_upscale_precision") or "fp16"),
                 device=str(config.get("latent_upscale_device") or "cuda"),
+                on_progress=((lambda value: on_phase("global_upscale", value)) if on_phase is not None else None),
             )
             timings["upscale"] = time.perf_counter() - upscale_started
             refine_positive = sync_h3_keyframe_conditioning(

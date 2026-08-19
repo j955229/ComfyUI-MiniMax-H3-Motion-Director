@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import torch
 
@@ -85,6 +85,7 @@ def upscale_h3_av_latent(
     model_name: str,
     precision: str = "fp16",
     device: str = "cuda",
+    on_progress: Callable[[float], None] | None = None,
 ) -> dict:
     """Upscale H3 video latent natively while preserving Director AV/mask state."""
     if not str(model_name or "").strip():
@@ -112,6 +113,7 @@ def upscale_h3_av_latent(
             target_w=target_w,
             precision=str(precision),
             device=str(device),
+            on_progress=on_progress,
         )
         actual_h, actual_w = int(upscaled.shape[-2]), int(upscaled.shape[-1])
         actual_t = int(upscaled.shape[-3]) if upscaled.ndim == 5 else 1

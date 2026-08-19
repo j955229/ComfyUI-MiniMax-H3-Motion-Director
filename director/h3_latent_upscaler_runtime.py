@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Iterable
+from typing import Callable, Iterable
 
 import torch
 import torch.nn as nn
@@ -208,21 +208,28 @@ class _Compat2DTemporalResizer(nn.Module):
         b, c, t, h, w = x.shape
         return x.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
 
-    def forward(self, x: torch.Tensor, *, scale: float, target_hw: tuple[int, int]) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, *, scale: float, target_hw: tuple[int, int], on_progress: Callable[[float], None] | None = None) -> torch.Tensor:
         b, _c, t, _h, _w = x.shape
         flat = self._video_to_flat(x)
         emb = self.resizer.embed(x.new_tensor([[float(scale) - 1.0]])).expand(b * t, -1)
-        flat = self.resizer.conv_in(flat)
+        total=max(1,len(self.resizer.in_blocks)+len(self.resizer.out_blocks)+3); done=0
+        def advance():
+            nonlocal done
+            done += 1
+            if on_progress is not None: on_progress(min(1.0, done/total))
+        flat = self.resizer.conv_in(flat); advance()
         for index, block in enumerate(self.resizer.in_blocks):
             flat = block(flat, emb) if isinstance(block, _ScaleShiftRes2D) else block(flat)
             if self.temporal_blocks and index % self.temporal_every == 0:
                 flat = self._video_to_flat(self.temporal_blocks[0](self._flat_to_video(flat, b, t)))
-        flat = F.interpolate(flat, size=tuple(map(int, target_hw)), mode="bilinear", align_corners=False)
+            advance()
+        flat = F.interpolate(flat, size=tuple(map(int, target_hw)), mode="bilinear", align_corners=False); advance()
         for index, block in enumerate(self.resizer.out_blocks):
             flat = block(flat, emb) if isinstance(block, _ScaleShiftRes2D) else block(flat)
             if self.temporal_blocks and index % self.temporal_every == 0:
                 flat = self._video_to_flat(self.temporal_blocks[1](self._flat_to_video(flat, b, t)))
-        flat = self.resizer.conv_out(F.silu(self.resizer.norm_out(flat)))
+            advance()
+        flat = self.resizer.conv_out(F.silu(self.resizer.norm_out(flat))); advance()
         return self._flat_to_video(flat, b, t)
 
 
@@ -244,15 +251,23 @@ class _Compat3DResizer(nn.Module):
         self.norm_out = _norm(channels)
         self.conv_out = nn.Conv3d(channels, in_channels, 3, padding=1)
 
-    def forward(self, x: torch.Tensor, *, scale: float, target_size: tuple[int, int, int]) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, *, scale: float, target_size: tuple[int, int, int], on_progress: Callable[[float], None] | None = None) -> torch.Tensor:
         emb = self.embed(x.new_tensor([[float(scale) - 1.0]])).expand(x.shape[0], -1)
-        x = self.conv_in(x)
+        total=max(1,len(self.in_blocks)+len(self.out_blocks)+3); done=0
+        def advance():
+            nonlocal done
+            done += 1
+            if on_progress is not None: on_progress(min(1.0, done/total))
+        x = self.conv_in(x); advance()
         for block in self.in_blocks:
             x = block(x, emb) if isinstance(block, _ScaleShiftRes3D) else block(x)
-        x = F.interpolate(x, size=tuple(map(int, target_size)), mode="trilinear", align_corners=False)
+            advance()
+        x = F.interpolate(x, size=tuple(map(int, target_size)), mode="trilinear", align_corners=False); advance()
         for block in self.out_blocks:
             x = block(x, emb) if isinstance(block, _ScaleShiftRes3D) else block(x)
-        return self.conv_out(F.silu(self.norm_out(x)))
+            advance()
+        x = self.conv_out(F.silu(self.norm_out(x))); advance()
+        return x
 
 
 def _strip_upscaler_prefix(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -439,6 +454,7 @@ def run_h3_latent_upscaler(
     target_w: int,
     precision: str,
     device: str,
+    on_progress: Callable[[float], None] | None = None,
 ) -> torch.Tensor:
     if not isinstance(video, torch.Tensor) or video.ndim not in {4, 5}:
         raise ValueError("H3 learned latent runtime expects a 4D/5D video latent tensor.")
@@ -454,12 +470,15 @@ def run_h3_latent_upscaler(
     scale_h = target_h / float(source_h)
     scale_w = target_w / float(source_w)
 
+    if on_progress is not None: on_progress(0.0)
+
     # The checkpoint layout is the architecture source of truth. Older saved
     # Director configs may still contain an independent 2d/3d UI value; that
     # value must never override the actual state_dict layout.
     path = _checkpoint_path(model_name)
     state = _load_checkpoint(path)
     selected = detect_checkpoint_variant(state)
+    if on_progress is not None: on_progress(0.10)
 
     uniform_scale = None
     if selected == "2d":
@@ -487,6 +506,7 @@ def run_h3_latent_upscaler(
     invalid_unexpected = [key for key in unexpected if not any(token in key for token in (".q.", ".k.", ".v.", ".proj_out."))]
     if invalid_unexpected:
         raise RuntimeError("H3 learned latent checkpoint has unsupported weights: " + ", ".join(invalid_unexpected[:8]))
+    if on_progress is not None: on_progress(0.20)
 
     dev = _device(device)
     dtype = _dtype(precision)
@@ -494,21 +514,26 @@ def run_h3_latent_upscaler(
     model = model.to(device=dev, dtype=dtype).eval().requires_grad_(False)
     x = source.to(device=dev, dtype=dtype, copy=True)
     mean, std = _stats(dev, dtype)
+    if on_progress is not None: on_progress(0.25)
+    def model_progress(value: float):
+        if on_progress is not None: on_progress(0.25 + 0.65 * max(0.0,min(1.0,float(value))))
     try:
         with torch.inference_mode():
             x.sub_(mean).div_(std)
             if selected == "2d":
-                out = model(x, scale=float(uniform_scale), target_hw=(target_h, target_w))
+                out = model(x, scale=float(uniform_scale), target_hw=(target_h, target_w), on_progress=model_progress)
             else:
                 scale = (scale_h + scale_w) * 0.5
-                out = model(x, scale=scale, target_size=(int(x.shape[2]), target_h, target_w))
+                out = model(x, scale=scale, target_size=(int(x.shape[2]), target_h, target_w), on_progress=model_progress)
             out = out.mul(std).add(mean)
             out = out.to(device="cpu", dtype=original_dtype)
+            if on_progress is not None: on_progress(0.98)
     finally:
         del model
         if dev.type == "cuda":
             del x
             torch.cuda.empty_cache()
+    if on_progress is not None: on_progress(1.0)
     return out.squeeze(2) if was_4d else out
 
 
