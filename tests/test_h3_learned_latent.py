@@ -75,8 +75,10 @@ def make_latent():
 def test_native_runtime_preserves_audio_and_remaps_video_mask(monkeypatch):
     install_runtime()
     mod = reload_mod()
+    calls = []
 
     def fake_run(source, **kwargs):
+        calls.append(kwargs)
         return torch.nn.functional.interpolate(
             source,
             size=(source.shape[-3], kwargs["target_h"], kwargs["target_w"]),
@@ -86,13 +88,14 @@ def test_native_runtime_preserves_audio_and_remaps_video_mask(monkeypatch):
 
     monkeypatch.setattr(mod._runtime, "run_h3_latent_upscaler", fake_run)
     latent, audio, audio_mask = make_latent()
-    out = mod.upscale_h3_av_latent(latent, width=128, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cpu")
+    out = mod.upscale_h3_av_latent(latent, width=128, height=64, model_name="x.safetensors", precision="fp16", device="cpu")
     video_out, audio_out = out["samples"].unbind()
     video_mask, audio_mask_out = out["noise_mask"].unbind()
     assert video_out.shape == (1, 24, 2, 4, 8)
     assert torch.equal(audio_out, audio)
     assert video_mask.shape[-2:] == (4, 8)
     assert torch.equal(audio_mask_out, audio_mask)
+    assert calls[0]["variant"] == "auto"
 
 
 def test_cuda_unloads_first_pass_stack_before_native_runtime(monkeypatch):
@@ -109,7 +112,7 @@ def test_cuda_unloads_first_pass_stack_before_native_runtime(monkeypatch):
         )
 
     monkeypatch.setattr(mod._runtime, "run_h3_latent_upscaler", fake_run)
-    mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cuda")
+    mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="x.safetensors", precision="fp16", device="cuda")
     assert events.index("unload_all_models") < events.index("native_runtime")
 
 
@@ -126,7 +129,7 @@ def test_cpu_path_does_not_unload_first_pass_stack(monkeypatch):
             align_corners=False,
         ),
     )
-    mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="x.safetensors", variant="2d", precision="fp16", device="cpu")
+    mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="x.safetensors", precision="fp16", device="cpu")
     assert "unload_all_models" not in events
 
 
@@ -139,7 +142,7 @@ def test_native_runtime_error_is_not_replaced_by_pixel_fallback(monkeypatch):
 
     monkeypatch.setattr(mod._runtime, "run_h3_latent_upscaler", fail)
     try:
-        mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="missing.safetensors", variant="2d", precision="fp16", device="cpu")
+        mod.upscale_h3_av_latent(make_latent()[0], width=128, height=64, model_name="missing.safetensors", precision="fp16", device="cpu")
     except FileNotFoundError as exc:
         assert "checkpoint missing" in str(exc)
     else:
