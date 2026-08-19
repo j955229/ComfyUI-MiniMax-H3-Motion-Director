@@ -1,0 +1,57 @@
+name: One-shot postprocess v9 token patch
+
+on:
+  push:
+    branches:
+      - feat/h3-latent-refine-mask-seams
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/h3-latent-refine-mask-seams
+          fetch-depth: 0
+      - name: Patch exact token and tests
+        shell: python
+        run: |
+          from pathlib import Path
+
+          timeline = Path('web/js/minimax_timeline.js')
+          text = timeline.read_text(encoding='utf-8')
+          old = 'minimax_postprocess_ui.mjs?boot=postprocess_output_v8'
+          new = 'minimax_postprocess_ui.mjs?boot=postprocess_output_v9'
+          assert text.count(old) == 1, f'expected exactly one old timeline token, got {text.count(old)}'
+          timeline.write_text(text.replace(old, new), encoding='utf-8')
+
+          js_test = Path('web/js/tests/minimax_postprocess_bootstrap.test.mjs')
+          text = js_test.read_text(encoding='utf-8')
+          assert text.count('postprocess_output_v8') == 1, 'unexpected JS bootstrap token count'
+          js_test.write_text(text.replace('postprocess_output_v8', 'postprocess_output_v9'), encoding='utf-8')
+
+          old_py = Path('tests/test_postprocess_boot_token_v8.py')
+          new_py = Path('tests/test_postprocess_boot_token_v9.py')
+          text = old_py.read_text(encoding='utf-8')
+          assert text.count('postprocess_output_v8') == 1, 'unexpected Python bootstrap token count'
+          text = text.replace('postprocess_output_v8', 'postprocess_output_v9').replace('uses_v8_boot_token', 'uses_v9_boot_token')
+          new_py.write_text(text, encoding='utf-8')
+          old_py.unlink()
+      - name: Verify only intended source token changed
+        shell: bash
+        run: |
+          grep -n 'minimax_postprocess_ui.mjs?boot=postprocess_output_v9' web/js/minimax_timeline.js
+          ! grep -R 'postprocess_output_v8' web/js/minimax_timeline.js web/js/tests/minimax_postprocess_bootstrap.test.mjs tests/test_postprocess_boot_token_v9.py
+      - name: Commit patch and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/_bump_postprocess_v9.yml
+          git add web/js/minimax_timeline.js web/js/tests/minimax_postprocess_bootstrap.test.mjs tests/test_postprocess_boot_token_v8.py tests/test_postprocess_boot_token_v9.py
+          git commit -m 'fix: bump postprocess UI boot token to v9'
+          git push origin HEAD:feat/h3-latent-refine-mask-seams
