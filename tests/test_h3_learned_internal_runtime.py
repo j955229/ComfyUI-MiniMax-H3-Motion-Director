@@ -168,3 +168,56 @@ def test_internal_2d_temporal_model_can_round_trip_a_small_compatible_state_dict
     x = torch.randn(1, 24, 2, 2, 3)
     y = rebuilt(x, scale=2.0, target_hw=(4, 6))
     assert y.shape == (1, 24, 2, 4, 6)
+
+
+def test_2d_runtime_accepts_one_latent_cell_rounding_from_uniform_scale(monkeypatch):
+    """A normal snapped 16:9 target must not be mistaken for aspect-ratio conversion."""
+    _install_comfy_stubs()
+    runtime, _ = _reload()
+    model = runtime._Compat2DTemporalResizer(
+        in_channels=24,
+        channels=32,
+        in_blocks=1,
+        out_blocks=1,
+        temporal_kernel=3,
+        temporal_every=1,
+        use_temporal=False,
+    )
+    state = model.state_dict()
+    monkeypatch.setattr(runtime, "_checkpoint_path", lambda _name: "/tmp/model.safetensors")
+    monkeypatch.setattr(runtime, "_load_checkpoint", lambda _path: state)
+
+    # Pixel 768x432 -> 1376x768 corresponds to latent 48x27 -> 86x48.
+    # Independent integer-grid rounding changes the ratio slightly even though
+    # both dimensions can still come from one common uniform scale.
+    x = torch.randn(1, 24, 1, 27, 48)
+    y = runtime.run_h3_latent_upscaler(
+        x,
+        model_name="model.safetensors",
+        variant="2d",
+        target_h=48,
+        target_w=86,
+        precision="fp32",
+        device="cpu",
+    )
+    assert y.shape == (1, 24, 1, 48, 86)
+
+
+def test_2d_runtime_still_rejects_real_aspect_ratio_change():
+    _install_comfy_stubs()
+    runtime, _ = _reload()
+    x = torch.randn(1, 24, 1, 27, 48)
+    try:
+        runtime.run_h3_latent_upscaler(
+            x,
+            model_name="model.safetensors",
+            variant="2d",
+            target_h=64,
+            target_w=64,
+            precision="fp32",
+            device="cpu",
+        )
+    except ValueError as exc:
+        assert "aspect-ratio" in str(exc)
+    else:
+        raise AssertionError("2D runtime must reject a real aspect-ratio change")
