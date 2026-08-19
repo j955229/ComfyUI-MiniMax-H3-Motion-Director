@@ -53,3 +53,22 @@ def test_sync_keyframes_resizes_spatial_h3_keyframe_latents(monkeypatch):
     assert resized.shape[-2:] == (4, 8)
     assert out[0][1]["other"] == "keep"
     assert conditioning[0][1]["minimax_keyframes"][0]["latent"].shape[-2:] == (2, 4)
+
+
+def test_sync_keyframes_leaves_motion_context_for_existing_repin(monkeypatch):
+    import nodes
+
+    class Decode:
+        def decode(self, vae, latent):
+            raise AssertionError("Motion Context keyframe must be left for the existing RGB repin path")
+
+    class Encode:
+        def encode(self, vae, images):
+            raise AssertionError("Motion Context keyframe must be left for the existing RGB repin path")
+
+    monkeypatch.setattr(nodes, "VAEDecode", Decode)
+    monkeypatch.setattr(nodes, "VAEEncode", Encode)
+    key = torch.zeros((1, 24, 1, 2, 4))
+    conditioning = [[torch.zeros(1), {"minimax_keyframes": [{"motion_context_index": 0, "latent": key}]}]]
+    out = sync_h3_keyframe_conditioning(conditioning, FakeVAE(), width=128, height=64)
+    assert out[0][1]["minimax_keyframes"][0]["latent"] is key
