@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 
-POSTPROCESS_CONFIG_VERSION = 8
+POSTPROCESS_CONFIG_VERSION = 9
 CANVAS_MULTIPLE = 32
 
 DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
@@ -34,7 +34,6 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "upscale_method": "lanczos",
         "upscale_model": "",
         "latent_upscale_model": "",
-        "latent_upscale_variant": "2d",
         "latent_upscale_precision": "fp16",
         "latent_upscale_device": "cuda",
         "vsr_quality": "high",
@@ -255,9 +254,6 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     )
     g["upscale_model"] = str(g_raw.get("upscale_model") or "")
     g["latent_upscale_model"] = str(g_raw.get("latent_upscale_model") or "").strip()
-    g["latent_upscale_variant"] = _choice(
-        g_raw.get("latent_upscale_variant"), {"2d", "3d"}, "2d"
-    )
     g["latent_upscale_precision"] = _choice(
         g_raw.get("latent_upscale_precision"), {"fp16", "bf16", "fp32"}, "fp16"
     )
