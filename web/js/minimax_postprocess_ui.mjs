@@ -45,10 +45,10 @@ const POST_TEXT = {
         no_face_detector: "No face detector model found. face_yolov8m.pt is recommended.",
         runtime_detected: "Runtime detected (validated when generation starts)",
         missing_no_downgrade: "Not installed (stage will fail without downgrade)",
-        lbh_note: "Director loads compatible MiniMax H3 learned-latent checkpoints directly. Place the checkpoint in models/latent_upscale_models and select or enter its filename. No separate LBH custom node is required.",
+        lbh_note: "Director scans compatible MiniMax H3 learned-latent checkpoints from models/latent_upscale_models automatically. Place the checkpoint there and select it below. No separate LBH custom node is required.",
     },
     zh: {
-        global_title: "全局精修", face_title: "人脸精修", sampling: "二次采样",
+        global_title: "全局精修", face_title: "Face Refine", sampling: "二次采样",
         upscale: "放大", output_resolution: "输出分辨率",
         detection_canvas: "检测", tracking_denoise: "精修",
         stitch: "回贴", advanced: "高级设置", enabled: "开 / 关", disabled: "已停用",
@@ -58,7 +58,7 @@ const POST_TEXT = {
         no_face_detector: "未找到人脸检测模型，建议放入 face_yolov8m.pt。",
         runtime_detected: "已检测到运行库（生成时验证）",
         missing_no_downgrade: "未安装（此阶段会失败，不会自动降级）",
-        lbh_note: "Director 直接加载兼容的 MiniMax H3 Learned Latent checkpoint。将模型文件放入 models/latent_upscale_models，并在下方选择或填写文件名；无需另装 LBH 自定义节点。",
+        lbh_note: "Director 会自动扫描 models/latent_upscale_models 中兼容的 MiniMax H3 Learned Latent checkpoint。把模型文件放进去后直接在下方选择；无需另装 LBH 自定义节点。",
     },
 };
 
@@ -86,7 +86,8 @@ const POST_LABELS = {
     "face_refine.canvas_size": ["Canvas Size", "画布尺寸"], "face_refine.smooth_method": ["Smooth", "平滑方法"],
     "face_refine.smooth_window": ["Centre Window", "中心平滑窗口"], "face_refine.size_smooth_window": ["Size Window", "尺寸平滑窗口"],
     "face_refine.size_mode": ["Size Mode", "尺寸模式"], "face_refine.adaptive": ["Adaptive Strength", "自适应强度"],
-    "face_refine.base_denoise": ["Refine Strength", "精修强度"], "face_refine.strength_small_face": ["Small Face", "小脸强度"],
+    "face_refine.base_denoise": ["Refine Strength", "精修强度"],
+    "face_refine.strength_small_face": ["Small Face", "小脸强度"],
     "face_refine.strength_large_face": ["Large Face", "大脸强度"], "face_refine.face_px_small": ["Face px Small", "小脸像素阈值"],
     "face_refine.face_px_large": ["Face px Large", "大脸像素阈值"], "face_refine.mask_mode": ["Mask", "遮罩"],
     "face_refine.paste_region": ["Paste", "回贴区域"], "face_refine.feather": ["Feather (source px)", "羽化（源画面 px）"],
@@ -380,7 +381,7 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
             <div class="mmx-post-grid">
               ${field("Method", "global_refine.upscale_method", "select", options([["lanczos","Lanczos"],["upscale_model","Upscale Model"],["nvidia_rtx_vsr","NVIDIA RTX VSR"],["h3_learned_latent","H3 Learned Latent"]]))}
               ${conditional("upscale_model", field("Model", "global_refine.upscale_model", "select", '<option value="">—</option>'))}
-              ${conditional("learned_latent", field("H3 Latent Model", "global_refine.latent_upscale_model", "text", 'placeholder="*.safetensors / *.pth / *.pt"'))}
+              ${conditional("learned_latent", field("H3 Latent Model", "global_refine.latent_upscale_model", "select", '<option value="">—</option>'))}
               ${conditional("learned_latent", field("Latent Variant", "global_refine.latent_upscale_variant", "select", options([["2d","2D + Temporal (recommended)"],["3d","Full 3D"]])))}
               ${conditional("learned_latent", field("Precision", "global_refine.latent_upscale_precision", "select", options([["fp16","FP16"],["bf16","BF16"],["fp32","FP32"]])))}
               ${conditional("learned_latent", field("Device", "global_refine.latent_upscale_device", "select", options([["cuda","CUDA"],["cpu","CPU"]])))}
@@ -550,9 +551,15 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
             select.value = current;
         };
         fill("global_refine.upscale_model", caps.upscale_models);
+        fill("global_refine.latent_upscale_model", caps.latent_upscale_models);
         fill("face_refine.detector_model", caps.face_detectors);
         fill("face_refine.fallback_detector", ["none", ...(caps.face_detectors || [])]);
         fill("face_refine.sam_model", caps.sam_models);
+        const h3LatentModels = caps.latent_upscale_models || [];
+        const currentGlobal = store.get().global_refine;
+        if (!currentGlobal.latent_upscale_model && h3LatentModels.length === 1) {
+            store.patch("global_refine", "latent_upscale_model", h3LatentModels[0]);
+        }
         const detectors=caps.face_detectors||[];
         const currentFace=store.get().face_refine;
         if(!currentFace.detector_model&&detectors.length){
