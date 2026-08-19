@@ -36,12 +36,31 @@ def _resize_keyframe_latent(latent: torch.Tensor, vae, width: int, height: int) 
     return tensor
 
 
+def _is_source_bridge_anchor(metadata: dict[str, Any], keyframe: dict[str, Any], mc_key: str) -> bool:
+    """Recognize the H3-native five-frame Source Bridge endpoint anchors.
+
+    Source Bridge intentionally reuses ``motion_context_index`` so the guarded
+    PackedLayout patch can address the interior/end coordinate, but unlike
+    normal Motion Context it has exactly a five-frame generation canvas. Those
+    endpoint latents must follow a learned-latent spatial upscale.
+    """
+    if int(metadata.get("minimax_frame_count") or 0) != 5:
+        return False
+    try:
+        index = int(keyframe.get(mc_key))
+    except (TypeError, ValueError):
+        return False
+    return index in {0, 4}
+
+
 def sync_h3_keyframe_conditioning(conditioning: Any, vae, *, width: int, height: int):
     """Re-encode H3 target keyframe latents at the final spatial canvas.
 
     Reference-media blocks are intentionally left alone: they are independent
-    H3 reference rows rather than target-canvas keyframes. Motion Context
-    keyframes are also left for Director's existing RGB re-pin callback.
+    H3 reference rows rather than target-canvas keyframes. Normal Motion Context
+    keyframes are left for Director's existing RGB re-pin callback. The special
+    five-frame Source Bridge endpoint anchors are re-encoded here because Source
+    Bridge runs Global Refine without that Motion Context re-pin callback.
     """
     if not isinstance(conditioning, (list, tuple)):
         return conditioning
@@ -67,8 +86,12 @@ def sync_h3_keyframe_conditioning(conditioning: Any, vae, *, width: int, height:
                 continue
             updated = dict(keyframe)
             latent = keyframe.get("latent")
-            if (
+            should_sync = (
                 keyframe.get(MC_KEY) is None
+                or _is_source_bridge_anchor(metadata, keyframe, MC_KEY)
+            )
+            if (
+                should_sync
                 and isinstance(latent, torch.Tensor)
                 and latent.ndim in {4, 5}
                 and tuple(latent.shape[-2:]) != (int(height) // 16, int(width) // 16)
