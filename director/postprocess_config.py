@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 
-POSTPROCESS_CONFIG_VERSION = 7
+POSTPROCESS_CONFIG_VERSION = 8
 CANVAS_MULTIPLE = 32
 
 DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
@@ -33,6 +33,10 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "skip_fl2v": False,
         "upscale_method": "lanczos",
         "upscale_model": "",
+        "latent_upscale_model": "",
+        "latent_upscale_variant": "2d",
+        "latent_upscale_precision": "fp16",
+        "latent_upscale_device": "cuda",
         "vsr_quality": "high",
         "resolution_mode": "follow_director",
         "aspect": "16:9",
@@ -236,8 +240,6 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     legacy_steps = g_raw.get("steps", 0)
     g["denoise_schedule"] = _schedule_text(g_raw.get("denoise_schedule"), legacy_denoise)
     g["steps_schedule"] = _schedule_text(g_raw.get("steps_schedule"), legacy_steps)
-    # Keep legacy scalar fields in sync with pass 1 so older report/cache callers
-    # remain valid while schedule-aware sampling uses the full strings below.
     g["denoise"] = _first_schedule_float(g["denoise_schedule"], 0.25, 0.01, 1.0)
     g["steps"] = _first_schedule_int(g["steps_schedule"], 0, 0, 200)
 
@@ -246,10 +248,20 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g["skip_fl2v"] = _bool(g_raw.get("skip_fl2v"), False)
     g["upscale_method"] = _choice(
         g_raw.get("upscale_method"),
-        {"lanczos", "upscale_model", "nvidia_rtx_vsr"},
+        {"lanczos", "upscale_model", "nvidia_rtx_vsr", "h3_learned_latent"},
         "lanczos",
     )
     g["upscale_model"] = str(g_raw.get("upscale_model") or "")
+    g["latent_upscale_model"] = str(g_raw.get("latent_upscale_model") or "").strip()
+    g["latent_upscale_variant"] = _choice(
+        g_raw.get("latent_upscale_variant"), {"2d", "3d"}, "2d"
+    )
+    g["latent_upscale_precision"] = _choice(
+        g_raw.get("latent_upscale_precision"), {"fp16", "bf16", "fp32"}, "fp16"
+    )
+    g["latent_upscale_device"] = _choice(
+        g_raw.get("latent_upscale_device"), {"cuda", "cpu"}, "cuda"
+    )
     g["vsr_quality"] = _choice(
         g_raw.get("vsr_quality"), {"low", "medium", "high", "ultra"}, "high"
     )
@@ -338,50 +350,15 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
 
     s = result["save"]
     s["auto_save"] = _bool(s_raw.get("auto_save"), False)
-
-    s["output_path"] = str(
-        s_raw.get("output_path") or ""
-    ).strip()[:2048]
-
-    prefix = str(
-        s_raw.get("filename_prefix")
-        or "MiniMaxH3_Director"
-    ).strip()
-
+    s["output_path"] = str(s_raw.get("output_path") or "").strip()[:2048]
+    prefix = str(s_raw.get("filename_prefix") or "MiniMaxH3_Director").strip()
     if prefix.replace("\\", "/") == "video/MiniMaxH3_Director":
         prefix = "MiniMaxH3_Director"
-
-    s["filename_prefix"] = (
-        prefix[:255]
-        or "MiniMaxH3_Director"
-    )
-
-    s["format"] = (
-        str(s_raw.get("format") or "auto")
-        .strip()
-        .lower()[:32]
-        or "auto"
-    )
-
-    s["codec"] = (
-        str(s_raw.get("codec") or "auto")
-        .strip()
-        .lower()[:64]
-        or "auto"
-    )
-
-    s["encoding"] = _choice(
-        s_raw.get("encoding"),
-        {"auto", "re-encode"},
-        "auto",
-    )
-
-    s["crf"] = _int(
-        s_raw.get("crf"),
-        23,
-        0,
-        51,
-    )
+    s["filename_prefix"] = prefix[:255] or "MiniMaxH3_Director"
+    s["format"] = str(s_raw.get("format") or "auto").strip().lower()[:32] or "auto"
+    s["codec"] = str(s_raw.get("codec") or "auto").strip().lower()[:64] or "auto"
+    s["encoding"] = _choice(s_raw.get("encoding"), {"auto", "re-encode"}, "auto")
+    s["crf"] = _int(s_raw.get("crf"), 23, 0, 51)
     result["version"] = POSTPROCESS_CONFIG_VERSION
     return result
 
