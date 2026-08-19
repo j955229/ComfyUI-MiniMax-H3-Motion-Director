@@ -5,7 +5,7 @@
 This change upgrades three existing Director paths without introducing a Draft/Review state machine:
 
 1. Preserve and validate MiniMax H3 native per-token video/audio noise masks through Director sampling and refine paths.
-2. Add an H3 learned-latent upscale backend for Global Refine, compatible with LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler model weights/architecture while keeping Director in control of canvas size, conditioning, masks, and VRAM lifecycle.
+2. Add an H3 learned-latent upscale backend for Global Refine by adapting an installed `LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler` node while keeping Director in control of canvas size, conditioning, masks, and VRAM lifecycle.
 3. Add strict segment-boundary validation so Motion Context prefixes and H3 frame-alignment surplus never leak into exported segment chunks; add non-destructive seam diagnostics.
 
 ## Non-goals
@@ -15,6 +15,7 @@ This change upgrades three existing Director paths without introducing a Draft/R
 - No automatic removal of seam frames based on image-difference heuristics.
 - No broad executor, Material Library, Mixed Mode, Source Bridge, or UI rewrite.
 - Existing pixel-space Global Refine backends remain available.
+- No copied implementation from the LBH repository. The repository currently has no explicit LICENSE file, so Director integrates it as an optional external custom-node dependency rather than vendoring its source.
 
 ## User workflow
 
@@ -48,18 +49,17 @@ For a spatial video-latent upscale:
 
 Global Refine gains a latent-space backend named `h3_learned_latent` alongside the existing pixel-space methods.
 
-### Model compatibility
+### External compatibility
 
-The backend supports checkpoints placed in ComfyUI's `models/latent_upscale_models` directory and follows the LBH MiniMax H3 latent-upscaler architecture:
+The backend targets the currently installed LBH MiniMax H3 latent-upscaler custom node and its checkpoints in ComfyUI's `models/latent_upscale_models` directory.
 
-- 24-channel MiniMax H3 video latent.
-- Per-channel training mean/std normalization.
-- 2D + Temporal Conv variant for the default fast path.
-- Full 3D variant as an advanced option.
-- Scale-conditioned inference.
+- 2D + Temporal Conv is the default fast variant.
+- Full 3D is an advanced variant.
 - Spatial upscale only; temporal latent length is preserved.
+- Director passes an exact target canvas derived from its own final-resolution resolver.
+- If the LBH custom node is not installed, the selected stage fails explicitly and Global Refine falls back to the first-pass result. There is no silent switch to a pixel backend.
 
-The Director implementation is independent code. It does not copy AGPL code from third-party wrappers. The LBH repository/model interface is treated as an external compatibility target.
+Director discovers the external custom node at runtime and calls its public node entrypoint. No LBH source code or model architecture implementation is copied into this repository.
 
 ### Director ownership
 
@@ -69,18 +69,20 @@ Director owns:
 - AV separation/rejoin;
 - noise-mask remapping;
 - high-resolution conditioning rebuild/synchronization;
-- model load/unload lifecycle;
+- external-upscaler cache release / VRAM cleanup before high-resolution H3 sampling;
 - refine sampling and fallback reporting.
 
-The learned upscaler must not silently alter Director's resolved final canvas.
+The learned upscaler must not silently alter Director's resolved final canvas. Director validates the returned latent H/W against the requested target.
 
 ### Conditioning
 
-After latent spatial upscale, conditioning that contains spatial H3 image/video references must match the final sampling canvas. Director should rebuild/synchronize known H3 conditioning inputs through existing Director preparation paths where possible. Generic blind resizing of every 4D tensor in arbitrary conditioning metadata is not the primary strategy.
+After latent spatial upscale, known H3 conditioning must match the final sampling canvas. Director rebuilds the segment's official MiniMax H3 conditioning using the same prompt, task, first/last frames, references and audio references at the final canvas, then reapplies Motion Context against the upscaled latent when required.
+
+This avoids blindly resizing arbitrary 4D tensors inside CONDITIONING metadata and correctly regenerates H3 keyframe latents for the final canvas.
 
 ### VRAM lifecycle
 
-The learned-upscaler model must not be permanently pinned in a module-global CUDA cache. It is loaded for the upscale stage and released/offloaded before high-resolution H3 refine sampling. This is required so the upscaler does not remain resident alongside H3, VAE, and Face Refine models.
+LBH currently caches loaded upscaler models. Director therefore explicitly clears the external module's model cache after the upscale call and invokes its normal segment VRAM cleanup before high-resolution H3 refine sampling. This prevents the upscaler from remaining resident alongside H3, VAE, and Face Refine models.
 
 ## Global Refine compatibility
 
@@ -90,7 +92,7 @@ Existing pixel-space methods remain unchanged in behavior:
 - `upscale_model`
 - `nvidia_rtx_vsr`
 
-The learned-latent backend bypasses pixel decode/upscale/re-encode for the upscale step. RTX Deblur remains a pixel-space preprocessing feature and is therefore not applied before a latent-space upscale unless an explicit future design adds a decode/re-encode branch.
+The learned-latent backend bypasses pixel decode/upscale/re-encode for the upscale step. RTX Deblur remains a pixel-space preprocessing feature and is rejected when combined with the learned-latent backend in this version, rather than silently forcing a pixel round-trip.
 
 If learned-latent upscale is unavailable or fails, existing Global Refine stage-fallback behavior reports the failure and returns the first-pass result; it must not silently switch to a different upscale backend.
 
@@ -116,7 +118,7 @@ Boundary validation covers normal generation, Motion Context, Source Bridge, Sel
 
 ## Seam diagnostics
 
-Director may compute diagnostics across `segment N` tail frames and `segment N+1` head frames (frame counts, luma/absolute-difference metrics, and audio sample-boundary metadata) for reporting/debugging.
+Director computes lightweight diagnostics across `segment N` tail frames and `segment N+1` head frames (export counts, mean absolute RGB jump, luma jump, and audio duration/sample-boundary metadata) for reporting/debugging.
 
 Diagnostics are non-destructive. Director must not automatically drop one or two frames merely because a visual-difference metric is high.
 
@@ -126,12 +128,12 @@ Add focused tests for:
 
 - nested video/audio mask preservation and spatial video-mask remap;
 - existing Audio Drive mask composition preserving video masks;
-- learned-latent sizing, AV preservation, and explicit failure behavior without a valid model;
-- Global Refine config normalization/migration for the new backend;
+- learned-latent adapter target-size validation, AV preservation, model-cache release, and explicit failure when the external node is absent;
+- Global Refine config normalization/migration for the new backend and variant/model fields;
 - exact segment slicing for context spans 0, 5, 22, and 39;
 - H3 frame-alignment surplus trimming;
 - rejection of short decoded outputs;
-- Source Bridge and Selective Run assembly invariants where existing helpers make them testable;
+- seam diagnostics being non-destructive;
 - no regression to existing tests.
 
 ## Compatibility
@@ -139,3 +141,4 @@ Add focused tests for:
 - Existing saved workflows remain valid through postprocess-config migration/defaulting.
 - Existing Global Refine pixel-space settings retain their meaning.
 - No new required dependency is introduced for users who do not select the learned-latent backend.
+- Selecting `h3_learned_latent` requires the LBH custom node to be installed separately.
