@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-![Version](https://img.shields.io/badge/version-v1.1.4-2ea44f)
+![Version](https://img.shields.io/badge/version-v1.1.5-2ea44f)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
 ![ComfyUI](https://img.shields.io/badge/ComfyUI-custom%20node-6f42c1)
 
@@ -10,7 +10,7 @@
 
 在一个生产界面中完成 `T2V / I2V / FL2V / R2V / V2V / RV2V`，按片段混合不同生成方式，在镜头之间传递画面与生成音频上下文，只重跑需要修改的片段，管理可复用素材，实时预览生成过程，完成后期精修并导出最终视频，而不需要把 ComfyUI 节点图堆成一堵墙。
 
-> 当前版本：**v1.1.4**
+> 当前版本：**v1.1.5**
 
 <!-- IMAGE SLOT 1
 把 Mixed + Selective Run 主截图放到：
