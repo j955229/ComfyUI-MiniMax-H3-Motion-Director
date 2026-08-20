@@ -90,6 +90,9 @@ def test_prepare_latent_tail_defaults_visual_validity_true_for_old_handoffs(monk
     assert tail_handoff["visual_latent_valid"] is True
 
 
-def test_executor_checks_visual_validity_before_using_cached_video_latent():
+def test_executor_facade_marks_and_consumes_visual_invalidity():
     source = Path("director/executor_core.py").read_text(encoding="utf-8")
-    assert 'get("visual_latent_valid", True)' in source
+    assert 'updated_handoff["visual_latent_valid"] = valid' in source
+    assert 'tail_latent["visual_latent_valid"] = valid' in source
+    assert 'context_latent.get("visual_latent_valid") is False' in source
+    assert 'visual_source="pixels (fallback)"' in source
