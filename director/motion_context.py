@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,6 +47,8 @@ class MotionContextInfo:
     pin_renorm_max_abs_delta: float = 0.0
     pin_renorm_baseline_source: str | None = None
     pin_renorm_status: str = "OFF"
+    video_vae_encode_seconds: float = 0.0
+    audio_vae_encode_seconds: float = 0.0
 
 
 def pixel_frames_for_latent_steps(latent_t: int) -> int:
@@ -468,6 +471,7 @@ def apply_exported_motion_context(
     context_frames: torch.Tensor | None,
     context_audio: dict[str, Any] | None,
     context_latent: dict[str, Any] | None = None,
+    context_audio_latent: dict[str, Any] | None = None,
     context_end_frame: int | None = None,
     context_span: int,
     target_frame_count: int,
@@ -519,6 +523,8 @@ def apply_exported_motion_context(
     pin_max_abs_delta = 0.0
     pin_baseline_source = None
     pin_status = "OFF"
+    video_vae_encode_seconds = 0.0
+    audio_vae_encode_seconds = 0.0
     if visual_enabled and context_latent is not None and not color_reanchor_enabled:
         if pin_renorm_enabled:
             raw_blocks, offsets, selected_context_end = video_context_from_latent(
@@ -580,6 +586,7 @@ def apply_exported_motion_context(
             raise ValueError(
                 f"Motion Director: {reason} requires cached exported RGB frames."
             )
+        video_encode_started = time.perf_counter()
         motion_keyframes, block_count, color_status = _encode_video_context(
             video_vae,
             context_frames,
@@ -590,6 +597,7 @@ def apply_exported_motion_context(
             color_anchor=color_anchor,
             task_key=task_key,
         )
+        video_vae_encode_seconds = time.perf_counter() - video_encode_started
         visual_source = (
             "pixels (Color Re-anchor)" if color_reanchor_enabled else "pixels (fallback)"
         )
@@ -627,10 +635,11 @@ def apply_exported_motion_context(
     audio_steps = 0
     audio_source = "off"
     if audio_enabled:
-        if context_latent is not None:
+        audio_latent_candidate = context_audio_latent if context_audio_latent is not None else context_latent
+        if audio_latent_candidate is not None:
             try:
                 motion_audio_ref, audio_steps = _audio_context_from_latent(
-                    context_latent,
+                    audio_latent_candidate,
                     span=int(context_span),
                     context_end_frame=selected_context_end or context_end_frame,
                 )
@@ -641,9 +650,11 @@ def apply_exported_motion_context(
         if motion_audio_ref is None:
             if audio_vae is None:
                 raise ValueError("Motion Director: Motion Audio Context requires audio_vae.")
+            audio_encode_started = time.perf_counter()
             motion_audio_ref, audio_steps = _encode_audio_context(
                 audio_vae, context_audio, span=int(context_span)
             )
+            audio_vae_encode_seconds = time.perf_counter() - audio_encode_started
             audio_source = "waveform (fallback)"
 
     merged, removed, preserved = merge_motion_conditioning(
@@ -674,6 +685,8 @@ def apply_exported_motion_context(
         pin_renorm_max_abs_delta=pin_max_abs_delta,
         pin_renorm_baseline_source=pin_baseline_source,
         pin_renorm_status=pin_status,
+        video_vae_encode_seconds=video_vae_encode_seconds,
+        audio_vae_encode_seconds=audio_vae_encode_seconds,
     )
     return merged, info
 
