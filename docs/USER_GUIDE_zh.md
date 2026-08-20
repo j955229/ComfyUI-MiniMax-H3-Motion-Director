@@ -45,7 +45,7 @@
 
 ## 3. T2V：最基础的文生视频
 
-![Standalone T2V controls](images/tutorial/01-standalone-t2v.svg)
+![Standalone T2V controls](images/tutorial/01-standalone-t2v.webp)
 
 | 编号 | 控件 | 用途 |
 |---:|---|---|
@@ -108,7 +108,7 @@ FL2V 用于需要明确视觉起点或终点的镜头。
 
 ## 6. R2V：人物、场景、动作和声音参考
 
-![R2V controls](images/tutorial/02-r2v-assets.svg)
+![R2V controls](images/tutorial/02-r2v-assets.webp)
 
 R2V 是最适合“同一角色反复出演”的独立模式。每个 Assets Group 最多可包含：
 
@@ -146,7 +146,7 @@ Audio 1–3
 
 ## 7. 公共素材：多个 R2V/RV2V 片段共享
 
-![Common references](images/tutorial/04-common-references.svg)
+![Common references](images/tutorial/04-common-references.webp)
 
 | 编号 | 控件 | 用途 |
 |---:|---|---|
@@ -167,7 +167,7 @@ Audio 1–3
 
 ## 8. 素材库：长期保存、跨项目复用
 
-![Material Library](images/tutorial/05-material-library.svg)
+![Material Library](images/tutorial/05-material-library.webp)
 
 Material Library 与“公共素材”不同：公共素材属于当前项目；素材库是长期保存的可复用资产。
 
@@ -196,7 +196,7 @@ Mixed 的真正 `Source Video` 仍然需要在当前 Segment 本地上传。素�
 
 ## 9. Reference Audio 与 Original Audio Drive
 
-![Reference audio and drive timeline](images/tutorial/06-reference-audio.svg)
+![Reference audio and drive timeline](images/tutorial/06-reference-audio.webp)
 
 参考音频有两种角色：
 
@@ -220,20 +220,22 @@ Drive timeline 有两个直接限制：
 
 ### 音频编辑器
 
-![Audio editor](images/tutorial/07-audio-editor.svg)
+![Audio editor](images/tutorial/07-audio-editor.webp)
 
 | 编号 | 控件 | 用途 |
 |---:|---|---|
 | 1 | Waveform | 直接查看并调整保留范围 |
 | 2 | Trim start | 裁切开始时间 |
 | 3 | Trim end | 裁切结束时间 |
-| 4 | Effective | 当前有效长度，只读结果 |
-| 5 | Play | 试听当前选择 |
-| 6 | Undo | 撤销一次编辑 |
-| 7 | Redo | 重做 |
-| 8 | Reset | 恢复原始裁切范围 |
-| 9 | Trim | 应用当前裁切范围 |
+| 4 | Play | 试听当前选择 |
+| 5 | Undo | 撤销一次编辑 |
+| 6 | Redo | 重做 |
+| 7 | Reset | 恢复原始裁切范围 |
+| 8 | Trim | 应用当前裁切范围 |
+| 9 | Cancel | 放弃本次编辑并关闭编辑器 |
 | 10 | Done | 保存编辑并返回 Director |
+
+`Effective` 是只读的有效时长显示，因此没有单独的红色操作编号。
 
 典型做法：先把长录音裁成需要的对白，然后在 Drive timeline 拖到该句对白应该发生的位置。
 
@@ -280,7 +282,7 @@ Source Video 负责动作/时序结构；Identity / Reference 负责人物或其
 
 ## 12. Mixed Mode：一条时间线混合多种生成方式
 
-![Mixed Mode controls](images/tutorial/03-mixed-mode.svg)
+![Mixed Mode controls](images/tutorial/03-mixed-mode.webp)
 
 Mixed 是制作完整项目时最实用的模式。
 
@@ -364,7 +366,7 @@ Segment Result 只能**向后引用**：后面的段可以引用前面的结果�
 
 ## 14. 后期处理：Global Refine、Upscale、Face Refine
 
-![Post-processing](images/tutorial/08-postprocess.svg)
+![Post-processing](images/tutorial/08-postprocess.webp)
 
 | 编号 | 控件 | 用途 |
 |---:|---|---|
@@ -392,7 +394,7 @@ Segment Result 只能**向后引用**：后面的段可以引用前面的结果�
 
 ## 15. 实时预览：看当前正在做什么
 
-![Live Preview](images/tutorial/09-live-preview.svg)
+![Live Preview](images/tutorial/09-live-preview.webp)
 
 | 编号 | 区域 | 用途 |
 |---:|---|---|
@@ -408,13 +410,13 @@ Live Preview 只是观察当前管线，不会改变你的 Prompt 或生成结�
 
 ## 16. 结果页：检查并保存最终影片
 
-![Results](images/tutorial/10-results.svg)
+![Results](images/tutorial/10-results.webp)
 
 | 编号 | 控件 | 用途 |
 |---:|---|---|
 | 1 | 结果页 | 进入 Results |
 | 2 | 分段 / 多段 / 最终结果 | 在单段、连续区间和完整成片之间切换 |
-| 3 | 播放器 | 检查最终画面与音频 |
+| 3 | 播放器 / 播放控制 | 检查最终画面与音频 |
 | 4 | 保存影片 | 视频文件输出设置 |
 | 5 | 自动保存最终结果 | 管线完成后自动写出最终影片 |
 | 6 | 路径 | 保存目录 |
@@ -423,8 +425,9 @@ Live Preview 只是观察当前管线，不会改变你的 Prompt 或生成结�
 | 9 | 编码器 | 视频编码器，`auto` 使用自动选择 |
 | 10 | 编码模式 | 编码策略 |
 | 11 | 保存影片 | 手动保存当前最终结果 |
-| 12 | 最终成果信息 | 最终帧数、时长等结果信息 |
-| 13 | 报告 | 真实执行配置、连续性、采样和后处理状态 |
+| 12 | 复制报告 | 把当前 Director Report 复制到剪贴板 |
+
+**最终成果信息**和**报告内容**本身是只读信息区；红色 `12` 标在可操作的“复制”按钮上。Report 会记录真实执行配置、连续性、采样和后处理状态。
 
 结果分三层：
 
