@@ -1,7 +1,7 @@
 """Segment-final lifecycle facade for the preserved MiniMax H3 executor.
 
 The original executor implementation is kept byte-for-byte in
-``executor_core_legacy.py``.  This facade runs that function with a per-call
+``executor_core_legacy.py``. This facade runs that function with a per-call
 copy of its globals so Face Refine can become part of each final segment state
 without global monkeypatches or broad executor rewrites.
 """
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import time
 import types
-from dataclasses import replace
 from typing import Any
 
 import torch
@@ -367,6 +366,7 @@ def execute_director_plan_core(
         return tail_latent, tail_handoff
 
     def context_hook(conditioning, **kwargs):
+        # Before S(N) starts, final_by_slot already contains the final state of S(N-1).
         active_position = min(len(final_by_slot), max(0, len(generated_segments) - 1))
         slot = (
             int(generated_segments[active_position].timeline_index)
@@ -389,25 +389,17 @@ def execute_director_plan_core(
             call.get("visual_enabled", True)
             and isinstance(context_latent, dict)
             and context_latent.get("visual_latent_valid") is False
-            and not call.get("color_reanchor_enabled", False)
         )
         if visual_invalid:
-            # The legacy implementation already has the exact pixel-encode path
-            # behind Color Re-anchor. With no anchor this performs no colour
-            # transform; it only forces final RGB -> VideoVAE while leaving the
-            # independent audio latent/waveform logic intact.
-            call["color_reanchor_enabled"] = True
-            call["color_anchor"] = None
+            # Face Refine changed final pixels, so the previous video latent is stale.
+            # Keep it only as the independent audio candidate. Visual continuation
+            # must be rebuilt from the final RGB frames (and Color Re-anchor, if ON).
+            call["context_audio_latent"] = context_latent
+            call["context_latent"] = None
 
         started = time.perf_counter()
         merged, info = original_context(conditioning, **call)
         elapsed = time.perf_counter() - started
-        if visual_invalid:
-            info = replace(
-                info,
-                color_reanchor_status="OFF",
-                visual_source="pixels (fallback)",
-            )
         timing["calls"] += 1
         timing["video_vae"] += float(local_timing.get("video", 0.0))
         timing["audio_vae"] += float(local_timing.get("audio", 0.0))
