@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 import types
-from pathlib import Path
 
 import torch
 
@@ -40,7 +39,7 @@ def _install_fake_nodes(monkeypatch):
     monkeypatch.setitem(sys.modules, "nodes", nodes)
 
 
-def test_prepare_repin_removes_old_visual_context_and_resizes_native_keyframe(monkeypatch):
+def test_sync_removes_old_visual_context_and_resizes_native_keyframe(monkeypatch):
     import director.refine_latent_stage as stage
 
     _install_fake_nodes(monkeypatch)
@@ -68,12 +67,8 @@ def test_prepare_repin_removes_old_visual_context_and_resizes_native_keyframe(mo
         },
     ]]
 
-    out = stage.prepare_h3_motion_context_repin(
-        conditioning,
-        FakeVAE(),
-        width=128,
-        height=64,
-        sync_spatial=True,
+    out = stage.sync_h3_keyframe_conditioning(
+        conditioning, FakeVAE(), width=128, height=64
     )
     metadata = out[0][1]
     keyframes = metadata["minimax_keyframes"]
@@ -86,7 +81,7 @@ def test_prepare_repin_removes_old_visual_context_and_resizes_native_keyframe(mo
     assert metadata["other"] == "keep"
 
 
-def test_prepare_repin_preserves_audio_only_context(monkeypatch):
+def test_sync_preserves_audio_only_context(monkeypatch):
     import director.refine_latent_stage as stage
 
     _install_fake_nodes(monkeypatch)
@@ -103,17 +98,13 @@ def test_prepare_repin_preserves_audio_only_context(monkeypatch):
         },
     ]]
 
-    out = stage.prepare_h3_motion_context_repin(
-        conditioning,
-        FakeVAE(),
-        width=128,
-        height=64,
-        sync_spatial=False,
+    out = stage.sync_h3_keyframe_conditioning(
+        conditioning, FakeVAE(), width=128, height=64
     )
     assert out[0][1]["minimax_refs"] == [motion_audio]
 
 
-def test_prepare_repin_does_not_strip_source_bridge_anchors(monkeypatch):
+def test_sync_does_not_strip_source_bridge_anchors(monkeypatch):
     import director.refine_latent_stage as stage
 
     _install_fake_nodes(monkeypatch)
@@ -130,12 +121,8 @@ def test_prepare_repin_does_not_strip_source_bridge_anchors(monkeypatch):
         },
     ]]
 
-    out = stage.prepare_h3_motion_context_repin(
-        conditioning,
-        FakeVAE(),
-        width=128,
-        height=64,
-        sync_spatial=True,
+    out = stage.sync_h3_keyframe_conditioning(
+        conditioning, FakeVAE(), width=128, height=64
     )
     keyframes = out[0][1]["minimax_keyframes"]
     assert len(keyframes) == 2
@@ -143,11 +130,3 @@ def test_prepare_repin_does_not_strip_source_bridge_anchors(monkeypatch):
     assert keyframes[1][MC_KEY] == 4
     assert keyframes[0]["latent"].shape[-2:] == (4, 8)
     assert keyframes[1]["latent"].shape[-2:] == (4, 8)
-
-
-def test_global_refine_prepares_clean_conditioning_before_each_repin():
-    source = Path("director/refine_sampling.py").read_text(encoding="utf-8")
-    assert "prepare_h3_motion_context_repin" in source
-    assert source.count("prepare_h3_motion_context_repin(") >= 2
-    assert "sync_spatial=True" in source
-    assert "sync_spatial=upscale_enabled" in source
