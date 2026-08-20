@@ -15,6 +15,11 @@ import torch
 import torch.nn.functional as F
 
 from .core_sampling import sample_single_stage
+from .face_refine_streaming import (
+    aggregate_denoise_statistics,
+    select_tracking_history,
+    slice_tracking_result,
+)
 from .face_stitch import build_sam_masks, stitch_faces
 from .face_track import NoFaceDetected, track_and_crop
 from .frame_align import minimax_align_frame_count, prepare_h3_reference_video_clip
@@ -138,11 +143,12 @@ def apply_face_refine(
     shift_video: float,
     shift_audio: float,
     chunk_lengths: list[int] | None = None,
+    tracking_history: torch.Tensor | None = None,
     on_phase: Callable[[str, float], None] | None = None,
     on_step_preview: Callable[[int, int, Any, Any], None] | None = None,
     preview_every: int = 1,
 ) -> FaceRefineOutcome:
-    """Track once across the assembled video, then H3-regenerate crop chunks."""
+    """Track with optional prior final frames, then refine only current images."""
     if not config.get("enabled"):
         return FaceRefineOutcome(images=images, status="DISABLED")
     stage_started = time.perf_counter()
@@ -152,8 +158,13 @@ def apply_face_refine(
         if on_phase:
             on_phase("face_refine", 0)
         detect_started = time.perf_counter()
-        tracked = track_and_crop(images, config)
+        history = select_tracking_history(tracking_history, images, config)
+        history_count = int(history.shape[0]) if history is not None else 0
+        tracking_images = torch.cat((history, images), dim=0) if history is not None else images
+        tracked_all = track_and_crop(tracking_images, config)
+        tracked = slice_tracking_result(tracked_all, history_count)
         timings["detection_tracking"] = time.perf_counter() - detect_started
+        timings["tracking_history_frames"] = history_count
         if on_phase:
             on_phase("face_refine", 0.08)
         mask_started = time.perf_counter()
@@ -162,6 +173,7 @@ def apply_face_refine(
         if on_phase:
             on_phase("face_refine", 0.10)
         refined_parts = []
+        denoise_statistics: list[tuple[dict[str, float], int]] = []
         ranges = _chunk_ranges(int(tracked.crops.shape[0]), chunk_lengths)
         for part_index, (start, end) in enumerate(ranges):
             from ..nodes.conditioning import run_minimax_conditioning
@@ -187,6 +199,7 @@ def apply_face_refine(
                 tracked.transform["face_heights"][start:end] + [tracked.transform["face_heights"][end - 1]] * max(0, aligned_length - (end - start)),
                 config,
             )
+            denoise_statistics.append((denoise_stats, end - start))
             chunk_started = time.perf_counter()
 
             def _chunk_phase(_phase: str, value: float) -> None:
@@ -216,7 +229,7 @@ def apply_face_refine(
             decoded = _decode_video(vae, video_latent)
             refined_parts.append(decoded[: end - start])
             timings["sampling_chunks"].append(time.perf_counter() - chunk_started)
-            tracked.statistics.update(denoise_stats)
+        tracked.statistics.update(aggregate_denoise_statistics(denoise_statistics))
         refined_crops = torch.cat(refined_parts, dim=0)
         if on_phase:
             on_phase("face_refine", 0.92)
@@ -234,19 +247,19 @@ def apply_face_refine(
             steps=int(steps), base_denoise=base_denoise, timings=timings,
         )
     except NoFaceDetected as exc:
-        log.warning("Face Refine found no face; keeping assembled result: %s", exc)
+        log.warning("Face Refine found no face; keeping input result: %s", exc)
         return FaceRefineOutcome(
             images=images,
             status="NO_FACE",
-            fallback="ASSEMBLED_RESULT",
+            fallback="INPUT_RESULT",
             error=str(exc),
         )
     except Exception as exc:
-        log.warning("Face Refine failed; keeping assembled result: %s", exc)
+        log.warning("Face Refine failed; keeping input result: %s", exc)
         return FaceRefineOutcome(
             images=images,
             status="FAILED",
-            fallback="ASSEMBLED_RESULT",
+            fallback="INPUT_RESULT",
             error=f"{type(exc).__name__}: {exc}",
         )
 
