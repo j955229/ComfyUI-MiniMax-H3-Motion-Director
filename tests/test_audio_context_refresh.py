@@ -92,7 +92,7 @@ def test_refresh_keeps_latent_fallback_without_audio_vae(monkeypatch):
     assert out is latent
 
 
-def test_installer_forces_waveform_refresh_before_executor_binds_function(monkeypatch):
+def test_installer_routes_refresh_to_separate_audio_candidate(monkeypatch):
     mod = _load_module(monkeypatch)
     fake_motion = types.ModuleType("audio_refresh_testpkg.director.motion_context")
     calls = []
@@ -101,7 +101,7 @@ def test_installer_forces_waveform_refresh_before_executor_binds_function(monkey
         audio_source = "latent"
 
     def original(conditioning, **kwargs):
-        calls.append(kwargs["context_latent"])
+        calls.append(kwargs)
         return conditioning, Info()
 
     fake_motion.apply_exported_motion_context = original
@@ -130,7 +130,8 @@ def test_installer_forces_waveform_refresh_before_executor_binds_function(monkey
     )
 
     assert result is conditioning
-    assert calls[0]["samples"] == (video,)
+    assert calls[0]["context_latent"]["samples"] == (video, hidden_audio)
+    assert calls[0]["context_audio_latent"]["samples"] == (video,)
     assert getattr(wrapped, "_motion_director_audio_refresh", False) is True
 
 
