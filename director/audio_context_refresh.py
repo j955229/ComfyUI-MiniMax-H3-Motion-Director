@@ -55,8 +55,8 @@ def _without_audio_stream(context_latent: Any) -> tuple[Any, bool]:
 
     out = dict(context_latent)
     # Keep the video latent and all non-sample metadata. With no hidden audio
-    # stream available, motion_context's existing logic falls through to its
-    # exported-waveform Audio VAE encode path.
+    # stream available, motion_context falls through to the exported-waveform
+    # Audio VAE refresh path while visual latent use stays independent.
     out["samples"] = (streams[0],)
     return out, True
 
@@ -90,8 +90,11 @@ def install_audio_context_refresh() -> bool:
 
     @wraps(current)
     def wrapped(conditioning, **kwargs):
+        audio_candidate = kwargs.get("context_audio_latent")
+        if audio_candidate is None:
+            audio_candidate = kwargs.get("context_latent")
         prepared_latent, refreshed = prepare_context_latent_for_audio_refresh(
-            kwargs.get("context_latent"),
+            audio_candidate,
             context_audio=kwargs.get("context_audio"),
             audio_vae=kwargs.get("audio_vae"),
             context_span=int(kwargs.get("context_span") or 0),
@@ -100,7 +103,7 @@ def install_audio_context_refresh() -> bool:
         call_kwargs = kwargs
         if refreshed:
             call_kwargs = dict(kwargs)
-            call_kwargs["context_latent"] = prepared_latent
+            call_kwargs["context_audio_latent"] = prepared_latent
 
         result = current(conditioning, **call_kwargs)
         if refreshed and isinstance(result, tuple) and len(result) == 2:
