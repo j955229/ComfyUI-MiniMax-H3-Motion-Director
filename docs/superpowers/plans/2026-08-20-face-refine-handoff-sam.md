@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make Face Refine part of the final per-segment Motion Context state, preserve cross-segment tracking without re-sampling history, reuse audio latent independently, complete SAM discovery/preflight, and make reporting truthful.
+**Goal:** Make Face Refine part of the final per-segment Motion Context state, preserve cross-segment tracking without re-sampling history, preserve the existing long-chain audio refresh contract, complete SAM discovery/preflight, and make reporting truthful.
 
-**Architecture:** Motion Context-only timelines run Face Refine immediately after each segment's final decode/seam processing and before caches/handoff are created. `apply_face_refine` receives an optional prior RGB history prefix for tracking, slices that history out before H3 face sampling, and returns per-current-segment output. AV latent handoff carries an explicit visual-validity bit; Motion Context consumes separate video/audio latent candidates. Source Bridge timelines retain assembled Face Refine.
+**Architecture:** Motion Context-only timelines run Face Refine immediately after each segment's final decode/seam processing and before caches/handoff are created. `apply_face_refine` receives an optional prior RGB history prefix for tracking, slices that history out before H3 face sampling, and returns per-current-segment output. Successful Face Refine invalidates only visual latent reuse; existing `audio_context_refresh.py` continues to prefer final audible waveform refresh for long-chain stability. Source Bridge timelines retain assembled Face Refine.
 
 **Tech Stack:** Python 3, PyTorch, ComfyUI folder/model APIs, Ultralytics, pytest, ES modules/Node tests.
 
@@ -14,50 +14,50 @@
 
 - Final target branch is `main`; development is verified on `work/face-refine-handoff-v10` then fast-forwarded.
 - Preserve Color Re-anchor RGB semantics.
+- Preserve `audio_context_refresh.py` waveform-refresh semantics and its latent fallback.
 - Do not change Source Bridge generation semantics.
 - Do not silently fall back from SAM to rectangle masks.
 - Do not re-sample Face Refine tracking-history frames.
 - Final user-visible RGB is the visual Motion Context source of truth after successful Face Refine.
-- Audio latent remains reusable across video-canvas changes and pixel-only final edits.
 
 ---
 
 ### Task 1: Tracking-history slicing and aggregate Face Refine statistics
 
 **Files:**
-- Modify: `director/face_track.py`
+- Create: `director/face_refine_streaming.py`
 - Modify: `director/face_refine_pipeline.py`
 - Test: `tests/test_face_refine_streaming.py`
+- Test: `tests/test_face_refine_streaming_pipeline_contract.py`
 
 **Interfaces:**
-- Produces: `face_tracking_history_frames(config) -> int`
-- Produces: `slice_face_track_result(result, start, end=None) -> FaceTrackResult`
+- Produces: `tracking_history_frames(config) -> int`
+- Produces: `select_tracking_history(history, current, config) -> Tensor | None`
+- Produces: `slice_tracking_result(result, start, end=None)`
+- Produces: `aggregate_denoise_statistics(chunks)`
 - Extends: `apply_face_refine(..., tracking_history: torch.Tensor | None = None)`
 
-- [ ] Write failing tests proving history is included in tracking but excluded from sampled/refined output, sliced transform fields have current length, and denoise statistics aggregate across multiple chunks.
-- [ ] Run the focused test file and confirm failures are caused by missing streaming/history behavior.
-- [ ] Add the minimal slicing/history helpers and aggregate statistic accumulator.
-- [ ] Run focused tests to green.
-- [ ] Run existing Face Refine/track/stitch tests.
+- [x] Write failing tests proving history selection/slicing and aggregate statistics.
+- [x] Run focused helper tests through RED and GREEN.
+- [x] Add the minimal streaming helpers.
+- [x] Wire history into `apply_face_refine` and remove last-chunk statistics overwrite.
+- [ ] Run focused contract and existing Face Refine/track/stitch tests.
 
-### Task 2: Independent audio-latent Motion Context
+### Task 2: Final visual-latent validity without changing audio refresh
 
 **Files:**
-- Modify: `director/motion_context.py`
 - Modify: `director/latent_context_cache.py`
-- Test: `tests/test_motion_context_audio_latent_split.py`
 - Test: `tests/test_latent_context_cache.py`
+- Create: `tests/test_visual_latent_validity.py`
 
 **Interfaces:**
-- Extends: `apply_exported_motion_context(..., context_audio_latent=None)`
-- Preserves: `context_latent` as visual candidate only.
 - Persists: `handoff["visual_latent_valid"]: bool`.
+- Leaves: `audio_context_refresh.py` unchanged except report instrumentation if required.
 
-- [ ] Write failing tests where visual context is RGB/Color Re-anchor but audio must come from latent, plus cache round-trip for `visual_latent_valid=False`.
+- [ ] Write failing tests for handoff/cache round-trip of `visual_latent_valid=False` and preservation of existing audio-refresh behavior.
 - [ ] Run focused tests and confirm expected failures.
-- [ ] Decouple audio latent selection from visual latent selection and preserve the validity flag in cached handoff metadata.
-- [ ] Run focused tests to green.
-- [ ] Run existing Motion Context and latent-cache tests.
+- [ ] Preserve the validity flag in cached handoff metadata.
+- [ ] Run latent-cache and `test_audio_context_refresh.py` tests to green.
 
 ### Task 3: SAM ownership and fail-fast validation
 
@@ -72,7 +72,7 @@
 - Create: `tests/test_sam_capabilities_contract.py`
 
 **Interfaces:**
-- Registers: `models/sams` category.
+- Registers: `ComfyUI/models/sams` category.
 - Produces: `resolve_sam_model_path(name) -> str`.
 - Produces: `validate_face_refine_runtime(config) -> None`.
 - Capabilities: compatible Ultralytics `.pt` list plus expected folder.
@@ -95,12 +95,13 @@
 **Interfaces:**
 - Non-bridge path: Face Refine before `save_segment_cache`, `save_motion_context_cache`, and `completed_contexts`.
 - Bridge path: assembled Face Refine remains after bridge assembly.
-- Maintains in-memory final RGB tracking tail and independent AV audio-latent tail.
+- Successful Face Refine causes visual Motion Context to ignore pre-FaceRefine latent and use final RGB.
+- Existing audio refresh remains unchanged and continues to use final exported waveform where safe.
 - Postprocess config/boot token: v10.
 
 - [ ] Write failing executor source/ordering contracts and v10 boot/config tests.
 - [ ] Run focused tests and confirm expected failures.
-- [ ] Move non-bridge Face Refine into `_run_one_segment`, feed previous final history, invalidate visual latent only on successful pixel changes, and pass independent audio latent to both first-pass and Refine-Canvas repin Motion Context.
+- [ ] Move non-bridge Face Refine into `_run_one_segment`, feed previous final history, and invalidate visual latent only on successful pixel changes.
 - [ ] Keep assembled Face Refine only for Source Bridge timelines.
 - [ ] Add a final-segment pipeline token to context cache settings and bump postprocess/frontend boot version to v10.
 - [ ] Run focused tests to green.
@@ -109,14 +110,16 @@
 
 **Files:**
 - Modify: `director/motion_context.py`
+- Modify: `director/audio_context_refresh.py` only if needed to expose intentional refresh timing/status.
 - Modify: `director/executor_core.py`
 - Modify: report contract tests as required.
 
 **Interfaces:**
-- `MotionContextInfo` reports context encode timing fields.
+- `MotionContextInfo` reports actual VideoVAE and AudioVAE encode timing fields.
+- Intentional waveform refresh is reported as refresh, not generic fallback.
 - Face Refine report distinguishes `segment-final` and `assembled/source-bridge` modes and aggregates segment timings/statistics.
 
-- [ ] Write failing report tests for Motion Context VideoVAE/AudioVAE encode timing labels and aggregate Face Refine statistics.
+- [ ] Write failing report tests for Motion Context VideoVAE/AudioVAE encode timing labels, waveform-refresh labeling, and aggregate Face Refine statistics.
 - [ ] Run the tests and confirm expected failures.
 - [ ] Add timing capture around only the real encode paths and aggregate report formatting.
 - [ ] Run focused tests to green.
