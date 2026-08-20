@@ -10,7 +10,7 @@
 
 Here is  tutorial, or you like to read the introduction first? / 下面连结是教学，或者你想先往下看看介绍?
 
-[English](USER_GUIDE.md) | [简体中文](USER_GUIDE_zh.md)
+[English](docs/USER_GUIDE.md) | [简体中文](docs/USER_GUIDE_zh.md)
 
 Build `T2V / I2V / FL2V / R2V / V2V / RV2V` shots in one production interface, mix generation methods segment by segment, carry visual and generated-audio context across shots, rerun only the segments that need work, manage reusable assets, preview the pipeline live, refine the result, and export the final video without turning the ComfyUI graph into a wall of nodes.
 
