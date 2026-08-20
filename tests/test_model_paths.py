@@ -49,6 +49,9 @@ def test_registers_director_owned_model_folders_and_discovers_models(tmp_path, m
     latent_dir = models_dir / "latent_upscale_models"
     latent_dir.mkdir(parents=True)
     (latent_dir / "h3_latent_2d.safetensors").write_bytes(b"test")
+    sam_dir = models_dir / "sams"
+    sam_dir.mkdir(parents=True)
+    (sam_dir / "sam2_t.pt").write_bytes(b"test")
 
     mod, fake = _load_with_fake_folder_paths(monkeypatch, models_dir)
     registered = mod.register_director_model_paths()
@@ -56,6 +59,8 @@ def test_registers_director_owned_model_folders_and_discovers_models(tmp_path, m
     assert registered["ultralytics_bbox"] == str(bbox_dir)
     assert registered["ultralytics_segm"] == str(models_dir / "ultralytics" / "segm")
     assert registered["latent_upscale_models"] == str(latent_dir)
+    assert registered["sams"] == str(sam_dir)
     assert "face_yolov8m.pt" in fake.get_filename_list("ultralytics_bbox")
     assert "h3_latent_2d.safetensors" in fake.get_filename_list("latent_upscale_models")
+    assert "sam2_t.pt" in fake.get_filename_list("sams")
     assert (models_dir / "ultralytics" / "segm").is_dir()
