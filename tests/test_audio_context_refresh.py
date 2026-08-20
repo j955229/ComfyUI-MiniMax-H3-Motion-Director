@@ -134,7 +134,13 @@ def test_installer_forces_waveform_refresh_before_executor_binds_function(monkey
     assert getattr(wrapped, "_motion_director_audio_refresh", False) is True
 
 
-def test_director_package_installs_refresh_before_executor_import():
+def test_root_package_installs_refresh_before_public_nodes_bind_executor():
+    source = Path("__init__.py").read_text(encoding="utf-8")
+    install_at = source.index("install_audio_context_refresh()")
+    nodes_at = source.index("from .nodes.director_output")
+    assert install_at < nodes_at
+
+
+def test_top_level_director_package_remains_import_safe():
     source = Path("director/__init__.py").read_text(encoding="utf-8")
-    assert "install_audio_context_refresh" in source
-    assert "install_audio_context_refresh()" in source
+    assert "install_audio_context_refresh" not in source
