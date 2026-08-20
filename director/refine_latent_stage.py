@@ -94,17 +94,20 @@ def _motion_context_prefix_count(
 
 
 def _strip_motion_context_for_repin(conditioning: Any):
-    """Remove the already-applied visual Motion Context before rebuilding it.
+    """Return the native H3 conditioning state needed by refine repin.
 
-    ``apply_exported_motion_context`` intentionally rejects duplicate Motion
-    Context. Global Refine therefore has to return to the native H3 conditioning
-    state before the existing RGB repin callback applies context at the refined
-    latent canvas. Relocated native keyframes are retained and restored to a
-    normal ``resolved_frame_index`` so they can be spatially synchronized first.
+    The first sampling pass already contains Motion Context. Global Refine then
+    changes the video latent canvas and the executor's existing repin callback
+    must add Motion Context again at that canvas. Feeding the already-merged
+    conditioning back into ``apply_exported_motion_context`` is invalid and was
+    the cause of multi-segment upscale falling back to the low-resolution first
+    pass.
 
-    Audio-only context is left untouched: without a visual Motion Context prefix
-    the executor's repin callback is a no-op, so removing the audio reference
-    would incorrectly drop generated-audio continuity.
+    Remove only the leading visual Motion Context keyframes and their generated
+    Motion Audio reference. Relocated native H3 keyframes are retained, have
+    their marker restored to ``resolved_frame_index``, and are synchronized by
+    the normal keyframe resize path below. Audio-only context is left untouched
+    because its executor repin callback is intentionally a no-op.
     """
     if not isinstance(conditioning, (list, tuple)):
         return conditioning
@@ -160,14 +163,16 @@ def _strip_motion_context_for_repin(conditioning: Any):
 
 
 def sync_h3_keyframe_conditioning(conditioning: Any, vae, *, width: int, height: int):
-    """Re-encode H3 target keyframe latents at the final spatial canvas.
+    """Prepare H3 conditioning for refined-canvas sampling.
 
-    Reference-media blocks are intentionally left alone: they are independent
-    H3 reference rows rather than target-canvas keyframes. Normal Motion Context
-    keyframes are left for Director's existing RGB re-pin callback. The special
-    five-frame Source Bridge endpoint anchors are re-encoded here because Source
-    Bridge runs Global Refine without that Motion Context re-pin callback.
+    Normal Motion Context from the first pass is removed here because the
+    executor immediately reapplies it through the existing RGB repin callback.
+    Remaining native H3 keyframes are then re-encoded at the final canvas.
+    Reference-media blocks remain untouched. Five-frame Source Bridge endpoint
+    anchors are not normal Motion Context and are re-encoded in place because
+    Source Bridge does not use that repin callback.
     """
+    conditioning = _strip_motion_context_for_repin(conditioning)
     if not isinstance(conditioning, (list, tuple)):
         return conditioning
     try:
@@ -214,33 +219,4 @@ def sync_h3_keyframe_conditioning(conditioning: Any, vae, *, width: int, height:
     return out
 
 
-def prepare_h3_motion_context_repin(
-    conditioning: Any,
-    vae,
-    *,
-    width: int,
-    height: int,
-    sync_spatial: bool,
-):
-    """Return clean conditioning suitable for the existing Motion Context repin.
-
-    The first sampling pass already contains Motion Context. Before Global Refine
-    calls the repin callback, remove that old visual context and its paired Motion
-    Audio reference. If the latent canvas changed, synchronize the remaining
-    native H3 keyframes to the refined canvas before context is added again.
-    """
-    cleaned = _strip_motion_context_for_repin(conditioning)
-    if sync_spatial:
-        cleaned = sync_h3_keyframe_conditioning(
-            cleaned,
-            vae,
-            width=int(width),
-            height=int(height),
-        )
-    return cleaned
-
-
-__all__ = [
-    "prepare_h3_motion_context_repin",
-    "sync_h3_keyframe_conditioning",
-]
+__all__ = ["sync_h3_keyframe_conditioning"]
