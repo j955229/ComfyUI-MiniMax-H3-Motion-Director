@@ -44,6 +44,19 @@ def _cache_root(node_id: str | None) -> Path | None:
         return None
 
 
+def _variant_key(variant: str) -> str:
+    selected = str(variant or "base").strip().lower()
+    if selected not in {"base", "refine"}:
+        raise ValueError(f"Unsupported Motion Context latent cache variant: {variant!r}")
+    return selected
+
+
+def _cache_filename(slot: int, variant: str) -> str:
+    selected = _variant_key(variant)
+    suffix = ".av.pt" if selected == "base" else ".refine.av.pt"
+    return "seg_%04d%s" % (int(slot), suffix)
+
+
 def av_latent_to_cpu(latent: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(latent, dict) or "samples" not in latent:
         raise ValueError("Motion Director: sampled AV latent is missing 'samples'.")
@@ -76,6 +89,19 @@ def _sample_streams(latent: dict[str, Any]) -> list[Any]:
     if isinstance(samples, torch.Tensor):
         return [samples]
     return []
+
+
+def latent_context_canvas(latent: dict[str, Any] | None) -> tuple[int, int] | None:
+    """Return the cached H3 video-latent canvas as pixel width/height."""
+    if not isinstance(latent, dict):
+        return None
+    streams = _sample_streams(latent)
+    if not streams:
+        return None
+    video = streams[0]
+    if not isinstance(video, torch.Tensor) or video.ndim not in {4, 5}:
+        return None
+    return int(video.shape[-1]) * 16, int(video.shape[-2]) * 16
 
 
 def prepare_latent_context_tail(
@@ -151,6 +177,9 @@ def prepare_latent_context_tail(
 
 
 def _settings(settings: dict[str, Any]) -> dict[str, Any]:
+    # Variant is deliberately excluded: base/refine files describe the same
+    # generated segment and differ only by canvas.  Keeping the producer
+    # fingerprint stable also preserves compatibility with existing v6 base caches.
     return {**dict(settings or {}), "latent_handoff_pipeline": LATENT_HANDOFF_PIPELINE}
 
 
@@ -162,19 +191,27 @@ def save_latent_context_cache(
     latent: dict[str, Any],
     handoff: dict[str, Any],
     settings: dict[str, Any],
+    variant: str = "base",
 ) -> bool:
     root = _cache_root(node_id)
     if root is None:
         return False
+    selected_variant = _variant_key(variant)
     try:
         slot = int(getattr(seg, "timeline_index", seg.index))
         tail_latent, tail_handoff = prepare_latent_context_tail(latent, handoff)
+        canvas = latent_context_canvas(tail_latent)
+        if canvas is None:
+            raise ValueError("AV latent cache has no valid H3 video canvas.")
         metadata = {
             "pipeline": LATENT_HANDOFF_PIPELINE,
+            "variant": selected_variant,
             "segment_index": slot,
             "fps": float(plan.frame_rate),
             "stored_tail_frames": int(tail_handoff["stored_tail_frames"]),
             "original_export_frames": int(tail_handoff["original_export_frames"]),
+            "canvas_width": int(canvas[0]),
+            "canvas_height": int(canvas[1]),
             "fingerprint": context_fingerprint(seg, plan, _settings(settings)),
         }
         payload = {
@@ -184,12 +221,13 @@ def save_latent_context_cache(
             "handoff": tail_handoff,
             "latent": tail_latent,
         }
-        destination = root / ("seg_%04d.av.pt" % slot)
+        destination = root / _cache_filename(slot, selected_variant)
         _write_via_temp(destination, lambda path: torch.save(payload, path))
         return True
     except Exception as exc:
         log.warning(
-            "Motion Context AV latent cache write failed for segment %d: %s",
+            "Motion Context %s AV latent cache write failed for segment %d: %s",
+            selected_variant,
             int(getattr(seg, "timeline_index", seg.index)) + 1,
             exc,
         )
@@ -202,13 +240,15 @@ def load_latent_context_cache(
     plan,
     *,
     settings: dict[str, Any],
+    variant: str = "base",
 ) -> CachedLatentContext | None:
     root = _cache_root(node_id)
     if root is None:
         return None
+    selected_variant = _variant_key(variant)
     try:
         slot = int(getattr(seg, "timeline_index", seg.index))
-        path = root / ("seg_%04d.av.pt" % slot)
+        path = root / _cache_filename(slot, selected_variant)
         if not path.is_file():
             return None
         payload = torch.load(path, map_location="cpu", weights_only=True)
@@ -224,6 +264,10 @@ def load_latent_context_cache(
         if not isinstance(metadata, dict) or not isinstance(handoff, dict):
             return None
         if metadata.get("pipeline") != LATENT_HANDOFF_PIPELINE:
+            return None
+        # Old v6 base caches did not store a variant; they remain valid as base.
+        stored_variant = str(metadata.get("variant") or "base").strip().lower()
+        if stored_variant != selected_variant:
             return None
         if metadata.get("fingerprint") != context_fingerprint(seg, plan, _settings(settings)):
             return None
@@ -274,6 +318,13 @@ def load_latent_context_cache(
             == clean_handoff["original_export_frames"]
         ):
             return None
+        canvas = latent_context_canvas(latent)
+        if canvas is None:
+            return None
+        if metadata.get("canvas_width") is not None and int(metadata["canvas_width"]) != int(canvas[0]):
+            return None
+        if metadata.get("canvas_height") is not None and int(metadata["canvas_height"]) != int(canvas[1]):
+            return None
         # Reject structurally valid metadata wrapped around an incomplete tail.
         from .motion_context import video_context_from_latent
 
@@ -288,7 +339,11 @@ def load_latent_context_cache(
             metadata=metadata,
         )
     except Exception as exc:
-        log.warning("Motion Context AV latent cache read failed: %s", exc)
+        log.warning(
+            "Motion Context %s AV latent cache read failed: %s",
+            selected_variant,
+            exc,
+        )
         return None
 
 
@@ -299,6 +354,7 @@ __all__ = [
     "LATENT_HANDOFF_PIPELINE",
     "MAX_PERSISTED_CONTEXT_FRAMES",
     "av_latent_to_cpu",
+    "latent_context_canvas",
     "load_latent_context_cache",
     "prepare_latent_context_tail",
     "save_latent_context_cache",
