@@ -11,6 +11,7 @@ _DIRECTOR_MODEL_FOLDERS = (
     ("ultralytics_bbox", ("ultralytics", "bbox")),
     ("ultralytics_segm", ("ultralytics", "segm")),
     ("latent_upscale_models", ("latent_upscale_models",)),
+    ("sams", ("sams",)),
 )
 
 
