@@ -45,6 +45,13 @@ else:
     if not _motion_patch_ready:
         _log.error("Motion Context disabled: %s", motion_context_patch_status()[1])
 
+    # Refresh generated Audio Previous Context from the audible exported waveform
+    # before public node modules bind executor_core's Motion Context function.
+    # The hidden audio latent remains a fallback when waveform refresh is unsafe.
+    from .director.audio_context_refresh import install_audio_context_refresh  # noqa: E402
+
+    install_audio_context_refresh()
+
     # Install exact per-reference Audio Drive support before public node modules
     # bind executor and audio-export helpers. Configured time ranges are locked
     # in the H3 audio latent and restored from original PCM on export.
