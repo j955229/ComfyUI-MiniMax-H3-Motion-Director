@@ -5,7 +5,8 @@
 ![ComfyUI](https://img.shields.io/badge/ComfyUI-custom%20node-6f42c1)
 
 **一个 Director，从单个 MiniMax H3 镜头到完整的多段视频项目。**
- 下面连结是教学，或者你想先往下看看介绍?
+
+下面连结是教学，或者你想先往下看看介绍?
 
 [English](docs/USER_GUIDE.md) | [简体中文](docs/USER_GUIDE_zh.md)
 
