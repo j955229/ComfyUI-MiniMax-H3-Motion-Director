@@ -45,7 +45,7 @@ If different shots in one project need different methods, use **Mixed Mode** ins
 
 ## 3. T2V: basic text-to-video
 
-![Standalone T2V controls](images/tutorial/01-standalone-t2v.svg)
+![Standalone T2V controls](images/tutorial/01-standalone-t2v.webp)
 
 | # | Control | What it does |
 |---:|---|---|
@@ -106,7 +106,7 @@ Workflow:
 
 ## 6. R2V: identity, scene, motion and audio references
 
-![R2V controls](images/tutorial/02-r2v-assets.svg)
+![R2V controls](images/tutorial/02-r2v-assets.webp)
 
 R2V is the most useful standalone mode for recurring characters. Each Assets Group can contain up to:
 
@@ -144,7 +144,7 @@ Audio 1–3
 
 ## 7. Common References: share assets across standalone groups
 
-![Common references](images/tutorial/04-common-references.svg)
+![Common references](images/tutorial/04-common-references.webp)
 
 | # | Control | What it does |
 |---:|---|---|
@@ -165,7 +165,7 @@ Rule of thumb:
 
 ## 8. Material Library: persistent reuse across projects
 
-![Material Library](images/tutorial/05-material-library.svg)
+![Material Library](images/tutorial/05-material-library.webp)
 
 The Material Library is different from Common References. Common References belong to the current project; the Library stores assets for reuse across shots and later projects.
 
@@ -194,7 +194,7 @@ The actual Mixed `Source Video` must still be uploaded locally to that Segment. 
 
 ## 9. Reference Audio and Original Audio Drive
 
-![Reference audio and drive timeline](images/tutorial/06-reference-audio.svg)
+![Reference audio and drive timeline](images/tutorial/06-reference-audio.webp)
 
 Reference audio can have two roles:
 
@@ -218,20 +218,22 @@ Two direct Drive timeline constraints apply:
 
 ### Audio editor
 
-![Audio editor](images/tutorial/07-audio-editor.svg)
+![Audio editor](images/tutorial/07-audio-editor.webp)
 
 | # | Control | What it does |
 |---:|---|---|
 | 1 | Waveform | Shows the audio and lets you adjust the retained range |
 | 2 | Trim start | Start time of the kept range |
 | 3 | Trim end | End time of the kept range |
-| 4 | Effective | Effective duration after trimming |
-| 5 | Play | Previews the current selection |
-| 6 | Undo | Undoes one edit |
-| 7 | Redo | Redoes an edit |
-| 8 | Reset | Restores the original trim range |
-| 9 | Trim | Applies the current trim range |
+| 4 | Play | Previews the current selection |
+| 5 | Undo | Undoes one edit |
+| 6 | Redo | Redoes an edit |
+| 7 | Reset | Restores the original trim range |
+| 8 | Trim | Applies the current trim range |
+| 9 | Cancel | Discards the current editor changes and closes the editor |
 | 10 | Done | Saves the edit and returns to the Director |
+
+`Effective` is a read-only duration display, so it does not receive a red operation number.
 
 A typical dialogue workflow is: trim a long recording to the required line, then drag that block on the Drive timeline to the exact point where the line should occur.
 
@@ -278,7 +280,7 @@ Source Video provides motion/timing structure; Identity/Reference media provide 
 
 ## 12. Mixed Mode: combine generation methods on one timeline
 
-![Mixed Mode controls](images/tutorial/03-mixed-mode.svg)
+![Mixed Mode controls](images/tutorial/03-mixed-mode.webp)
 
 Mixed Mode is the most practical choice for a complete project.
 
@@ -362,7 +364,7 @@ This is also why a low-resolution first pass is efficient: spend upscale/refine 
 
 ## 14. Postprocess: Global Refine, Upscale and Face Refine
 
-![Post-processing](images/tutorial/08-postprocess.svg)
+![Post-processing](images/tutorial/08-postprocess.webp)
 
 | # | Control | What it does |
 |---:|---|---|
@@ -390,7 +392,7 @@ If Global Refine fails, the completed first-pass result is retained. If Face Ref
 
 ## 15. Live Preview: see what the pipeline is doing
 
-![Live Preview](images/tutorial/09-live-preview.svg)
+![Live Preview](images/tutorial/09-live-preview.webp)
 
 | # | Area | What it does |
 |---:|---|---|
@@ -406,13 +408,13 @@ Live Preview is observational; it does not change the prompt or generation resul
 
 ## 16. Results: inspect and save the final video
 
-![Results](images/tutorial/10-results.svg)
+![Results](images/tutorial/10-results.webp)
 
 | # | Control | What it does |
 |---:|---|---|
 | 1 | Results page | Opens Results |
 | 2 | Segment / Multi Segment / Final Result | Switches between one segment, a continuous range and the complete result |
-| 3 | Player | Checks final video and audio |
+| 3 | Player / playback controls | Checks final video and audio |
 | 4 | Save Video panel | Video export settings |
 | 5 | Auto-save final result | Writes the final video automatically when the pipeline completes |
 | 6 | Path | Output directory |
@@ -421,8 +423,9 @@ Live Preview is observational; it does not change the prompt or generation resul
 | 9 | Encoder | Video encoder; `auto` uses automatic selection |
 | 10 | Encoding mode | Encoding strategy |
 | 11 | Save Video | Manually saves the current final result |
-| 12 | Final Result Information | Final frames/duration/result metadata |
-| 13 | Report | Actual execution settings, continuity, sampling and postprocess status |
+| 12 | Copy report | Copies the current Director Report to the clipboard |
+
+**Final Result Information** and the **Report body** are read-only information areas. Red callout `12` points to the operable Copy button. The report records the actual execution configuration, continuity, sampling and postprocess status.
 
 The three result levels are:
 
