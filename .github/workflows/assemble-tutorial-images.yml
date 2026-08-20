@@ -40,17 +40,163 @@ jobs:
             test -s "$out/$stem.webp"
           done
 
+      - name: Finalize guide references and callouts
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          zh = Path('docs/USER_GUIDE_zh.md')
+          en = Path('docs/USER_GUIDE.md')
+
+          z = zh.read_text(encoding='utf-8').replace('.svg)', '.webp)')
+          e = en.read_text(encoding='utf-8').replace('.svg)', '.webp)')
+
+          old_zh_audio = '''| 1 | Waveform | 直接查看并调整保留范围 |
+          | 2 | Trim start | 裁切开始时间 |
+          | 3 | Trim end | 裁切结束时间 |
+          | 4 | Effective | 当前有效长度，只读结果 |
+          | 5 | Play | 试听当前选择 |
+          | 6 | Undo | 撤销一次编辑 |
+          | 7 | Redo | 重做 |
+          | 8 | Reset | 恢复原始裁切范围 |
+          | 9 | Trim | 应用当前裁切范围 |
+          | 10 | Done | 保存编辑并返回 Director |'''
+          new_zh_audio = '''| 1 | Waveform | 直接查看并调整保留范围 |
+          | 2 | Trim start | 裁切开始时间 |
+          | 3 | Trim end | 裁切结束时间 |
+          | 4 | Play | 试听当前选择 |
+          | 5 | Undo | 撤销一次编辑 |
+          | 6 | Redo | 重做 |
+          | 7 | Reset | 恢复原始裁切范围 |
+          | 8 | Trim | 应用当前裁切范围 |
+          | 9 | Cancel | 放弃本次编辑并关闭编辑器 |
+          | 10 | Done | 保存编辑并返回 Director |
+
+          `Effective` 是只读的有效时长显示，因此没有单独给红色操作编号。'''
+
+          old_en_audio = '''| 1 | Waveform | Shows the audio and lets you adjust the retained range |
+          | 2 | Trim start | Start time of the kept range |
+          | 3 | Trim end | End time of the kept range |
+          | 4 | Effective | Effective duration after trimming |
+          | 5 | Play | Previews the current selection |
+          | 6 | Undo | Undoes one edit |
+          | 7 | Redo | Redoes an edit |
+          | 8 | Reset | Restores the original trim range |
+          | 9 | Trim | Applies the current trim range |
+          | 10 | Done | Saves the edit and returns to the Director |'''
+          new_en_audio = '''| 1 | Waveform | Shows the audio and lets you adjust the retained range |
+          | 2 | Trim start | Start time of the kept range |
+          | 3 | Trim end | End time of the kept range |
+          | 4 | Play | Previews the current selection |
+          | 5 | Undo | Undoes one edit |
+          | 6 | Redo | Redoes an edit |
+          | 7 | Reset | Restores the original trim range |
+          | 8 | Trim | Applies the current trim range |
+          | 9 | Cancel | Discards the current editor changes and closes the editor |
+          | 10 | Done | Saves the edit and returns to the Director |
+
+          `Effective` is a read-only duration display, so it does not receive a red operation number.'''
+
+          old_zh_results = '''| 1 | 结果页 | 进入 Results |
+          | 2 | 分段 / 多段 / 最终结果 | 在单段、连续区间和完整成片之间切换 |
+          | 3 | 播放器 | 检查最终画面与音频 |
+          | 4 | 保存影片 | 视频文件输出设置 |
+          | 5 | 自动保存最终结果 | 管线完成后自动写出最终影片 |
+          | 6 | 路径 | 保存目录 |
+          | 7 | 文件名前缀 | 输出文件名开头 |
+          | 8 | 格式 | 容器/格式选择，`auto` 让 Director 自动决定 |
+          | 9 | 编码器 | 视频编码器，`auto` 使用自动选择 |
+          | 10 | 编码模式 | 编码策略 |
+          | 11 | 保存影片 | 手动保存当前最终结果 |
+          | 12 | 最终成果信息 | 最终帧数、时长等结果信息 |
+          | 13 | 报告 | 真实执行配置、连续性、采样和后处理状态 |'''
+          new_zh_results = '''| 1 | 结果页 | 进入 Results |
+          | 2 | 分段 / 多段 / 最终结果 | 在单段、连续区间和完整成片之间切换 |
+          | 3 | 播放器 | 检查最终画面与音频 |
+          | 4 | 保存影片 | 视频文件输出设置 |
+          | 5 | 自动保存最终结果 | 管线完成后自动写出最终影片 |
+          | 6 | 路径 | 保存目录 |
+          | 7 | 文件名前缀 | 输出文件名开头 |
+          | 8 | 格式 | 容器/格式选择，`auto` 让 Director 自动决定 |
+          | 9 | 编码器 | 视频编码器，`auto` 使用自动选择 |
+          | 10 | 编码模式 | 编码策略 |
+          | 11 | 保存影片 | 手动保存当前最终结果 |
+          | 12 | 复制报告 | 把当前 Director Report 复制到剪贴板 |
+
+          **最终成果信息**和**报告内容**本身是只读信息区；截图中的红色 `12` 标在可操作的“复制”按钮上。Report 会记录真实执行配置、连续性、采样和后处理状态。'''
+
+          old_en_results = '''| 1 | Results page | Opens Results |
+          | 2 | Segment / Multi Segment / Final Result | Switches between one segment, a continuous range and the complete result |
+          | 3 | Player | Checks final video and audio |
+          | 4 | Save Video panel | Video export settings |
+          | 5 | Auto-save final result | Writes the final video automatically when the pipeline completes |
+          | 6 | Path | Output directory |
+          | 7 | Filename prefix | Prefix for the saved file |
+          | 8 | Format | Container/format; `auto` lets the Director choose |
+          | 9 | Encoder | Video encoder; `auto` uses automatic selection |
+          | 10 | Encoding mode | Encoding strategy |
+          | 11 | Save Video | Manually saves the current final result |
+          | 12 | Final Result Information | Final frames/duration/result metadata |
+          | 13 | Report | Actual execution settings, continuity, sampling and postprocess status |'''
+          new_en_results = '''| 1 | Results page | Opens Results |
+          | 2 | Segment / Multi Segment / Final Result | Switches between one segment, a continuous range and the complete result |
+          | 3 | Player | Checks final video and audio |
+          | 4 | Save Video panel | Video export settings |
+          | 5 | Auto-save final result | Writes the final video automatically when the pipeline completes |
+          | 6 | Path | Output directory |
+          | 7 | Filename prefix | Prefix for the saved file |
+          | 8 | Format | Container/format; `auto` lets the Director choose |
+          | 9 | Encoder | Video encoder; `auto` uses automatic selection |
+          | 10 | Encoding mode | Encoding strategy |
+          | 11 | Save Video | Manually saves the current final result |
+          | 12 | Copy report | Copies the current Director Report to the clipboard |
+
+          **Final Result Information** and the **Report body** are read-only information areas. Red callout `12` points to the operable Copy button. The report records the actual execution configuration, continuity, sampling and postprocess status.'''
+
+          for old, new, label in [
+              (old_zh_audio, new_zh_audio, 'zh audio table'),
+              (old_en_audio, new_en_audio, 'en audio table'),
+              (old_zh_results, new_zh_results, 'zh results table'),
+              (old_en_results, new_en_results, 'en results table'),
+          ]:
+              target = z if label.startswith('zh') else e
+              if old not in target:
+                  raise SystemExit(f'missing expected block: {label}')
+              if label.startswith('zh'):
+                  z = z.replace(old, new)
+              else:
+                  e = e.replace(old, new)
+
+          zh.write_text(z, encoding='utf-8')
+          en.write_text(e, encoding='utf-8')
+
+          readme = Path('README.md')
+          rz = Path('README_zh.md')
+          r = readme.read_text(encoding='utf-8')
+          q = rz.read_text(encoding='utf-8')
+          en_link = '**User Guide:** [English](docs/USER_GUIDE.md) · [简体中文](docs/USER_GUIDE_zh.md)'
+          zh_link = '**用户操作指南：** [简体中文](docs/USER_GUIDE_zh.md) · [English](docs/USER_GUIDE.md)'
+          marker = '[English](README.md) | [简体中文](README_zh.md)'
+          if en_link not in r:
+              r = r.replace(marker, marker + '\n\n' + en_link, 1)
+          if zh_link not in q:
+              q = q.replace(marker, marker + '\n\n' + zh_link, 1)
+          readme.write_text(r, encoding='utf-8')
+          rz.write_text(q, encoding='utf-8')
+          PY
+
       - name: Remove temporary assembly files
         shell: bash
         run: |
           rm -rf docs/images/tutorial/.encoded
           rm -f .github/workflows/assemble-tutorial-images.yml
 
-      - name: Commit generated documentation images
+      - name: Commit generated documentation assets
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add docs/images/tutorial .github/workflows/assemble-tutorial-images.yml
-          git commit -m 'docs: add annotated tutorial screenshots'
+          git add docs/images/tutorial docs/USER_GUIDE.md docs/USER_GUIDE_zh.md README.md README_zh.md .github/workflows/assemble-tutorial-images.yml
+          git commit -m 'docs: add annotated user tutorials'
           git push
