@@ -1,0 +1,56 @@
+name: Assemble tutorial images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/images/tutorial/.encoded/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decode annotated tutorial images
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir='docs/images/tutorial/.encoded'
+          out='docs/images/tutorial'
+          stems=(
+            01-standalone-t2v
+            02-r2v-assets
+            03-mixed-mode
+            04-common-references
+            05-material-library
+            06-reference-audio
+            07-audio-editor
+            08-postprocess
+            09-live-preview
+            10-results
+          )
+          for stem in "${stems[@]}"; do
+            cat "$dir/$stem".part* | base64 --decode > "$out/$stem.webp"
+            test -s "$out/$stem.webp"
+          done
+
+      - name: Remove temporary assembly files
+        shell: bash
+        run: |
+          rm -rf docs/images/tutorial/.encoded
+          rm -f .github/workflows/assemble-tutorial-images.yml
+
+      - name: Commit generated documentation images
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/images/tutorial .github/workflows/assemble-tutorial-images.yml
+          git commit -m 'docs: add annotated tutorial screenshots'
+          git push
