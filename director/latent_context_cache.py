@@ -164,6 +164,7 @@ def prepare_latent_context_tail(
         "selected_source_end_frame": int(
             handoff.get("selected_source_end_frame", selected_end)
         ),
+        "visual_latent_valid": bool(handoff.get("visual_latent_valid", True)),
     }
     baseline = handoff.get("pin_renorm_baseline_std")
     if baseline is not None:
@@ -292,6 +293,7 @@ def load_latent_context_cache(
         if not required.issubset(handoff):
             return None
         clean_handoff = {key: int(handoff[key]) for key in required}
+        clean_handoff["visual_latent_valid"] = bool(handoff.get("visual_latent_valid", True))
         if handoff.get("pin_renorm_baseline_std") is not None:
             baseline = float(handoff["pin_renorm_baseline_std"])
             if not torch.isfinite(torch.tensor(baseline)) or baseline <= 0:
