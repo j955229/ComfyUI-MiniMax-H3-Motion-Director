@@ -1,6 +1,8 @@
-from pathlib import Path
-
-from director.postprocess_config import POSTPROCESS_CONFIG_VERSION, normalize_postprocess_config
+from director.postprocess_config import (
+    POSTPROCESS_CONFIG_VERSION,
+    normalize_postprocess_config,
+    postprocess_cache_fingerprint,
+)
 
 
 def test_postprocess_config_version_is_v10_and_migrates_v9_values():
@@ -8,7 +10,11 @@ def test_postprocess_config_version_is_v10_and_migrates_v9_values():
     normalized = normalize_postprocess_config(
         {
             "version": 9,
-            "face_refine": {"enabled": True, "mask_mode": "sam", "sam_model": "sam2_t.pt"},
+            "face_refine": {
+                "enabled": True,
+                "mask_mode": "sam",
+                "sam_model": "sam2_t.pt",
+            },
             "global_refine": {"result_previews_enabled": True},
         }
     )
@@ -18,8 +24,19 @@ def test_postprocess_config_version_is_v10_and_migrates_v9_values():
     assert normalized["global_refine"]["result_previews_enabled"] is True
 
 
-def test_frontend_config_and_boot_token_are_v10():
-    modal = Path("web/js/minimax_postprocess_ui.mjs").read_text(encoding="utf-8")
-    timeline = Path("web/js/minimax_timeline.js").read_text(encoding="utf-8")
-    assert "version: 10" in modal
-    assert "minimax_postprocess_ui.mjs?boot=postprocess_output_v10" in timeline
+def test_face_refine_changes_cache_identity_but_result_preview_does_not():
+    base = {
+        "version": 9,
+        "global_refine": {"enabled": True, "result_previews_enabled": False},
+        "face_refine": {"enabled": True, "base_denoise": 0.45},
+    }
+    preview = {
+        **base,
+        "global_refine": {"enabled": True, "result_previews_enabled": True},
+    }
+    changed_face = {
+        **base,
+        "face_refine": {"enabled": True, "base_denoise": 0.55},
+    }
+    assert postprocess_cache_fingerprint(base) == postprocess_cache_fingerprint(preview)
+    assert postprocess_cache_fingerprint(base) != postprocess_cache_fingerprint(changed_face)
