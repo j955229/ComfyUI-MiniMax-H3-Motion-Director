@@ -36,6 +36,7 @@ from .core_sampling import (
 )
 from .postprocess_config import normalize_postprocess_config, postprocess_cache_fingerprint
 from .refine_sampling import apply_global_refine
+from .seam_report import build_seam_report_lines
 from .preview_manager import DirectorPreviewManager
 from .face_refine_pipeline import apply_face_refine
 from .frame_align import (
@@ -2064,6 +2065,13 @@ def execute_director_plan_core(
         f"Modes: {', '.join(sorted({seg.task_key.upper() for seg in all_segments}))}",
         f"Output frames: {int(combined.shape[0])}",
     )
+    for seam_line in build_seam_report_lines(
+        export_chunks,
+        export_audios,
+        fps=float(plan.frame_rate or 24),
+        segment_slots=[int(seg.timeline_index) for seg in export_segments],
+    ):
+        execution_report.add("Seam Diagnostics", seam_line)
     if sampling_mode == "internal":
         execution_report.add(
             "Run",
@@ -2190,6 +2198,16 @@ def execute_director_plan_core(
         f"Steps: {int(global_refine_config['steps']) or 'Auto'}",
         f"Seed Mode: {str(global_refine_config['seed_mode']).title()}",
         f"Upscale Method: {global_refine_config['upscale_method']}",
+        (f"H3 Latent Model: {str(global_refine_config.get('latent_upscale_model') or '')}"
+         if global_refine_config.get('mode') == 'upscale' and global_refine_config.get('upscale_method') == 'h3_learned_latent' else ""),
+        ("H3 Latent Architecture: Auto (checkpoint-detected)"
+         if global_refine_config.get('mode') == 'upscale' and global_refine_config.get('upscale_method') == 'h3_learned_latent' else ""),
+        (f"H3 Latent Precision: {str(global_refine_config.get('latent_upscale_precision') or 'fp16')}"
+         if global_refine_config.get('mode') == 'upscale' and global_refine_config.get('upscale_method') == 'h3_learned_latent' else ""),
+        (f"H3 Latent Device: {str(global_refine_config.get('latent_upscale_device') or 'cuda')}"
+         if global_refine_config.get('mode') == 'upscale' and global_refine_config.get('upscale_method') == 'h3_learned_latent' else ""),
+        ("H3 Noise Mask: preserve audio / remap video when present"
+         if global_refine_config.get('mode') == 'upscale' and global_refine_config.get('upscale_method') == 'h3_learned_latent' else ""),
         (f"VSR Quality: {str(global_refine_config.get('vsr_quality') or 'high').title()}"
          if global_refine_config.get('mode') == 'upscale' and global_refine_config.get('upscale_method') == 'nvidia_rtx_vsr' else ""),
     )

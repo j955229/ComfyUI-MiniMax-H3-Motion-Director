@@ -41,16 +41,21 @@ def _load_with_fake_folder_paths(monkeypatch, models_dir):
     return mod, fake
 
 
-def test_registers_face_refine_ultralytics_folders_and_discovers_face_model(tmp_path, monkeypatch):
+def test_registers_director_owned_model_folders_and_discovers_models(tmp_path, monkeypatch):
     models_dir = tmp_path / "custom_models"
     bbox_dir = models_dir / "ultralytics" / "bbox"
     bbox_dir.mkdir(parents=True)
     (bbox_dir / "face_yolov8m.pt").write_bytes(b"test")
+    latent_dir = models_dir / "latent_upscale_models"
+    latent_dir.mkdir(parents=True)
+    (latent_dir / "h3_latent_2d.safetensors").write_bytes(b"test")
 
     mod, fake = _load_with_fake_folder_paths(monkeypatch, models_dir)
     registered = mod.register_director_model_paths()
 
     assert registered["ultralytics_bbox"] == str(bbox_dir)
     assert registered["ultralytics_segm"] == str(models_dir / "ultralytics" / "segm")
+    assert registered["latent_upscale_models"] == str(latent_dir)
     assert "face_yolov8m.pt" in fake.get_filename_list("ultralytics_bbox")
+    assert "h3_latent_2d.safetensors" in fake.get_filename_list("latent_upscale_models")
     assert (models_dir / "ultralytics" / "segm").is_dir()

@@ -18,6 +18,7 @@ SECTION_ORDER = (
     "Cache",
     "References",
     "Generation",
+    "Seam Diagnostics",
     "Global Refine",
     "Second Sampling",
     "Upscale",
@@ -313,6 +314,9 @@ def _split_global_refine_sections(
             upscale_lines.append(f"Method: {config['Upscale Method']}")
         if config.get("VSR Quality"):
             upscale_lines.append(f"VSR Quality: {config['VSR Quality']}")
+        for key in ("H3 Latent Model", "H3 Latent Architecture", "H3 Latent Precision", "H3 Latent Device", "H3 Noise Mask"):
+            if config.get(key):
+                upscale_lines.append(f"{key}: {config[key]}")
     for segment_id in ordered_ids:
         segment = by_id.get(segment_id)
         if segment is None:

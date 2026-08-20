@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 
-POSTPROCESS_CONFIG_VERSION = 7
+POSTPROCESS_CONFIG_VERSION = 9
 CANVAS_MULTIPLE = 32
 
 DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
@@ -33,6 +33,9 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "skip_fl2v": False,
         "upscale_method": "lanczos",
         "upscale_model": "",
+        "latent_upscale_model": "",
+        "latent_upscale_precision": "fp16",
+        "latent_upscale_device": "cuda",
         "vsr_quality": "high",
         "resolution_mode": "follow_director",
         "aspect": "16:9",
@@ -246,10 +249,17 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g["skip_fl2v"] = _bool(g_raw.get("skip_fl2v"), False)
     g["upscale_method"] = _choice(
         g_raw.get("upscale_method"),
-        {"lanczos", "upscale_model", "nvidia_rtx_vsr"},
+        {"lanczos", "upscale_model", "nvidia_rtx_vsr", "h3_learned_latent"},
         "lanczos",
     )
     g["upscale_model"] = str(g_raw.get("upscale_model") or "")
+    g["latent_upscale_model"] = str(g_raw.get("latent_upscale_model") or "").strip()
+    g["latent_upscale_precision"] = _choice(
+        g_raw.get("latent_upscale_precision"), {"fp16", "bf16", "fp32"}, "fp16"
+    )
+    g["latent_upscale_device"] = _choice(
+        g_raw.get("latent_upscale_device"), {"cuda", "cpu"}, "cuda"
+    )
     g["vsr_quality"] = _choice(
         g_raw.get("vsr_quality"), {"low", "medium", "high", "ultra"}, "high"
     )

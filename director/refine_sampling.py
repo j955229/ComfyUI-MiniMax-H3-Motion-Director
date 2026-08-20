@@ -3,7 +3,7 @@
 # This derivative is distributed under GPL-3.0; see NOTICE and
 # LICENSES/Apache-2.0-AIMixer.txt.
 
-"""Strict in-node H3 Global Refine / pixel-upscale processing."""
+"""Strict in-node H3 Global Refine / pixel-or-latent upscale processing."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from typing import Any, Callable
 import torch
 
 from .core_sampling import sample_single_stage
+from .h3_learned_latent import upscale_h3_av_latent
+from .h3_noise_mask import remap_h3_noise_mask, with_noise_mask
 from .postprocess_config import (
     refine_pass_settings_for,
     refine_passes_for,
@@ -24,6 +26,7 @@ from .postprocess_config import (
     resolve_upscale_target,
     resolve_vsr_quality_name,
 )
+from .refine_latent_stage import sync_h3_keyframe_conditioning
 from .rtx_deblur import RTXDeblurOutcome, apply_rtx_deblur
 
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.director.refine")
@@ -63,20 +66,29 @@ def _join_av(video_latent: dict, audio_latent, template: dict) -> dict:
     video = video_latent.get("samples") if isinstance(video_latent, dict) else video_latent
     audio = audio_latent.get("samples") if isinstance(audio_latent, dict) else audio_latent
     out = dict(template)
-    out.pop("noise_mask", None)
     try:
         from comfy_extras.nodes_lt import LTXVConcatAVLatent
 
         joined = _unpack(LTXVConcatAVLatent.execute(video_latent, audio_latent))[0]
-        if isinstance(joined, dict) and "samples" in joined:
-            return joined
-        out["samples"] = joined
+        if isinstance(joined, dict):
+            out.update(joined)
+        else:
+            out["samples"] = joined
         return out
     except (ImportError, AttributeError):
         import comfy.nested_tensor
 
         out["samples"] = comfy.nested_tensor.NestedTensor((video, audio)) if audio is not None else video
         return out
+
+
+def _video_latent_canvas(samples: dict) -> tuple[int, int]:
+    """Return H3 video-latent canvas in pixel units."""
+    video_latent, _ = _split_av(samples)
+    tensor = video_latent.get("samples") if isinstance(video_latent, dict) else video_latent
+    if not isinstance(tensor, torch.Tensor) or tensor.ndim not in {4, 5}:
+        raise ValueError("Global Refine expected a MiniMax H3 video latent tensor.")
+    return int(tensor.shape[-1]) * 16, int(tensor.shape[-2]) * 16
 
 
 def _resize_lanczos(images: torch.Tensor, width: int, height: int) -> torch.Tensor:
@@ -251,7 +263,7 @@ def upscale_image_batch_strict(
     vsr_quality: str = "high",
     on_progress: Callable[[float], None] | None = None,
 ) -> torch.Tensor:
-    """Run exactly the selected method; errors propagate to the stage fallback."""
+    """Run exactly the selected pixel method; errors propagate to the stage fallback."""
     selected = str(method or "lanczos").strip().lower()
     if selected == "lanczos":
         result = _resize_lanczos(images, width, height)
@@ -272,7 +284,7 @@ def upscale_image_batch_strict(
             on_progress=on_progress,
         )
     else:
-        raise ValueError(f"Unsupported Global Refine upscale method: {method}")
+        raise ValueError(f"Unsupported pixel-space Global Refine upscale method: {method}")
     if int(result.shape[2]) != int(width) or int(result.shape[1]) != int(height):
         result = _resize_lanczos(result, width, height)
     return result
@@ -511,6 +523,8 @@ def apply_global_refine(
     second_sampling_enabled = bool(config.get("second_sampling_enabled", True))
     deblur_enabled = bool(config.get("rtx_deblur_enabled", False))
     upscale_enabled = config.get("mode") == "upscale"
+    method = str(config.get("upscale_method") or "lanczos").strip().lower()
+    latent_upscale = upscale_enabled and method == "h3_learned_latent"
     pass_count = refine_passes_for(config) if second_sampling_enabled else 0
     # Invalid/mismatched schedules are configuration errors. Resolve them before
     # entering the stage fallback so a bad schedule is never silently ignored.
@@ -519,7 +533,6 @@ def apply_global_refine(
     first_refine_seed = refine_seed_for(config, seed, 0)
     width, height = int(director_width), int(director_height)
     source_width, source_height = width, height
-    method = str(config.get("upscale_method") or "lanczos")
     vsr_quality = str(config.get("vsr_quality") or "high")
     timings: dict[str, float] = {}
     pass_timings: list[float] = []
@@ -531,6 +544,12 @@ def apply_global_refine(
     selected_model_name = ""
 
     try:
+        if latent_upscale and deblur_enabled:
+            raise ValueError(
+                "RTX Deblur is pixel-space and cannot be combined with H3 Learned Latent "
+                "upscale in the same Global Refine stage."
+            )
+
         if not second_sampling_enabled and not deblur_enabled and not upscale_enabled:
             timings["total"] = time.perf_counter() - stage_started
             return GlobalRefineOutcome(
@@ -558,14 +577,39 @@ def apply_global_refine(
                 has_context=bool(preserve_noise_mask),
             )
 
+        # H3 noise_mask is part of the AV latent state. Keep it for ordinary
+        # second-sampling (Audio Drive can use it even when visual context is off),
+        # and explicitly remap it whenever the video latent canvas changes.
         work = dict(samples)
-        if not preserve_noise_mask or upscale_enabled or deblur_enabled:
-            work.pop("noise_mask", None)
         refine_positive = positive
+        original_mask = work.get("noise_mask")
 
         decoded = None
         audio_latent = None
-        if upscale_enabled or deblur_enabled:
+        if latent_upscale:
+            source_width, source_height = _video_latent_canvas(work)
+            width, height = resolve_upscale_target(config, director_width, director_height)
+            if on_phase:
+                on_phase("global_upscale", 0)
+            upscale_started = time.perf_counter()
+            work = upscale_h3_av_latent(
+                work,
+                width=width,
+                height=height,
+                model_name=str(config.get("latent_upscale_model") or ""),
+                precision=str(config.get("latent_upscale_precision") or "fp16"),
+                device=str(config.get("latent_upscale_device") or "cuda"),
+                on_progress=((lambda value: on_phase("global_upscale", value)) if on_phase is not None else None),
+            )
+            timings["upscale"] = time.perf_counter() - upscale_started
+            refine_positive = sync_h3_keyframe_conditioning(
+                refine_positive, vae, width=width, height=height
+            )
+            if repin is not None:
+                refine_positive = repin(refine_positive, work)
+            if on_phase:
+                on_phase("global_upscale", 1)
+        elif upscale_enabled or deblur_enabled:
             decode_started = time.perf_counter()
             video_latent, audio_latent = _split_av(work)
             decoded = _decode_video(vae, video_latent)
@@ -591,7 +635,7 @@ def apply_global_refine(
             if on_phase:
                 on_phase("rtx_deblur", 1)
 
-        if upscale_enabled and decoded is not None:
+        if upscale_enabled and not latent_upscale and decoded is not None:
             width, height = resolve_upscale_target(config, director_width, director_height)
             if on_phase:
                 on_phase("global_upscale", 0)
@@ -600,7 +644,7 @@ def apply_global_refine(
                 decoded,
                 width=width,
                 height=height,
-                method=config.get("upscale_method") or "lanczos",
+                method=method,
                 model_name=config.get("upscale_model") or "",
                 vsr_quality=config.get("vsr_quality") or "high",
                 on_progress=(
@@ -616,6 +660,25 @@ def apply_global_refine(
             encode_started = time.perf_counter()
             work = _join_av(_encode_video(vae, decoded), audio_latent, work)
             timings["encode"] = time.perf_counter() - encode_started
+            video_latent, _ = _split_av(work)
+            video_tensor = (
+                video_latent.get("samples") if isinstance(video_latent, dict) else video_latent
+            )
+            if original_mask is not None and isinstance(video_tensor, torch.Tensor):
+                work = with_noise_mask(
+                    work,
+                    remap_h3_noise_mask(
+                        original_mask,
+                        target_h=int(video_tensor.shape[-2]),
+                        target_w=int(video_tensor.shape[-1]),
+                    ),
+                )
+            elif original_mask is None:
+                work = with_noise_mask(work, None)
+            if upscale_enabled:
+                refine_positive = sync_h3_keyframe_conditioning(
+                    refine_positive, vae, width=width, height=height
+                )
             if repin is not None:
                 refine_positive = repin(refine_positive, work)
 
@@ -703,8 +766,11 @@ def apply_global_refine(
             f"Refine Model: {selected_model_name}",
             f"Passes: {pass_count}",
             f"Upscale: {'ON' if upscale_enabled else 'OFF'}",
+            f"Upscale Method: {method}",
             *_deblur_report_lines(deblur_outcome),
         ]
+        if original_mask is not None:
+            status_lines.append("H3 Noise Mask: preserved/remapped")
         for index, (pass_denoise, pass_step_count, pass_seed, elapsed) in enumerate(
             zip(pass_denoises, pass_steps, pass_seeds, pass_timings),
             start=1,

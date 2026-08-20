@@ -1,9 +1,10 @@
 const DEFAULT_CONFIG = Object.freeze({
-    version: 5,
+    version: 9,
     global_refine: {
         enabled: false, mode: "refine", second_sampling_enabled: true, denoise: 0.25, steps: 0,
         seed_mode: "inherit", seed_offset: 1, skip_fl2v: false,
         upscale_method: "lanczos", upscale_model: "",
+        latent_upscale_model: "", latent_upscale_precision: "fp16", latent_upscale_device: "cuda",
         vsr_quality: "high",
         resolution_mode: "follow_director", aspect: "16:9", megapixels: 1,
         width: 1376, height: 768,
@@ -30,7 +31,7 @@ const DEFAULT_CONFIG = Object.freeze({
 });
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
-const inChoice = (value, choices, fallback) => choices.includes(value) ? value : fallback;
+const inChoice = (value, choices, fallback) => choices.includes(String(value || "").toLowerCase()) ? String(value || "").toLowerCase() : fallback;
 
 const POST_TEXT = {
     en: {
@@ -44,6 +45,7 @@ const POST_TEXT = {
         no_face_detector: "No face detector model found. face_yolov8m.pt is recommended.",
         runtime_detected: "Runtime detected (validated when generation starts)",
         missing_no_downgrade: "Not installed (stage will fail without downgrade)",
+        lbh_note: "Director scans compatible MiniMax H3 learned-latent checkpoints from models/latent_upscale_models automatically. Select a checkpoint below; its 2D/3D architecture is detected from the weights. No separate LBH custom node is required.",
     },
     zh: {
         global_title: "全局精修", face_title: "人脸精修", sampling: "二次采样",
@@ -56,6 +58,7 @@ const POST_TEXT = {
         no_face_detector: "未找到人脸检测模型，建议放入 face_yolov8m.pt。",
         runtime_detected: "已检测到运行库（生成时验证）",
         missing_no_downgrade: "未安装（此阶段会失败，不会自动降级）",
+        lbh_note: "Director 会自动扫描 models/latent_upscale_models 中兼容的 MiniMax H3 Learned Latent checkpoint。只需选择模型，2D/3D 架构会直接从权重自动识别；无需另装 LBH 自定义节点。",
     },
 };
 
@@ -67,6 +70,9 @@ const POST_LABELS = {
     "global_refine.skip_fl2v": ["Skip FL2V", "跳过 FL2V"],
     "global_refine.upscale_method": ["Method", "放大方法"],
     "global_refine.upscale_model": ["Model", "模型"],
+    "global_refine.latent_upscale_model": ["H3 Latent Model", "H3 Latent 模型"],
+    "global_refine.latent_upscale_precision": ["Precision", "精度"],
+    "global_refine.latent_upscale_device": ["Device", "设备"],
     "global_refine.vsr_quality": ["VSR Quality", "VSR 质量"],
     "global_refine.resolution_mode": ["Resolution", "分辨率模式"],
     "global_refine.aspect": ["Aspect", "画幅比"],
@@ -79,7 +85,8 @@ const POST_LABELS = {
     "face_refine.canvas_size": ["Canvas Size", "画布尺寸"], "face_refine.smooth_method": ["Smooth", "平滑方法"],
     "face_refine.smooth_window": ["Centre Window", "中心平滑窗口"], "face_refine.size_smooth_window": ["Size Window", "尺寸平滑窗口"],
     "face_refine.size_mode": ["Size Mode", "尺寸模式"], "face_refine.adaptive": ["Adaptive Strength", "自适应强度"],
-    "face_refine.base_denoise": ["Refine Strength", "精修强度"], "face_refine.strength_small_face": ["Small Face", "小脸强度"],
+    "face_refine.base_denoise": ["Refine Strength", "精修强度"],
+    "face_refine.strength_small_face": ["Small Face", "小脸强度"],
     "face_refine.strength_large_face": ["Large Face", "大脸强度"], "face_refine.face_px_small": ["Face px Small", "小脸像素阈值"],
     "face_refine.face_px_large": ["Face px Large", "大脸像素阈值"], "face_refine.mask_mode": ["Mask", "遮罩"],
     "face_refine.paste_region": ["Paste", "回贴区域"], "face_refine.feather": ["Feather (source px)", "羽化（源画面 px）"],
@@ -101,7 +108,10 @@ const POST_OPTION_LABELS = {
     "global_refine.upscale_method": {
         lanczos: ["Lanczos", "Lanczos"], upscale_model: ["Upscale Model", "放大模型"],
         nvidia_rtx_vsr: ["NVIDIA RTX VSR", "NVIDIA RTX VSR"],
+        h3_learned_latent: ["H3 Learned Latent", "H3 Learned Latent"],
     },
+    "global_refine.latent_upscale_precision": { fp16: ["FP16", "FP16"], bf16: ["BF16", "BF16"], fp32: ["FP32", "FP32"] },
+    "global_refine.latent_upscale_device": { cuda: ["CUDA", "CUDA"], cpu: ["CPU", "CPU"] },
     "global_refine.vsr_quality": {
         low: ["Low", "Low"], medium: ["Medium", "Medium"], high: ["High", "High"], ultra: ["Ultra", "Ultra"],
     },
@@ -150,7 +160,11 @@ export function normalizePostprocessConfig(raw) {
     global.seed_offset = Number.isFinite(seedOffset)
         ? Math.max(-2147483648, Math.min(2147483647, Math.trunc(seedOffset)))
         : 1;
-    global.upscale_method = inChoice(global.upscale_method, ["lanczos", "upscale_model", "nvidia_rtx_vsr"], "lanczos");
+    global.upscale_method = inChoice(global.upscale_method, ["lanczos", "upscale_model", "nvidia_rtx_vsr", "h3_learned_latent"], "lanczos");
+    global.latent_upscale_model = String(global.latent_upscale_model || "").trim();
+    delete global.latent_upscale_variant;
+    global.latent_upscale_precision = inChoice(global.latent_upscale_precision, ["fp16", "bf16", "fp32"], "fp16");
+    global.latent_upscale_device = inChoice(global.latent_upscale_device, ["cuda", "cpu"], "cuda");
     global.vsr_quality = inChoice(global.vsr_quality, ["low", "medium", "high", "ultra"], "high");
     global.resolution_mode = inChoice(global.resolution_mode, ["follow_director", "aspect_megapixels", "custom"], "follow_director");
     global.rtx_deblur_enabled = !!global.rtx_deblur_enabled;
@@ -177,7 +191,7 @@ export function normalizePostprocessConfig(raw) {
     result.save.codec = String(result.save.codec || "auto").trim().toLowerCase().slice(0, 64) || "auto";
     result.save.encoding = result.save.encoding === "re-encode" ? "re-encode" : "auto";
     result.save.crf = Math.max(0, Math.min(51, Math.round(Number(result.save.crf) || 23)));
-    result.version = 5;
+    result.version = 9;
     return result;
 }
 
@@ -211,6 +225,7 @@ export function globalRefineVisibility(config) {
         upscaleEnabled,
         seedOffset: global.second_sampling_enabled && global.seed_mode === "offset",
         upscaleModel: upscaleEnabled && global.upscale_method === "upscale_model",
+        learnedLatent: upscaleEnabled && global.upscale_method === "h3_learned_latent",
         vsr: upscaleEnabled && global.upscale_method === "nvidia_rtx_vsr",
         aspectMegapixels: upscaleEnabled && global.resolution_mode === "aspect_megapixels",
         customSize: upscaleEnabled && global.resolution_mode === "custom",
@@ -242,6 +257,8 @@ export function globalRefineSummary(config, width = 864, height = 480, locale = 
         if (global.upscale_method === "nvidia_rtx_vsr") {
             const quality = String(global.vsr_quality || "high");
             method = `RTX VSR ${quality.charAt(0).toUpperCase()}${quality.slice(1)}`;
+        } else if (global.upscale_method === "h3_learned_latent") {
+            method = "H3 Learned Latent";
         }
         parts.push(`${method} → ${targetW}×${targetH}`);
     }
@@ -358,8 +375,12 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
           <div class="mmx-post-section-head"><h4 data-post-text="upscale">Upscale</h4><label class="mmx-post-subenable"><input type="checkbox" data-upscale-enabled> <span data-post-text="enabled">ON / OFF</span></label></div>
           <div class="mmx-post-section-body" data-upscale-body>
             <div class="mmx-post-grid">
-              ${field("Method", "global_refine.upscale_method", "select", options([["lanczos","Lanczos"],["upscale_model","Upscale Model"],["nvidia_rtx_vsr","NVIDIA RTX VSR"]]))}
+              ${field("Method", "global_refine.upscale_method", "select", options([["lanczos","Lanczos"],["upscale_model","Upscale Model"],["nvidia_rtx_vsr","NVIDIA RTX VSR"],["h3_learned_latent","H3 Learned Latent"]]))}
               ${conditional("upscale_model", field("Model", "global_refine.upscale_model", "select", '<option value="">—</option>'))}
+              ${conditional("learned_latent", field("H3 Latent Model", "global_refine.latent_upscale_model", "select", '<option value="">—</option>'))}
+              ${conditional("learned_latent", field("Precision", "global_refine.latent_upscale_precision", "select", options([["fp16","FP16"],["bf16","BF16"],["fp32","FP32"]])))}
+              ${conditional("learned_latent", field("Device", "global_refine.latent_upscale_device", "select", options([["cuda","CUDA"],["cpu","CPU"]])))}
+              <p class="mmx-post-note mmx-post-wide" data-conditional="learned_latent" data-post-text="lbh_note"></p>
               ${conditional("vsr_quality", field("VSR Quality", "global_refine.vsr_quality", "select", options([["low","Low"],["medium","Medium"],["high","High"],["ultra","Ultra"]])))}
               <div class="mmx-post-capability mmx-post-wide" data-conditional="vsr_status" data-capability="nvidia_rtx_vsr"></div>
             </div>
@@ -491,6 +512,7 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
         root.querySelector("[data-upscale-body]").hidden = !visible.upscaleEnabled;
         setConditional("seed_offset", !visible.seedOffset);
         setConditional("upscale_model", !visible.upscaleModel);
+        setConditional("learned_latent", !visible.learnedLatent);
         setConditional("vsr_quality", !visible.vsr);
         setConditional("vsr_status", !visible.vsr);
         setConditional("aspect", !visible.aspectMegapixels);
@@ -524,9 +546,15 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
             select.value = current;
         };
         fill("global_refine.upscale_model", caps.upscale_models);
+        fill("global_refine.latent_upscale_model", caps.latent_upscale_models);
         fill("face_refine.detector_model", caps.face_detectors);
         fill("face_refine.fallback_detector", ["none", ...(caps.face_detectors || [])]);
         fill("face_refine.sam_model", caps.sam_models);
+        const h3LatentModels = caps.latent_upscale_models || [];
+        const currentGlobal = store.get().global_refine;
+        if (!currentGlobal.latent_upscale_model && h3LatentModels.length === 1) {
+            store.patch("global_refine", "latent_upscale_model", h3LatentModels[0]);
+        }
         const detectors=caps.face_detectors||[];
         const currentFace=store.get().face_refine;
         if(!currentFace.detector_model&&detectors.length){

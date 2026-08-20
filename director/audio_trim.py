@@ -7,6 +7,8 @@ from typing import Any
 
 import torch
 
+from .segment_boundary import slice_visible_frames
+
 log = logging.getLogger("ComfyUI-MiniMax-H3-Motion-Director.audio_trim")
 
 
@@ -34,28 +36,18 @@ def trim_segment_av(
 ) -> tuple[torch.Tensor, dict[str, Any] | None]:
     """Remove the context head and crop both streams to one exact duration.
 
-    H3's audio latent is 40 Hz and commonly decodes a few milliseconds past
-    the picture. Integer sample boundaries are computed from the absolute
-    frame boundaries, so rounding never accumulates across a segment chain.
+    The authoritative visible slice is resolved by ``segment_boundary`` so H3
+    alignment surplus is always discarded and Motion Context prefix frames can
+    never enter the exported segment. H3's audio latent is 40 Hz and commonly
+    decodes a few milliseconds past the picture. Integer sample boundaries are
+    computed from the exact exported frame duration so rounding never
+    accumulates across a segment chain.
     """
-    if not isinstance(images, torch.Tensor) or images.ndim != 4:
-        raise ValueError("Motion Director: decoded video is not a valid IMAGE batch.")
-    head = max(0, int(head_frames))
-    target = max(1, int(target_frames))
-    total = int(images.shape[0])
-    required = head + target
-    if total < required:
-        raise ValueError(
-            "Motion Director: H3 decoded %d frames, but %d are required "
-            "(%d Motion Context head + %d requested output)."
-            % (total, required, head, target)
-        )
-    out_images = images[head:required]
-    if int(out_images.shape[0]) != target:
-        raise RuntimeError(
-            "Motion Director: exact-duration trim failed (%d != %d frames)."
-            % (int(out_images.shape[0]), target)
-        )
+    out_images, boundary = slice_visible_frames(
+        images,
+        context_frames=head_frames,
+        target_frames=target_frames,
+    )
 
     if not audio_has_samples(audio):
         return out_images, audio
@@ -66,17 +58,17 @@ def trim_segment_av(
             "Motion Director: decoded AUDIO waveform must be [batch, channels, samples]."
         )
     sr = int(audio.get("sample_rate") or 0)
-    start = samples_for_frames(head, fps, sr)
+    start = samples_for_frames(boundary.start, fps, sr)
     # Compute the exported duration directly, rather than subtracting two
     # independently rounded absolute boundaries (which can differ by one
     # sample and then accumulate across a long segment chain).
-    wanted = samples_for_frames(target, fps, sr)
+    wanted = samples_for_frames(boundary.target_frames, fps, sr)
     stop = start + wanted
     have = int(waveform.shape[-1])
     if start >= have:
         raise ValueError(
             "Motion Director: audio is too short to remove the %.3fs context head."
-            % (head / float(fps))
+            % (boundary.context_frames / float(fps))
         )
     out_wave = waveform[..., start:min(stop, have)]
     missing = wanted - int(out_wave.shape[-1])
@@ -88,7 +80,7 @@ def trim_segment_av(
                 "Motion Director: decoded audio is %.2fms too short for %d frames. "
                 "Refusing to create a long silent tail that would corrupt the "
                 "next segment's Motion Audio Context."
-                % (missing / sr * 1000.0, target)
+                % (missing / sr * 1000.0, boundary.target_frames)
             )
         pad = torch.zeros(
             *out_wave.shape[:-1],
