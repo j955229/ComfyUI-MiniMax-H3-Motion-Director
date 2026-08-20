@@ -72,6 +72,7 @@ from .motion_context import (
 )
 from .latent_context_cache import (
     LATENT_HANDOFF_PIPELINE,
+    latent_context_canvas,
     load_latent_context_cache,
     prepare_latent_context_tail,
     save_latent_context_cache,
@@ -259,7 +260,6 @@ def _build_minimax_inputs(
             ref_images[f"ref_image_{idx}"] = tensor[:1] if tensor.ndim == 4 else tensor
         if not ref_images:
             ref_images = None
-        # Prefer multi-slot ref_videos (r2v batch cards); fall back to legacy single meta.
         ref_videos = ref_videos_to_dict(getattr(seg, "ref_videos", None) or [])
         if not ref_videos:
             nframes = max(5, int(getattr(seg, "frame_count", 0) or plan.total_frames or 124))
@@ -269,8 +269,6 @@ def _build_minimax_inputs(
         ref_audios = ref_audios_to_dict(getattr(seg, "ref_audios", None) or [])
         ref_video_audios = _ref_video_audios_to_dict(getattr(seg, "ref_video_audios", None) or [])
     elif task_key in {"v2v", "rv2v"}:
-        # MiniMax H3 video edit: each timeline segment's source clip → <Video 1>.
-        # rv2v additionally injects 图片1–9 / 音频1–3 as <Picture N> / <Audio J>.
         if clip_frames is None or clip_frames.shape[0] <= 0:
             raise ValueError(
                 f"{task_key} segment #{seg.index + 1} has no source frames. "
@@ -292,8 +290,6 @@ def _build_minimax_inputs(
             )
         ref_videos = {"ref_video_0": reference_clip_frames}
         if task_key == "rv2v":
-            # Refs are optional per segment: with refs → <Video 1>+<Picture N>;
-            # without refs → same as v2v (source edit only).
             ref_kwargs = refs_to_kwargs_for_context(task_key, seg.refs)
             ref_images = {}
             for key, tensor in ref_kwargs.items():
@@ -349,7 +345,6 @@ def execute_director_plan_core(
     clear_vram_between_segments: bool = True,
     postprocess_config: str | dict[str, Any] = "",
 ) -> tuple[torch.Tensor, list[torch.Tensor], list[dict[str, Any]], str]:
-    """Process every segment with MiniMax H3 conditioning + single-stage sampling."""
     core_started = time.perf_counter()
     legacy_preview = (plan.raw or {}).get(
         "liveTaePreview", (plan.raw or {}).get("live_tae_preview", True)
@@ -367,37 +362,29 @@ def execute_director_plan_core(
     sampling_mode = resolve_sampling_mode(external_sampler, external_sigmas)
     external_steps = None
     if sampling_mode == "external":
-        _, external_steps = validate_external_sampling(
-            model, external_sampler, external_sigmas
-        )
+        _, external_steps = validate_external_sampling(model, external_sampler, external_sigmas)
     motion_enabled = bool(motion_context_enabled)
     requested_context = max(1, int(context_length))
     requested_source_bridge = validate_source_bridge_frames(source_overlap_frames)
-    # Keep the old backend/schema field name for workflow compatibility.
     plan.source_overlap_frames = requested_source_bridge
     plan.color_reanchor_enabled = bool(color_reanchor_enabled)
     color_reanchor_requested = bool(color_reanchor_enabled)
     audio_context_requested = bool(audio_context_enabled)
-    audio_context_master_active = bool(
-        audio_context_requested and audio_mode == AUDIO_MODE_GENERATE
-    )
+    audio_context_master_active = bool(audio_context_requested and audio_mode == AUDIO_MODE_GENERATE)
     audio_context_active = bool(motion_enabled and audio_context_master_active)
     bridge_feature_active = any(
         source_bridge_boundary_enabled(left, right, requested_source_bridge)
         for left, right in zip(plan.segments, plan.segments[1:])
     )
     has_explicit_context_links = any(
-        int(getattr(seg, "timeline_index", seg.index)) > 0
-        and getattr(seg, "context_link", None) is not None
+        int(getattr(seg, "timeline_index", seg.index)) > 0 and getattr(seg, "context_link", None) is not None
         for seg in plan.segments
     )
     explicit_audio_active = any(
         bool(getattr(seg, "context_link", None) and seg.context_link.audio_enabled)
         for seg in plan.segments
     )
-    context_pipeline_active = bool(
-        motion_enabled or (audio_context_master_active and explicit_audio_active)
-    )
+    context_pipeline_active = bool(motion_enabled or (audio_context_master_active and explicit_audio_active))
     plan_spatial_stride = max(
         resolve_h3_spatial_stride(
             seg.task_key,
@@ -409,11 +396,7 @@ def execute_director_plan_core(
         for seg in plan.segments
     )
     plan.spatial_stride = int(plan_spatial_stride)
-    plan.width, plan.height = resolve_h3_canvas(
-        plan.width,
-        plan.height,
-        stride=plan_spatial_stride,
-    )
+    plan.width, plan.height = resolve_h3_canvas(plan.width, plan.height, stride=plan_spatial_stride)
     if (context_pipeline_active or bridge_feature_active) and len(plan.segments) > 1:
         patch_ready, patch_reason = motion_context_patch_status()
         if not patch_ready:
@@ -439,65 +422,41 @@ def execute_director_plan_core(
     }
     cache_settings.update(color_reanchor_cache_settings(color_reanchor_requested))
     cache_settings.update(postprocess_cache_fingerprint(postprocess))
-    cache_settings.update(
-        {
-            "spatial_stride": int(plan_spatial_stride),
-            "spatial_pipeline": H3_SPATIAL_PIPELINE,
-        }
-    )
+    cache_settings.update({"spatial_stride": int(plan_spatial_stride), "spatial_pipeline": H3_SPATIAL_PIPELINE})
     if any(seg.task_key in {"v2v", "rv2v"} for seg in plan.segments):
         cache_settings["reference_video_pipeline"] = H3_REFERENCE_VIDEO_PIPELINE
         cache_settings["source_bridge_pipeline"] = H3_SOURCE_BRIDGE_PIPELINE
         cache_settings["source_overlap_frames"] = requested_source_bridge
     if sampling_mode == "internal":
-        cache_settings.update(
-            {
-                "steps": int(steps),
-                "sampler": str(sampler),
-                "scheduler": str(scheduler),
-                "shift_video": float(shift_video),
-                "shift_audio": float(shift_audio),
-            }
-        )
+        cache_settings.update({
+            "steps": int(steps), "sampler": str(sampler), "scheduler": str(scheduler),
+            "shift_video": float(shift_video), "shift_audio": float(shift_audio),
+        })
     else:
         model_sampling = model.get_model_object("model_sampling")
-        cache_settings.update(
-            {
-                "external_sampler": describe_external_sampler(external_sampler),
-                "external_sigmas": tensor_fingerprint(external_sigmas),
-                "external_steps": int(external_steps),
-                "model_shift_video": float(getattr(model_sampling, "shift", 0.0)),
-                "model_shift_audio": float(getattr(model_sampling, "audio_shift", 0.0)),
-            }
-        )
+        cache_settings.update({
+            "external_sampler": describe_external_sampler(external_sampler),
+            "external_sigmas": tensor_fingerprint(external_sigmas),
+            "external_steps": int(external_steps),
+            "model_shift_video": float(getattr(model_sampling, "shift", 0.0)),
+            "model_shift_audio": float(getattr(model_sampling, "audio_shift", 0.0)),
+        })
     plan.cache_settings = cache_settings
     live_tae_preview = bool(preview_config["enabled"])
 
     all_segments = plan.segments
     source_bridge_pairs = [
-        (left, right)
-        for left, right in zip(all_segments, all_segments[1:])
+        (left, right) for left, right in zip(all_segments, all_segments[1:])
         if source_bridge_boundary_enabled(left, right, requested_source_bridge)
     ]
-    source_bridge_consumer_slots = {
-        int(right.timeline_index) for _left, right in source_bridge_pairs
-    }
-    source_bridge_segment_indices = {
-        int(seg.index) for pair in source_bridge_pairs for seg in pair
-    }
-    persist_segment_cache = should_persist_segment_cache(
-        plan,
-        source_bridge_active=bool(source_bridge_pairs),
-    )
-    # Strictly honor「选择运行」— never force-sample unselected segments.
+    source_bridge_consumer_slots = {int(right.timeline_index) for _left, right in source_bridge_pairs}
+    source_bridge_segment_indices = {int(seg.index) for pair in source_bridge_pairs for seg in pair}
+    persist_segment_cache = should_persist_segment_cache(plan, source_bridge_active=bool(source_bridge_pairs))
     run_indices = plan.run_indices if plan.run_indices is not None else frozenset(range(len(all_segments)))
-
     run_list = sorted(run_indices)
     seg_total = len(run_list)
     progress_pos = {idx: pos for pos, idx in enumerate(run_list)}
     passthrough_indices: list[int] = []
-    # External groups may compact selected packs to 0..N-1 while UI still shows
-    # the full group list — prefer original timeline card count for progress UI.
     ext_meta = (plan.raw or {}).get("externalGroups") or {}
     try:
         timeline_seg_total = int(ext_meta.get("count") or 0) or len(all_segments)
@@ -514,7 +473,7 @@ def execute_director_plan_core(
         "Previous Context links: per-boundary Visual/Audio policy "
         f"({'explicit' if has_explicit_context_links else 'legacy fallback'})"
     )
-    reports.append(f"Motion Context handoff: {LATENT_HANDOFF_PIPELINE} (latent-first)")
+    reports.append(f"Motion Context handoff: {LATENT_HANDOFF_PIPELINE} (canvas-aware latent-first)")
     reports.append(f"Context frames: {requested_context}")
     reports.append(f"Source Bridge frames: {requested_source_bridge} (V2V/RV2V only)")
     reports.append(
@@ -539,9 +498,7 @@ def execute_director_plan_core(
         reports.append(f"Sampler source: internal {sampler}")
         reports.append(f"Sigma source: internal {scheduler} / {int(steps)} steps")
     else:
-        reports.append(
-            f"Sampler source: external SAMPLER ({describe_external_sampler(external_sampler)})"
-        )
+        reports.append(f"Sampler source: external SAMPLER ({describe_external_sampler(external_sampler)})")
         reports.append(f"Sigma source: external SIGMAS / {int(external_steps)} steps")
     if context_pipeline_active:
         reports.append(
@@ -557,9 +514,7 @@ def execute_director_plan_core(
     else:
         reports.append("Audio: generate — decode MiniMax H3 AV latent audio.")
     if motion_enabled and audio_context_requested and not audio_context_active:
-        reports.append(
-            f"Audio context override: disabled because output audio mode is {audio_mode}."
-        )
+        reports.append(f"Audio context override: disabled because output audio mode is {audio_mode}.")
     selected_ui = ext_meta.get("selected")
     if selected_ui is not None:
         selected_set = {int(x) for x in selected_ui}
@@ -578,21 +533,17 @@ def execute_director_plan_core(
 
     if context_pipeline_active:
         if plan.continuity_enabled:
-            reports.append(
-                "Legacy continuity: ignored while Motion Context is ON "
-                "(no double first-frame handoff)."
-            )
+            reports.append("Legacy continuity: ignored while Motion Context is ON (no double first-frame handoff).")
         else:
             reports.append("Legacy continuity: OFF; Motion Context owns segment handoff.")
     elif plan.continuity_enabled:
-        reports.append(
-            "Segment continuity: ON — last-frame → next first_frame handoff (no SCAIL / Wan latent lock)."
-        )
+        reports.append("Segment continuity: ON — last-frame → next first_frame handoff (no SCAIL / Wan latent lock).")
     else:
         reports.append("Segment continuity: OFF — per-segment generation only.")
 
     completed_outputs: dict[int, torch.Tensor] = {}
     completed_contexts: dict[int, CachedMotionContext] = {}
+    completed_refine_contexts: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
     execution_report = DirectorExecutionReport()
     generated_indices: set[int] = set()
     cache_hit_indices: set[int] = set()
@@ -606,9 +557,7 @@ def execute_director_plan_core(
     global_refine_outcomes: dict[int, Any] = {}
     segment_stage_timings: dict[int, dict[str, float]] = {}
 
-    def _run_one_segment(
-        seg, *, progress_index: int
-    ) -> tuple[torch.Tensor, dict[str, Any] | None]:
+    def _run_one_segment(seg, *, progress_index: int) -> tuple[torch.Tensor, dict[str, Any] | None]:
         if seg.task_key not in SUPPORTED_TASK_KEYS:
             raise ValueError(
                 f"Task '{seg.task_key}' is not supported on MiniMax H3 Motion Director. "
@@ -617,17 +566,13 @@ def execute_director_plan_core(
 
         ui_idx = seg.timeline_index
         meta = {
-            "frames_label": frames_label(seg),
-            "task_key": seg.task_key,
-            "timeline_segment_index": ui_idx,
-            "timeline_segment_total": timeline_seg_total,
+            "frames_label": frames_label(seg), "task_key": seg.task_key,
+            "timeline_segment_index": ui_idx, "timeline_segment_total": timeline_seg_total,
         }
-
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
             phase="prepare", phase_value=0, phase_max=1, **meta,
         )
-
         target_len = max(1, int(seg.frame_count or plan.total_frames or 124))
         timeline_slot = int(seg.timeline_index)
         stage_times = segment_stage_timings.setdefault(timeline_slot, {})
@@ -655,84 +600,55 @@ def execute_director_plan_core(
             "legacy": not context_link.explicit,
         }
         if not context_link.explicit:
-            warning_messages.append(
-                f"S{timeline_slot + 1}: legacy workflow fallback is being used"
-            )
+            warning_messages.append(f"S{timeline_slot + 1}: legacy workflow fallback is being used")
         if context_link.requested_audio and not apply_audio_context:
-            warning_messages.append(
-                f"S{timeline_slot + 1}: Audio inherit requested but "
-                f"{context_link.audio_reason}"
-            )
+            warning_messages.append(f"S{timeline_slot + 1}: Audio inherit requested but {context_link.audio_reason}")
         if context_link.requested_visual and not apply_visual_context:
             warning_messages.append(
-                f"S{timeline_slot + 1}: Visual inherit disabled because "
-                f"{context_link.visual_reason}"
+                f"S{timeline_slot + 1}: Visual inherit disabled because {context_link.visual_reason}"
             )
         reports.append(
             f"Segment {timeline_slot + 1}: Previous Context — "
-            f"Visual {'ON' if apply_visual_context else 'OFF'} "
-            f"({context_link.visual_reason}); "
-            f"Audio {'ON' if apply_audio_context else 'OFF'} "
-            f"({context_link.audio_reason})."
+            f"Visual {'ON' if apply_visual_context else 'OFF'} ({context_link.visual_reason}); "
+            f"Audio {'ON' if apply_audio_context else 'OFF'} ({context_link.audio_reason})."
         )
         explicit_i2v_reset = bool(
-            seg.task_key == "i2v"
-            and timeline_slot > 0
-            and seg.source_clip is not None
-            and not apply_visual_context
+            seg.task_key == "i2v" and timeline_slot > 0 and seg.source_clip is not None and not apply_visual_context
         )
         i2v_continuation = bool(
-            seg.task_key == "i2v"
-            and timeline_slot > 0
-            and seg.source_clip is None
-            and apply_visual_context
+            seg.task_key == "i2v" and timeline_slot > 0 and seg.source_clip is None and apply_visual_context
         )
-
         if context_pipeline_active and seg.task_key == "i2v":
             if explicit_i2v_reset:
                 reports.append(
-                    f"Segment {timeline_slot + 1}: explicit I2V image resets incoming "
-                    "visual context. Audio follows this boundary's independent setting."
+                    f"Segment {timeline_slot + 1}: explicit I2V image resets incoming visual context. "
+                    "Audio follows this boundary's independent setting."
                 )
             elif i2v_continuation:
-                reports.append(
-                    f"Segment {timeline_slot + 1}: I2V continuation via Motion Context."
-                )
+                reports.append(f"Segment {timeline_slot + 1}: I2V continuation via Motion Context.")
             else:
-                reports.append(
-                    f"Segment {timeline_slot + 1}: I2V explicit source image."
-                )
+                reports.append(f"Segment {timeline_slot + 1}: I2V explicit source image.")
         elif context_pipeline_active and seg.task_key == "r2v":
             reports.append(
                 f"Segment {timeline_slot + 1}: effective Reference Set = "
-                f"{len(seg.refs or [])} Picture, "
-                f"{len(getattr(seg, 'ref_videos', None) or [])} Video, "
+                f"{len(seg.refs or [])} Picture, {len(getattr(seg, 'ref_videos', None) or [])} Video, "
                 f"{len(seg.ref_audios or [])} standalone Audio."
             )
 
         if i2v_continuation:
-            # A continuation has no new raw source by design. Do not ask the
-            # generation timeline for video frames: its source_video is only a
-            # per-segment indexing placeholder, not a timeline frame buffer.
             raw_clip = torch.zeros((0, 16, 16, 3), dtype=torch.float32)
         else:
             raw_clip = resolve_segment_raw_clip(plan, seg)
-
         if seg.source_clip is not None:
             body_raw = seg.source_clip
             target_len = max(target_len, int(body_raw.shape[0]))
         else:
             body_raw = raw_clip[:target_len] if int(raw_clip.shape[0]) > target_len else raw_clip
-
         if body_raw is not None and body_raw.shape[0] > 0:
             if plan.output_mode == "fixed":
                 visible_clip_frames = fit_canvas(body_raw, plan.width, plan.height)
             else:
-                visible_clip_frames = fit_video_long_edge(
-                    body_raw,
-                    plan.ref_max_size,
-                    stride=plan_spatial_stride,
-                )
+                visible_clip_frames = fit_video_long_edge(body_raw, plan.ref_max_size, stride=plan_spatial_stride)
         else:
             visible_clip_frames = None
 
@@ -740,48 +656,30 @@ def execute_director_plan_core(
         if seg.task_key in {"v2v", "rv2v"}:
             reference_base_frames = target_len
             reference_target_frames = minimax_align_frame_count(reference_base_frames)
-            requested_lookahead = max(
-                0, reference_target_frames - reference_base_frames
-            )
+            requested_lookahead = max(0, reference_target_frames - reference_base_frames)
             if requested_lookahead > 0:
-                reference_raw = resolve_segment_raw_clip_with_lookahead(
-                    plan,
-                    seg,
-                    end_extra=requested_lookahead,
-                )
+                reference_raw = resolve_segment_raw_clip_with_lookahead(plan, seg, end_extra=requested_lookahead)
             else:
                 reference_raw = body_raw.clone()
-
             reference_raw_count = int(reference_raw.shape[0])
             visible_source_count = int(body_raw.shape[0])
-            prepared_reference_raw, reference_tail_pad = (
-                prepare_h3_reference_video_clip(
-                    reference_raw,
-                    reference_target_frames,
-                )
+            prepared_reference_raw, reference_tail_pad = prepare_h3_reference_video_clip(
+                reference_raw, reference_target_frames
             )
             reference_lookahead = max(
                 0,
-                min(reference_raw_count, reference_target_frames)
-                - min(reference_base_frames, reference_raw_count),
+                min(reference_raw_count, reference_target_frames) - min(reference_base_frames, reference_raw_count),
             )
             if plan.output_mode == "fixed":
-                reference_clip_frames = fit_canvas(
-                    prepared_reference_raw,
-                    plan.width,
-                    plan.height,
-                )
+                reference_clip_frames = fit_canvas(prepared_reference_raw, plan.width, plan.height)
             else:
                 reference_clip_frames = fit_video_long_edge(
-                    prepared_reference_raw,
-                    plan.ref_max_size,
-                    stride=plan_spatial_stride,
+                    prepared_reference_raw, plan.ref_max_size, stride=plan_spatial_stride
                 )
             reports.append(
                 f"Segment {timeline_slot + 1} {seg.task_key.upper()}:\n"
                 f"visible source = {visible_source_count} frames\n"
-                f"<Video 1> H3 reference = "
-                f"{int(reference_clip_frames.shape[0])} frames\n"
+                f"<Video 1> H3 reference = {int(reference_clip_frames.shape[0])} frames\n"
                 f"reference lookahead = {reference_lookahead} frames\n"
                 f"reference tail pad = {reference_tail_pad} frames\n"
                 f"visual motion context = "
@@ -798,154 +696,107 @@ def execute_director_plan_core(
             context_entry = completed_contexts.get(previous_index)
             if context_entry is None:
                 previous_seg = next(
-                    (
-                        candidate
-                        for candidate in all_segments
-                        if int(candidate.timeline_index) == previous_index
-                    ),
+                    (candidate for candidate in all_segments if int(candidate.timeline_index) == previous_index),
                     None,
                 )
                 if previous_seg is None:
                     raise ValueError(
-                        "Segment %d requires Segment %d for Motion Context, but "
-                        "the previous segment is absent from this compact execution "
-                        "plan. Run the complete sequence once to create a validated "
-                        "context cache."
+                        "Segment %d requires Segment %d for Motion Context, but the previous segment is absent "
+                        "from this compact execution plan. Run the complete sequence once to create a validated context cache."
                         % (timeline_slot + 1, previous_index + 1)
                     )
                 pixel_context = load_motion_context_cache(
-                    node_id,
-                    previous_seg,
-                    plan,
-                    settings=cache_settings,
-                    strict=False,
+                    node_id, previous_seg, plan, settings=cache_settings, strict=False,
                 )
                 latent_context = load_latent_context_cache(
-                    node_id,
-                    previous_seg,
-                    plan,
-                    settings=cache_settings,
+                    node_id, previous_seg, plan, settings=cache_settings,
                 )
-                if pixel_context is None and latent_context is None:
-                    # Re-run strict once to preserve the cache layer's precise
-                    # missing-vs-stale diagnostic instead of silently falling back.
+                refine_latent_context = load_latent_context_cache(
+                    node_id, previous_seg, plan, settings=cache_settings, variant="refine",
+                )
+                if refine_latent_context is not None:
+                    completed_refine_contexts[previous_index] = (
+                        refine_latent_context.latent, refine_latent_context.handoff
+                    )
+                if pixel_context is None and latent_context is None and refine_latent_context is None:
                     load_motion_context_cache(
-                        node_id,
-                        previous_seg,
-                        plan,
-                        settings=cache_settings,
-                        strict=True,
+                        node_id, previous_seg, plan, settings=cache_settings, strict=True,
                     )
                     raise ValueError("Previous Context cache is unavailable.")
+                fallback_latent = latent_context or refine_latent_context
                 context_entry = CachedMotionContext(
                     frames=pixel_context.frames if pixel_context is not None else None,
                     audio=pixel_context.audio if pixel_context is not None else None,
-                    metadata=(
-                        pixel_context.metadata
-                        if pixel_context is not None
-                        else latent_context.metadata
-                    ),
+                    metadata=(pixel_context.metadata if pixel_context is not None else fallback_latent.metadata),
                     latent=latent_context.latent if latent_context is not None else None,
-                    handoff=latent_context.handoff if latent_context is not None else None,
+                    handoff=fallback_latent.handoff if fallback_latent is not None else None,
                 )
                 context_loaded_from_cache = True
                 context_cache_hits.add(previous_index)
             available_context_frames = int(
                 (context_entry.handoff or {}).get("export_frames")
-                or (
-                    context_entry.frames.shape[0]
-                    if isinstance(context_entry.frames, torch.Tensor)
-                    else 0
-                )
+                or (context_entry.frames.shape[0] if isinstance(context_entry.frames, torch.Tensor) else 0)
             )
-            context_span = select_context_span(
-                requested_context, available_context_frames
-            )
+            context_span = select_context_span(requested_context, available_context_frames)
             if context_span != requested_context:
                 reports.append(
-                    f"Segment {timeline_slot + 1}: requested {requested_context} "
-                    f"context frames, using H3-valid exported tail {context_span}."
+                    f"Segment {timeline_slot + 1}: requested {requested_context} context frames, "
+                    f"using H3-valid exported tail {context_span}."
                 )
-            shortfall = context_shortfall_warning(
-                timeline_slot, requested_context, context_span
-            )
+            shortfall = context_shortfall_warning(timeline_slot, requested_context, context_span)
             if shortfall:
                 warning_messages.append(shortfall)
             if color_reanchor_requested and apply_visual_context:
-                color_anchor = validate_color_anchor_statistics(
-                    (context_entry.handoff or {}).get("color_anchor_stats")
-                )
+                color_anchor = validate_color_anchor_statistics((context_entry.handoff or {}).get("color_anchor_stats"))
                 if color_anchor is None:
                     raise ValueError(
-                        f"Segment {timeline_slot + 1}: Color Re-anchor requires a valid "
-                        "visual-chain baseline cache. Run the chain root or full sequence "
-                        "once to rebuild the v6 context cache."
+                        f"Segment {timeline_slot + 1}: Color Re-anchor requires a valid visual-chain baseline cache. "
+                        "Run the chain root or full sequence once to rebuild the v6 context cache."
                     )
+
         generation_request = target_len + context_span
         num_frames = minimax_align_frame_count(generation_request)
         if visible_clip_frames is not None:
-            # Motion over-generation belongs to the target timeline, not to a
-            # user's source/reference video. Keep reference preparation at the
-            # requested segment duration.
             visible_clip_frames, _ = prepare_segment_clip(
                 visible_clip_frames, minimax_align_frame_count(target_len)
             )
-
         prev_tail = None
         if not context_pipeline_active and is_continuity_active(plan, seg):
-            prev_tail = resolve_prev_segment_output(
-                plan, all_segments, seg.index, completed_outputs, node_id
-            )
-
+            prev_tail = resolve_prev_segment_output(plan, all_segments, seg.index, completed_outputs, node_id)
         ctx_w = plan.width
         ctx_h = plan.height
         if visible_clip_frames is not None and visible_clip_frames.shape[0] > 0:
             ctx_h = int(visible_clip_frames.shape[1])
             ctx_w = int(visible_clip_frames.shape[2])
-
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
             phase="prepare", phase_value=1, phase_max=1, **meta,
         )
 
         positive_prompt = seg.prompt
-
         if seg.task_key == "fl2v":
             from .fl2v_timeline import reinforce_fl2v_prompt
-
             has_start = any(getattr(r, "index", None) == 0 for r in (seg.refs or []))
             has_end = any(getattr(r, "index", None) == 1 for r in (seg.refs or []))
             if not has_start and not has_end and seg.refs:
-                # Legacy packs without explicit indices: [start] or [start, end].
                 has_start = True
                 has_end = len(seg.refs) >= 2
             positive_prompt = reinforce_fl2v_prompt(
-                positive_prompt,
-                has_end_frame=has_end,
-                has_start_frame=has_start,
+                positive_prompt, has_end_frame=has_end, has_start_frame=has_start
             )
         elif seg.task_key == "r2v":
             ref_idxs = [int(getattr(r, "index", 0)) for r in (seg.refs or []) if r is not None]
             vid_idxs = [int(getattr(v, "index", 0)) for v in (getattr(seg, "ref_videos", None) or []) if v is not None]
             semantic_audio_tags = [
-                value
-                for (kind, _asset_id), value in (getattr(seg, "reference_tags", None) or {}).items()
+                value for (kind, _asset_id), value in (getattr(seg, "reference_tags", None) or {}).items()
                 if kind == "audio"
             ]
             audio_idxs = [
                 int(tag.removeprefix("<Audio ").removesuffix(">")) - 1
-                for tag in semantic_audio_tags
-                if tag.startswith("<Audio ") and tag.endswith(">")
-            ] or [
-                int(getattr(a, "index", 0))
-                for a in (seg.ref_audios or [])
-                if a is not None
-            ]
+                for tag in semantic_audio_tags if tag.startswith("<Audio ") and tag.endswith(">")
+            ] or [int(getattr(a, "index", 0)) for a in (seg.ref_audios or []) if a is not None]
             positive_prompt = reinforce_r2v_prompt(
-                positive_prompt,
-                ref_indices=ref_idxs,
-                video_indices=vid_idxs,
-                audio_indices=audio_idxs,
+                positive_prompt, ref_indices=ref_idxs, video_indices=vid_idxs, audio_indices=audio_idxs
             )
         elif seg.task_key == "v2v":
             positive_prompt = reinforce_v2v_prompt(positive_prompt)
@@ -953,58 +804,33 @@ def execute_director_plan_core(
             ref_idxs = [int(getattr(r, "index", 0)) for r in (seg.refs or []) if r is not None]
             audio_idxs = [int(getattr(a, "index", 0)) for a in (seg.ref_audios or []) if a is not None]
             positive_prompt = reinforce_rv2v_prompt(
-                positive_prompt, ref_indices=ref_idxs, audio_indices=audio_idxs,
+                positive_prompt, ref_indices=ref_idxs, audio_indices=audio_idxs
             )
 
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
             phase="context_encode", phase_value=0, phase_max=1, **meta,
         )
-
         first_frame, last_frame, ref_images, ref_videos, ref_audios, ref_video_audios = _build_minimax_inputs(
-            plan,
-            seg,
-            clip_frames=visible_clip_frames,
-            reference_clip_frames=reference_clip_frames,
-            ctx_w=ctx_w,
-            ctx_h=ctx_h,
-            prev_tail=prev_tail,
+            plan, seg, clip_frames=visible_clip_frames, reference_clip_frames=reference_clip_frames,
+            ctx_w=ctx_w, ctx_h=ctx_h, prev_tail=prev_tail,
         )
-
         if ref_videos:
-            ref_videos = {
-                name: fit_canvas(frames, ctx_w, ctx_h)
-                for name, frames in ref_videos.items()
-            }
-
+            ref_videos = {name: fit_canvas(frames, ctx_w, ctx_h) for name, frames in ref_videos.items()}
         reference_diagnostics[timeline_slot] = format_effective_references(
-            timeline_slot,
-            ref_images=ref_images,
-            ref_videos=ref_videos,
-            ref_audios=ref_audios,
-            ref_video_audios=ref_video_audios,
+            timeline_slot, ref_images=ref_images, ref_videos=ref_videos,
+            ref_audios=ref_audios, ref_video_audios=ref_video_audios,
         )
-
         if seg.task_key in {"r2v", "v2v", "rv2v"} and (
             ref_images or ref_videos or ref_audios or ref_video_audios
         ) and audio_vae is None:
             raise ValueError("r2v/v2v/rv2v / reference conditioning requires audio_vae input.")
 
         positive, negative, latent, task_hint = run_minimax_conditioning(
-            clip=clip,
-            vae=vae,
-            audio_vae=audio_vae,
-            prompt=positive_prompt,
-            width=ctx_w,
-            height=ctx_h,
-            length=num_frames,
-            task_key=seg.task_key,
-            first_frame=first_frame,
-            last_frame=last_frame,
-            ref_images=ref_images,
-            ref_videos=ref_videos,
-            ref_video_audios=ref_video_audios,
-            ref_audios=ref_audios,
+            clip=clip, vae=vae, audio_vae=audio_vae, prompt=positive_prompt,
+            width=ctx_w, height=ctx_h, length=num_frames, task_key=seg.task_key,
+            first_frame=first_frame, last_frame=last_frame, ref_images=ref_images,
+            ref_videos=ref_videos, ref_video_audios=ref_video_audios, ref_audios=ref_audios,
         )
 
         motion_info = None
@@ -1017,9 +843,7 @@ def execute_director_plan_core(
                 context_frames=context_entry.frames,
                 context_audio=context_entry.audio,
                 context_latent=context_entry.latent,
-                context_end_frame=int(
-                    (context_entry.handoff or {}).get("context_end_frame") or 0
-                ) or None,
+                context_end_frame=int((context_entry.handoff or {}).get("context_end_frame") or 0) or None,
                 context_span=context_span,
                 target_frame_count=target_len,
                 generation_frame_count=num_frames,
@@ -1030,21 +854,14 @@ def execute_director_plan_core(
                 color_anchor=color_anchor,
                 task_key=seg.task_key,
                 pin_renorm_enabled=bool(pin_renorm_enabled and apply_visual_context),
-                pin_renorm_baseline_std=(
-                    (context_entry.handoff or {}).get("pin_renorm_baseline_std")
-                    if context_entry is not None
-                    else None
-                ),
-                pin_renorm_baseline_source=(
-                    "cache" if context_loaded_from_cache else "inherited"
-                ),
+                pin_renorm_baseline_std=(context_entry.handoff or {}).get("pin_renorm_baseline_std"),
+                pin_renorm_baseline_source=("cache" if context_loaded_from_cache else "inherited"),
             )
 
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
             phase="context_encode", phase_value=1, phase_max=1, **meta,
         )
-
         if clear_vram_between_segments:
             cleanup_segment_vram(enabled=True, unload_models=seg_total > 1)
 
@@ -1054,34 +871,19 @@ def execute_director_plan_core(
                 phase=phase, phase_value=value, phase_max=1, **meta,
             )
 
-        def _report_step_preview(
-            step: int, total_steps: int, x0, latent_shapes=None, *, stage: str = "Generation"
-        ) -> None:
+        def _report_step_preview(step: int, total_steps: int, x0, latent_shapes=None, *, stage: str = "Generation") -> None:
             preview_manager.submit(
-                segment_index=ui_idx,
-                stage=stage,
-                step=step + 1,
-                total_steps=total_steps,
-                x0=x0,
-                latent_shapes=latent_shapes,
+                segment_index=ui_idx, stage=stage, step=step + 1, total_steps=total_steps,
+                x0=x0, latent_shapes=latent_shapes,
             )
 
         _h3_sample_started = time.perf_counter()
         try:
             samples = sample_single_stage(
-                model=model,
-                positive=positive,
-                negative=negative,
-                latent=latent,
-                seed=seed,
-                cfg=cfg,
-                steps=steps,
-                sampler_name=sampler,
-                scheduler=scheduler,
-                shift_video=shift_video,
-                shift_audio=shift_audio,
-                external_sampler=external_sampler,
-                external_sigmas=external_sigmas,
+                model=model, positive=positive, negative=negative, latent=latent, seed=seed,
+                cfg=cfg, steps=steps, sampler_name=sampler, scheduler=scheduler,
+                shift_video=shift_video, shift_audio=shift_audio,
+                external_sampler=external_sampler, external_sigmas=external_sigmas,
                 on_phase=_report_sample_phase,
                 on_step_preview=_report_step_preview if live_tae_preview else None,
                 preview_every=int(preview_config["preview_every"]),
@@ -1089,15 +891,26 @@ def execute_director_plan_core(
             stage_times["h3_sampling"] = time.perf_counter() - _h3_sample_started
         except torch.cuda.OutOfMemoryError as exc:
             raise RuntimeError(
-                "Motion Director ran out of VRAM during H3 sampling. Motion "
-                "Context adds conditioning rows; reduce resolution, use fewer "
-                "references, or keep clear_vram_between_segments enabled. No "
-                "context/reference was silently removed."
+                "Motion Director ran out of VRAM during H3 sampling. Motion Context adds conditioning rows; "
+                "reduce resolution, use fewer references, or keep clear_vram_between_segments enabled. "
+                "No context/reference was silently removed."
             ) from exc
 
         def _repin_refined_context(refine_positive, refine_latent):
             if context_entry is None or not apply_visual_context:
                 return refine_positive
+            selected_refine_latent = None
+            selected_refine_handoff = None
+            if not color_reanchor_requested:
+                candidate = completed_refine_contexts.get(timeline_slot - 1)
+                if candidate is not None:
+                    candidate_latent, candidate_handoff = candidate
+                    target_canvas = latent_context_canvas(refine_latent)
+                    candidate_canvas = latent_context_canvas(candidate_latent)
+                    if target_canvas is not None and candidate_canvas == target_canvas:
+                        selected_refine_latent = candidate_latent
+                        selected_refine_handoff = candidate_handoff
+            effective_handoff = selected_refine_handoff or context_entry.handoff or {}
             rebuilt, _ = apply_exported_motion_context(
                 refine_positive,
                 video_vae=vae,
@@ -1105,11 +918,8 @@ def execute_director_plan_core(
                 latent=refine_latent,
                 context_frames=context_entry.frames,
                 context_audio=context_entry.audio,
-                # A successful upscale changes the latent canvas.  Re-encode
-                # the cached RGB tail at that canvas; never reuse mismatched
-                # latent keyframes from the first pass.
-                context_latent=None,
-                context_end_frame=int((context_entry.handoff or {}).get("context_end_frame") or 0) or None,
+                context_latent=selected_refine_latent,
+                context_end_frame=int(effective_handoff.get("context_end_frame") or 0) or None,
                 context_span=context_span,
                 target_frame_count=target_len,
                 generation_frame_count=num_frames,
@@ -1120,8 +930,10 @@ def execute_director_plan_core(
                 color_anchor=color_anchor,
                 task_key=seg.task_key,
                 pin_renorm_enabled=bool(pin_renorm_enabled),
-                pin_renorm_baseline_std=(context_entry.handoff or {}).get("pin_renorm_baseline_std"),
-                pin_renorm_baseline_source="upscale-rgb-repin",
+                pin_renorm_baseline_std=effective_handoff.get("pin_renorm_baseline_std"),
+                pin_renorm_baseline_source=(
+                    "refine-latent-repin" if selected_refine_latent is not None else "upscale-rgb-repin"
+                ),
             )
             return rebuilt
 
@@ -1155,10 +967,6 @@ def execute_director_plan_core(
         global_refine_outcomes[timeline_slot] = global_outcome
         samples = global_outcome.samples
         if global_outcome.status == "FAILED":
-            # The failed stage may have left large temporary decode/upscale
-            # allocations in the CUDA caching allocator.  Keep every model
-            # loaded and the exact first-pass latent alive, but release only
-            # unreachable stage temporaries before first-pass decode resumes.
             cleanup_segment_vram(enabled=True, unload_models=False)
             warning_messages.append(
                 f"S{timeline_slot + 1}: Global Refine FAILED; fallback FIRST_PASS_RESULT — {global_outcome.error}"
@@ -1169,9 +977,7 @@ def execute_director_plan_core(
             phase="decode", phase_value=0, phase_max=1, **meta,
         )
         _decode_started = time.perf_counter()
-        decoded, audio_dict = _decode_av_latent(
-            samples, vae, audio_vae, decode_audio=decode_audio,
-        )
+        decoded, audio_dict = _decode_av_latent(samples, vae, audio_vae, decode_audio=decode_audio)
         stage_times["av_decode"] = time.perf_counter() - _decode_started
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
@@ -1180,63 +986,41 @@ def execute_director_plan_core(
 
         fps = float(plan.frame_rate or 24.0)
         decoded, audio_dict = trim_segment_av(
-            decoded,
-            audio_dict,
-            head_frames=context_span,
-            target_frames=target_len,
-            fps=fps,
+            decoded, audio_dict, head_frames=context_span, target_frames=target_len, fps=fps,
         )
-
         seam_color_applied = False
         if (
-            color_reanchor_requested
-            and apply_visual_context
-            and not source_bridge_active
-            and context_entry is not None
-            and isinstance(context_entry.frames, torch.Tensor)
-            and int(context_entry.frames.shape[0]) > 0
-            and isinstance(decoded, torch.Tensor)
+            color_reanchor_requested and apply_visual_context and not source_bridge_active
+            and context_entry is not None and isinstance(context_entry.frames, torch.Tensor)
+            and int(context_entry.frames.shape[0]) > 0 and isinstance(decoded, torch.Tensor)
             and int(decoded.shape[0]) > 0
         ):
-            decoded = apply_seam_color_match(
-                decoded,
-                context_entry.frames,
-            )
+            decoded = apply_seam_color_match(decoded, context_entry.frames)
             seam_color_applied = True
 
         chunk = decoded.cpu().float()
         handoff = {
-            # Exclusive endpoint on the sampled timeline. Alignment frames after
-            # this coordinate are internal overshoot, never continuation input.
             "context_end_frame": int(context_span + target_len),
             "trim_frames": int(context_span),
             "export_frames": int(target_len),
             "sample_frames": int(num_frames),
         }
         inherited_color_anchor = validate_color_anchor_statistics(
-            (context_entry.handoff or {}).get("color_anchor_stats")
-            if context_entry is not None else None
+            (context_entry.handoff or {}).get("color_anchor_stats") if context_entry is not None else None
         )
         if color_reanchor_requested:
             handoff["color_anchor_stats"] = (
                 inherited_color_anchor
                 if apply_visual_context and inherited_color_anchor is not None
-                else establish_color_chain_baseline(
-                    seg,
-                    generated_frames=chunk,
-                    source_frames=body_raw,
-                )
+                else establish_color_chain_baseline(seg, generated_frames=chunk, source_frames=body_raw)
             )
-        if (
-            apply_visual_context
-            and motion_info is not None
-            and motion_info.pin_renorm_baseline_std is not None
-        ):
-            handoff["pin_renorm_baseline_std"] = float(
-                motion_info.pin_renorm_baseline_std
-            )
+        if apply_visual_context and motion_info is not None and motion_info.pin_renorm_baseline_std is not None:
+            handoff["pin_renorm_baseline_std"] = float(motion_info.pin_renorm_baseline_std)
+
         sampled_context_latent = None
         cached_handoff = None
+        refine_context_latent = None
+        refine_cached_handoff = None
         if context_pipeline_active:
             refined_canvas_changed = bool(
                 global_outcome.succeeded
@@ -1244,16 +1028,13 @@ def execute_director_plan_core(
                 and (global_outcome.target_width, global_outcome.target_height) != (ctx_w, ctx_h)
             )
             if refined_canvas_changed:
-                # The next first pass still uses the Director canvas.  Persist
-                # final RGB/audio for natural fallback and never write a
-                # spatially incompatible refined latent into its handoff.
+                refine_context_latent, refine_cached_handoff = prepare_latent_context_tail(samples, handoff)
+                completed_refine_contexts[timeline_slot] = (refine_context_latent, refine_cached_handoff)
                 cached_handoff = dict(handoff)
-                cached_handoff["latent_status"] = "RGB_FALLBACK_UPSCALE_CANVAS"
+                cached_handoff["latent_status"] = "RGB_FALLBACK_BASE_CANVAS_WITH_REFINE_LATENT"
             else:
-                sampled_context_latent, cached_handoff = prepare_latent_context_tail(
-                    samples,
-                    handoff,
-                )
+                sampled_context_latent, cached_handoff = prepare_latent_context_tail(samples, handoff)
+
         if audio_has_samples(audio_dict):
             audio_dict = {
                 "waveform": audio_dict["waveform"].detach().cpu(),
@@ -1261,29 +1042,17 @@ def execute_director_plan_core(
             }
         write_segment_cache_if_required(
             persist_segment_cache,
-            lambda: save_segment_cache(
-                node_id,
-                seg,
-                plan,
-                chunk,
-            ),
+            lambda: save_segment_cache(node_id, seg, plan, chunk),
         )
-
         write_segment_cache_if_required(
             persist_segment_cache,
             lambda: save_segment_audio_cache(
-                node_id,
-                seg,
-                plan,
-                audio_dict if audio_mode == AUDIO_MODE_GENERATE else None,
+                node_id, seg, plan, audio_dict if audio_mode == AUDIO_MODE_GENERATE else None,
             ),
         )
         if context_pipeline_active:
             if not save_motion_context_cache(
-                node_id,
-                seg,
-                plan,
-                frames=chunk,
+                node_id, seg, plan, frames=chunk,
                 audio=audio_dict if audio_mode == AUDIO_MODE_GENERATE else None,
                 settings=cache_settings,
             ):
@@ -1291,21 +1060,14 @@ def execute_director_plan_core(
                     f"Segment {ui_idx + 1}: Motion Context cache write failed; "
                     "selection-run continuation from this segment will be unavailable."
                 )
-                warning_messages.append(
-                    f"S{ui_idx + 1}: Motion Context cache write failed"
-                )
+                warning_messages.append(f"S{ui_idx + 1}: Motion Context cache write failed")
             if sampled_context_latent is None:
                 reports.append(
-                    f"Segment {ui_idx + 1}: Global Refine output canvas differs from "
-                    "the next first-pass canvas; continuity will use validated RGB/audio "
-                    "cache instead of an incompatible latent handoff."
+                    f"Segment {ui_idx + 1}: next first pass uses validated RGB/audio fallback at the Base Canvas; "
+                    "matching Refine Canvas keeps the final AV latent handoff without VAE re-encode."
                 )
             elif not save_latent_context_cache(
-                node_id,
-                seg,
-                plan,
-                latent=sampled_context_latent,
-                handoff=cached_handoff,
+                node_id, seg, plan, latent=sampled_context_latent, handoff=cached_handoff,
                 settings=cache_settings,
             ):
                 reports.append(
@@ -1313,9 +1075,20 @@ def execute_director_plan_core(
                     "selection-run will use exported RGB/audio fallback if available."
                 )
                 warning_messages.append(
-                    f"S{ui_idx + 1}: AV latent handoff cache write failed; "
-                    "future selection runs may use RGB/audio fallback"
+                    f"S{ui_idx + 1}: AV latent handoff cache write failed; future selection runs may use RGB/audio fallback"
                 )
+            if refine_context_latent is not None and not save_latent_context_cache(
+                node_id, seg, plan, latent=refine_context_latent, handoff=refine_cached_handoff,
+                settings=cache_settings, variant="refine",
+            ):
+                reports.append(
+                    f"Segment {ui_idx + 1}: Refine Canvas AV latent cache write failed; "
+                    "future refine repin will fall back to RGB/VAE encoding."
+                )
+                warning_messages.append(
+                    f"S{ui_idx + 1}: Refine Canvas AV latent cache write failed"
+                )
+
         completed_outputs[seg.index] = chunk
         completed_contexts[timeline_slot] = CachedMotionContext(
             frames=chunk,
@@ -1337,29 +1110,18 @@ def execute_director_plan_core(
             and decoded.shape[0] >= 1
         ):
             try:
-                frames_b64 = [
-                    tensor_frame_to_jpeg_b64(decoded[i])
-                    for i in range(int(decoded.shape[0]))
-                ]
+                frames_b64 = [tensor_frame_to_jpeg_b64(decoded[i]) for i in range(int(decoded.shape[0]))]
                 h, w = int(decoded.shape[1]), int(decoded.shape[2])
                 report_director_segment_preview(
-                    node_id,
-                    segment_index=ui_idx,
-                    image_b64=frames_b64[0],
-                    width=w,
-                    height=h,
-                    frames=frames_b64,
-                    fps=float(plan.frame_rate or 24),
+                    node_id, segment_index=ui_idx, image_b64=frames_b64[0], width=w, height=h,
+                    frames=frames_b64, fps=float(plan.frame_rate or 24),
                 )
             except Exception as exc:
                 log.debug("Segment video preview skipped: %s", exc)
-
         if clear_vram_between_segments:
             cleanup_segment_vram(enabled=True)
-
         reports.append(
-            f"Segment {ui_idx + 1}/{timeline_seg_total}: {task_hint} "
-            f"({target_len} frames, seed={seed})"
+            f"Segment {ui_idx + 1}/{timeline_seg_total}: {task_hint} ({target_len} frames, seed={seed})"
         )
         generated_indices.add(int(seg.index))
         diag = boundary_diagnostics[timeline_slot]
@@ -1373,24 +1135,18 @@ def execute_director_plan_core(
                 "off": "none",
             }.get(motion_info.visual_source, motion_info.visual_source)
             diag["audio_source"] = {
-                "latent": "audio latent",
-                "waveform (fallback)": "waveform re-encode",
-                "off": "none",
+                "latent": "audio latent", "waveform (fallback)": "waveform re-encode", "off": "none",
             }.get(motion_info.audio_source, motion_info.audio_source)
             diag["actual_frames"] = int(motion_info.context_frames)
 
         if pin_renorm_enabled and timeline_slot > 0:
             if motion_info is not None and motion_info.pin_renorm_status == "APPLIED":
                 pin_diagnostics[timeline_slot] = format_pin_handoff(
-                    from_segment=timeline_slot - 1,
-                    to_segment=timeline_slot,
-                    requested_frames=requested_context,
-                    actual_frames=motion_info.context_frames,
-                    status="APPLIED",
-                    baseline_source=motion_info.pin_renorm_baseline_source,
+                    from_segment=timeline_slot - 1, to_segment=timeline_slot,
+                    requested_frames=requested_context, actual_frames=motion_info.context_frames,
+                    status="APPLIED", baseline_source=motion_info.pin_renorm_baseline_source,
                     baseline_std=motion_info.pin_renorm_baseline_std,
-                    before_std=motion_info.pin_renorm_input_std,
-                    scale=motion_info.pin_renorm_scale,
+                    before_std=motion_info.pin_renorm_input_std, scale=motion_info.pin_renorm_scale,
                     after_std=motion_info.pin_renorm_after_std,
                     mean_abs_delta=motion_info.pin_renorm_mean_abs_delta,
                     max_abs_delta=motion_info.pin_renorm_max_abs_delta,
@@ -1403,12 +1159,9 @@ def execute_director_plan_core(
                 else:
                     reason = "no valid predecessor video latent"
                 pin_diagnostics[timeline_slot] = format_pin_handoff(
-                    from_segment=timeline_slot - 1,
-                    to_segment=timeline_slot,
-                    requested_frames=requested_context,
-                    actual_frames=diag["actual_frames"],
-                    status="SKIPPED",
-                    reason=reason,
+                    from_segment=timeline_slot - 1, to_segment=timeline_slot,
+                    requested_frames=requested_context, actual_frames=diag["actual_frames"],
+                    status="SKIPPED", reason=reason,
                 )
 
         if color_reanchor_requested and motion_info is not None:
@@ -1421,9 +1174,7 @@ def execute_director_plan_core(
             ]
             if not color_actual:
                 color_lines.append(f"reason: {motion_info.color_reanchor_status}")
-            color_lines.append(
-                f"Seam Color Match: {'applied' if seam_color_applied else 'not applied'}"
-            )
+            color_lines.append(f"Seam Color Match: {'applied' if seam_color_applied else 'not applied'}")
             color_diagnostics[timeline_slot] = "\n".join(color_lines)
         else:
             reason = ""
@@ -1442,41 +1193,28 @@ def execute_director_plan_core(
             color_diagnostics[timeline_slot] = "\n".join(color_lines)
         if source_bridge_active:
             reports.append(
-                f"Segment {ui_idx + 1}: visual Motion Context skipped; "
-                "nominal segment generation retained for Source Bridge anchors."
+                f"Segment {ui_idx + 1}: visual Motion Context skipped; nominal segment generation retained for Source Bridge anchors."
             )
             if color_reanchor_requested:
-                reports.append(
-                    f"Segment {ui_idx + 1}: Color Re-anchor skipped (Source Bridge)."
-                )
+                reports.append(f"Segment {ui_idx + 1}: Color Re-anchor skipped (Source Bridge).")
         elif motion_info is None:
             reports.append(f"Segment {ui_idx + 1}: no previous context")
             if color_reanchor_requested:
-                reports.append(
-                    f"Segment {ui_idx + 1}: Color Re-anchor skipped (no incoming Motion Context)."
-                )
+                reports.append(f"Segment {ui_idx + 1}: Color Re-anchor skipped (no incoming Motion Context).")
         else:
             reports.append(
-                f"Segment {ui_idx + 1}: context source = Segment {ui_idx}; "
-                f"visual source = {motion_info.visual_source}; "
-                f"audio source = {motion_info.audio_source}; "
-                f"video context = {motion_info.context_frames} frames; "
-                f"audio context = {motion_info.audio_seconds:.3f}s; "
-                f"removed start anchors = {motion_info.removed_start_anchors}; "
+                f"Segment {ui_idx + 1}: context source = Segment {ui_idx}; visual source = {motion_info.visual_source}; "
+                f"audio source = {motion_info.audio_source}; video context = {motion_info.context_frames} frames; "
+                f"audio context = {motion_info.audio_seconds:.3f}s; removed start anchors = {motion_info.removed_start_anchors}; "
                 f"preserved last anchors = {motion_info.preserved_last_anchors}"
             )
             if pin_renorm_enabled:
                 reports.append(
-                    f"Segment {ui_idx + 1}: pin_renorm = "
-                    f"{motion_info.pin_renorm_status}; "
-                    f"baseline std = {motion_info.pin_renorm_baseline_std}; "
-                    f"input std = {motion_info.pin_renorm_input_std}; "
+                    f"Segment {ui_idx + 1}: pin_renorm = {motion_info.pin_renorm_status}; "
+                    f"baseline std = {motion_info.pin_renorm_baseline_std}; input std = {motion_info.pin_renorm_input_std}; "
                     f"scale = {motion_info.pin_renorm_scale:.6f}"
                 )
-            reports.append(
-                f"Segment {ui_idx + 1}: Color Re-anchor: "
-                f"{motion_info.color_reanchor_status}"
-            )
+            reports.append(f"Segment {ui_idx + 1}: Color Re-anchor: {motion_info.color_reanchor_status}")
         log.info(
             "MiniMax H3 Motion Director segment %d/%d done (%d frames, task=%s)",
             ui_idx + 1, timeline_seg_total, target_len, seg.task_key,
@@ -1488,9 +1226,7 @@ def execute_director_plan_core(
             if clear_vram_between_segments and selected_results:
                 cleanup_segment_vram(enabled=True)
             _segment_started = time.perf_counter()
-            chunk, audio_dict = _run_one_segment(
-                seg, progress_index=progress_pos[seg.index]
-            )
+            chunk, audio_dict = _run_one_segment(seg, progress_index=progress_pos[seg.index])
             segment_stage_timings.setdefault(int(seg.timeline_index), {})["total"] = time.perf_counter() - _segment_started
             result = (chunk, audio_dict or {})
             nominal_generated_frames[int(seg.index)] = chunk
@@ -1502,45 +1238,36 @@ def execute_director_plan_core(
         if plan.export_mode != "all":
             continue
 
-        # Full-export reconstruction always requires the full segment cache.
-        # Motion Context caches are endpoint tails and must never masquerade as
-        # a complete old segment after the V2 tail-cache migration.
         cache_statuses[int(seg.index)] = segment_cache_status(node_id, seg, plan)
         cached = load_segment_cache(node_id, seg, plan)
         cached_context = None
         cached_latent_context = None
+        cached_refine_latent_context = None
         if context_pipeline_active:
             cached_latent_context = load_latent_context_cache(
-                node_id,
-                seg,
-                plan,
-                settings=cache_settings,
+                node_id, seg, plan, settings=cache_settings,
             )
+            cached_refine_latent_context = load_latent_context_cache(
+                node_id, seg, plan, settings=cache_settings, variant="refine",
+            )
+            if cached_refine_latent_context is not None:
+                completed_refine_contexts[int(seg.timeline_index)] = (
+                    cached_refine_latent_context.latent,
+                    cached_refine_latent_context.handoff,
+                )
         if int(seg.index) in source_bridge_segment_indices:
             cached_context = load_motion_context_cache(
-                node_id,
-                seg,
-                plan,
-                settings=cache_settings,
-                strict=False,
+                node_id, seg, plan, settings=cache_settings, strict=False,
             ) if context_pipeline_active else None
         elif context_pipeline_active:
             cached_context = load_motion_context_cache(
-                node_id,
-                seg,
-                plan,
-                settings=cache_settings,
-                strict=False,
+                node_id, seg, plan, settings=cache_settings, strict=False,
             )
         if cached_latent_context is not None:
             cached_context = CachedMotionContext(
                 frames=cached_context.frames if cached_context is not None else None,
                 audio=cached_context.audio if cached_context is not None else None,
-                metadata=(
-                    cached_context.metadata
-                    if cached_context is not None
-                    else cached_latent_context.metadata
-                ),
+                metadata=(cached_context.metadata if cached_context is not None else cached_latent_context.metadata),
                 latent=cached_latent_context.latent,
                 handoff=cached_latent_context.handoff,
             )
@@ -1548,47 +1275,29 @@ def execute_director_plan_core(
         if cached is not None:
             cached = cached.float()
             cache_hit_indices.add(int(seg.index))
-
             cached_audio = None
             if audio_mode == AUDIO_MODE_GENERATE:
-                cached_audio = load_segment_audio_cache(
-                    node_id,
-                    seg,
-                    plan,
-                )
-
+                cached_audio = load_segment_audio_cache(node_id, seg, plan)
                 if not audio_has_samples(cached_audio):
                     raise ValueError(
-                        f"Segment {seg.index + 1} has a valid video cache but no "
-                        "full generated audio cache. Run the full sequence once "
-                        "to rebuild complete video + audio segment caches before "
-                        "using partial regeneration."
+                        f"Segment {seg.index + 1} has a valid video cache but no full generated audio cache. "
+                        "Run the full sequence once to rebuild complete video + audio segment caches before using partial regeneration."
                     )
-
             if int(seg.index) in source_bridge_segment_indices:
                 nominal_generated_frames[int(seg.index)] = cached
-
             completed_outputs[seg.index] = cached
-
             if cached_context is not None:
                 completed_contexts[int(seg.timeline_index)] = cached_context
-
             reports.append(
-                f"Segment {seg.index + 1}/{len(all_segments)}: "
-                f"loaded from full segment cache ({cached.shape[0]} frames)"
+                f"Segment {seg.index + 1}/{len(all_segments)}: loaded from full segment cache ({cached.shape[0]} frames)"
             )
-
-            all_export_results[int(seg.index)] = (
-                cached,
-                cached_audio if cached_audio is not None else {},
-            )
+            all_export_results[int(seg.index)] = (cached, cached_audio if cached_audio is not None else {})
             continue
-        # Not selected + no cache: keep full-timeline export by passthrough (do NOT sample).
         fill = segment_passthrough_chunk(plan, seg)
         if fill is None:
             raise ValueError(
-                f"Segment {seg.index + 1} is not selected and has no valid cache or source "
-                "frames to passthrough. Include it in「选择运行」, or switch export to「分段导出」."
+                f"Segment {seg.index + 1} is not selected and has no valid cache or source frames to passthrough. "
+                "Include it in「选择运行」, or switch export to「分段导出」."
             )
         completed_outputs[seg.index] = fill
         passthrough_indices.append(seg.index)
@@ -1609,19 +1318,11 @@ def execute_director_plan_core(
         if int(frames.shape[0]) <= 0:
             return
         try:
-            frames_b64 = [
-                tensor_frame_to_jpeg_b64(frames[i])
-                for i in range(int(frames.shape[0]))
-            ]
+            frames_b64 = [tensor_frame_to_jpeg_b64(frames[i]) for i in range(int(frames.shape[0]))]
             height, width = int(frames.shape[1]), int(frames.shape[2])
             report_director_segment_preview(
-                node_id,
-                segment_index=int(seg.timeline_index),
-                image_b64=frames_b64[0],
-                width=width,
-                height=height,
-                frames=frames_b64,
-                fps=float(plan.frame_rate or 24),
+                node_id, segment_index=int(seg.timeline_index), image_b64=frames_b64[0],
+                width=width, height=height, frames=frames_b64, fps=float(plan.frame_rate or 24),
             )
         except Exception as exc:
             log.debug("Resolved Source Bridge preview skipped: %s", exc)
@@ -1629,15 +1330,12 @@ def execute_director_plan_core(
     def _nominal_for_bridge(seg) -> torch.Tensor:
         index = int(seg.index)
         frames, loaded_from_disk = resolve_nominal_segment_frames(
-            nominal_generated_frames,
-            segment_index=index,
-            expected_frames=int(seg.frame_count),
+            nominal_generated_frames, segment_index=index, expected_frames=int(seg.frame_count),
             disk_loader=lambda: load_segment_cache(node_id, seg, plan),
         )
         if loaded_from_disk:
             reports.append(
-                f"Segment {int(seg.timeline_index) + 1}: loaded validated nominal "
-                "segment cache for Source Bridge."
+                f"Segment {int(seg.timeline_index) + 1}: loaded validated nominal segment cache for Source Bridge."
             )
         return frames
 
@@ -1646,7 +1344,6 @@ def execute_director_plan_core(
         pair_indices = {int(left.index), int(right.index)}
         if plan.export_mode != "all" and not pair_indices.intersection(run_indices):
             continue
-
         window, skip_reason = resolve_source_bridge_window(plan, left, right)
         if window is None:
             right_slot = int(right.timeline_index)
@@ -1655,37 +1352,25 @@ def execute_director_plan_core(
                 right_diag["visual_source"] = "none (nominal hard cut)"
             if pin_renorm_enabled:
                 pin_diagnostics[right_slot] = format_pin_handoff(
-                    from_segment=int(left.timeline_index),
-                    to_segment=right_slot,
-                    requested_frames=requested_context,
-                    actual_frames=0,
-                    status="SKIPPED",
+                    from_segment=int(left.timeline_index), to_segment=right_slot,
+                    requested_frames=requested_context, actual_frames=0, status="SKIPPED",
                     reason="Source Bridge was unavailable; nominal hard cut retained",
                 )
-            warning_messages.append(
-                f"S{int(left.timeline_index) + 1} -> S{right_slot + 1}: {skip_reason}"
-            )
+            warning_messages.append(f"S{int(left.timeline_index) + 1} -> S{right_slot + 1}: {skip_reason}")
             reports.append(
-                f"Boundary Segment {int(left.timeline_index) + 1} → "
-                f"{int(right.timeline_index) + 1}: {skip_reason} "
-                "Nominal hard cut retained."
+                f"Boundary Segment {int(left.timeline_index) + 1} → {int(right.timeline_index) + 1}: "
+                f"{skip_reason} Nominal hard cut retained."
             )
             continue
-        if (
-            "rv2v" in {left.task_key, right.task_key}
-            and not reference_bundles_match(left, right)
-        ):
+        if "rv2v" in {left.task_key, right.task_key} and not reference_bundles_match(left, right):
             right_slot = int(right.timeline_index)
             right_diag = boundary_diagnostics.get(right_slot)
             if right_diag is not None:
                 right_diag["visual_source"] = "none (nominal hard cut)"
             if pin_renorm_enabled:
                 pin_diagnostics[right_slot] = format_pin_handoff(
-                    from_segment=int(left.timeline_index),
-                    to_segment=right_slot,
-                    requested_frames=requested_context,
-                    actual_frames=0,
-                    status="SKIPPED",
+                    from_segment=int(left.timeline_index), to_segment=right_slot,
+                    requested_frames=requested_context, actual_frames=0, status="SKIPPED",
                     reason="Source Bridge reference bundles differ; nominal hard cut retained",
                 )
             warning_messages.append(
@@ -1693,114 +1378,58 @@ def execute_director_plan_core(
                 "Source Bridge skipped because RV2V reference bundles differ"
             )
             reports.append(
-                f"Boundary Segment {int(left.timeline_index) + 1} → "
-                f"{int(right.timeline_index) + 1}: Source Bridge skipped because "
-                "the effective RV2V Picture/Audio reference bundles differ. "
+                f"Boundary Segment {int(left.timeline_index) + 1} → {int(right.timeline_index) + 1}: "
+                "Source Bridge skipped because the effective RV2V Picture/Audio reference bundles differ. "
                 "Nominal hard cut retained."
             )
             continue
 
         left_frames = _nominal_for_bridge(left)
         right_frames = _nominal_for_bridge(right)
-        first_anchor, last_anchor = bridge_anchors(
-            left, left_frames, right, right_frames, window
-        )
+        first_anchor, last_anchor = bridge_anchors(left, left_frames, right, right_frames, window)
         bridge_raw = load_source_bridge_clip(plan, window)
         if plan.output_mode == "fixed":
             bridge_source = fit_canvas(bridge_raw, plan.width, plan.height)
         else:
-            bridge_source = fit_video_long_edge(
-                bridge_raw,
-                plan.ref_max_size,
-                stride=plan_spatial_stride,
-            )
+            bridge_source = fit_video_long_edge(bridge_raw, plan.ref_max_size, stride=plan.spatial_stride)
         bridge_height = int(bridge_source.shape[1])
         bridge_width = int(bridge_source.shape[2])
-
         bridge_prompt = right.prompt if right.prompt != left.prompt else left.prompt
         if right.task_key == "v2v":
             bridge_prompt = reinforce_v2v_prompt(bridge_prompt)
         else:
-            ref_idxs = [
-                int(getattr(ref, "index", 0))
-                for ref in (right.refs or [])
-                if ref is not None
-            ]
-            audio_idxs = [
-                int(getattr(ref, "index", 0))
-                for ref in (right.ref_audios or [])
-                if ref is not None
-            ]
+            ref_idxs = [int(getattr(ref, "index", 0)) for ref in (right.refs or []) if ref is not None]
+            audio_idxs = [int(getattr(ref, "index", 0)) for ref in (right.ref_audios or []) if ref is not None]
             bridge_prompt = reinforce_rv2v_prompt(
-                bridge_prompt,
-                ref_indices=ref_idxs,
-                audio_indices=audio_idxs,
+                bridge_prompt, ref_indices=ref_idxs, audio_indices=audio_idxs,
             )
-
-        (
-            _unused_first,
-            _unused_last,
-            ref_images,
-            ref_videos,
-            ref_audios,
-            ref_video_audios,
-        ) = _build_minimax_inputs(
-            plan,
-            right,
-            clip_frames=bridge_source,
-            reference_clip_frames=bridge_source,
-            ctx_w=bridge_width,
-            ctx_h=bridge_height,
-            prev_tail=None,
+        (_unused_first, _unused_last, ref_images, ref_videos, ref_audios, ref_video_audios) = _build_minimax_inputs(
+            plan, right, clip_frames=bridge_source, reference_clip_frames=bridge_source,
+            ctx_w=bridge_width, ctx_h=bridge_height, prev_tail=None,
         )
         positive, negative, latent, _task_hint = run_minimax_conditioning(
-            clip=clip,
-            vae=vae,
-            audio_vae=audio_vae,
-            prompt=bridge_prompt,
-            width=bridge_width,
-            height=bridge_height,
-            length=5,
-            task_key=right.task_key,
-            first_frame=None,
-            last_frame=None,
-            ref_images=ref_images,
-            ref_videos=ref_videos,
-            ref_video_audios=ref_video_audios,
-            ref_audios=ref_audios,
+            clip=clip, vae=vae, audio_vae=audio_vae, prompt=bridge_prompt,
+            width=bridge_width, height=bridge_height, length=5, task_key=right.task_key,
+            first_frame=None, last_frame=None, ref_images=ref_images, ref_videos=ref_videos,
+            ref_video_audios=ref_video_audios, ref_audios=ref_audios,
         )
         positive = append_minimax_keyframe_anchors(
-            positive,
-            vae=vae,
-            first_frame=first_anchor,
-            last_frame=last_anchor,
-            frame_count=5,
-            width=bridge_width,
-            height=bridge_height,
+            positive, vae=vae, first_frame=first_anchor, last_frame=last_anchor,
+            frame_count=5, width=bridge_width, height=bridge_height,
         )
         if clear_vram_between_segments:
             cleanup_segment_vram(enabled=True, unload_models=True)
         try:
             bridge_samples = sample_single_stage(
-                model=model,
-                positive=positive,
-                negative=negative,
-                latent=latent,
-                seed=seed,
-                cfg=cfg,
-                steps=steps,
-                sampler_name=sampler,
-                scheduler=scheduler,
-                shift_video=shift_video,
-                shift_audio=shift_audio,
-                external_sampler=external_sampler,
-                external_sigmas=external_sigmas,
+                model=model, positive=positive, negative=negative, latent=latent, seed=seed,
+                cfg=cfg, steps=steps, sampler_name=sampler, scheduler=scheduler,
+                shift_video=shift_video, shift_audio=shift_audio,
+                external_sampler=external_sampler, external_sigmas=external_sigmas,
             )
         except torch.cuda.OutOfMemoryError as exc:
             raise RuntimeError(
-                "Motion Director ran out of VRAM while sampling the five-frame "
-                "Source Bridge. No source frame or nominal hard cut was silently "
-                "substituted."
+                "Motion Director ran out of VRAM while sampling the five-frame Source Bridge. "
+                "No source frame or nominal hard cut was silently substituted."
             ) from exc
         bridge_refine_outcome = apply_global_refine(
             global_refine_config,
@@ -1822,12 +1451,8 @@ def execute_director_plan_core(
             on_phase=None,
             on_step_preview=(
                 (lambda step, total, x0, latent_shapes: preview_manager.submit(
-                    segment_index=int(right.timeline_index),
-                    stage="Global Refine · Source Bridge",
-                    step=step + 1,
-                    total_steps=total,
-                    x0=x0,
-                    latent_shapes=latent_shapes,
+                    segment_index=int(right.timeline_index), stage="Global Refine · Source Bridge",
+                    step=step + 1, total_steps=total, x0=x0, latent_shapes=latent_shapes,
                 )) if live_tae_preview else None
             ),
             preview_every=int(preview_config["preview_every"]),
@@ -1837,31 +1462,25 @@ def execute_director_plan_core(
             cleanup_segment_vram(enabled=True, unload_models=False)
             warning_messages.append(
                 f"S{int(left.timeline_index) + 1}->S{int(right.timeline_index) + 1} "
-                f"Source Bridge Global Refine FAILED; fallback FIRST_PASS_RESULT — "
-                f"{bridge_refine_outcome.error}"
+                f"Source Bridge Global Refine FAILED; fallback FIRST_PASS_RESULT — {bridge_refine_outcome.error}"
             )
         bridge_decoded, _ignored_audio = _decode_av_latent(
             bridge_samples, vae, audio_vae, decode_audio=False
         )
         if int(bridge_decoded.shape[0]) < 5:
             raise ValueError(
-                "Source Bridge H3 decode returned fewer than 5 frames; refusing "
-                "to expose source conditioning pixels or pad generated output."
+                "Source Bridge H3 decode returned fewer than 5 frames; refusing to expose source conditioning pixels "
+                "or pad generated output."
             )
         bridge_frames = bridge_decoded[:5].detach().cpu().float()
         target_height = int(left_frames.shape[1])
         target_width = int(left_frames.shape[2])
         if (int(bridge_frames.shape[1]), int(bridge_frames.shape[2])) != (target_height, target_width):
-            # FIRST_PASS_RESULT remains the fallback.  Spatial fitting here is
-            # only the existing bridge assembly contract, never a substitute
-            # Global Refine algorithm.
             bridge_frames = fit_canvas(bridge_frames, target_width, target_height)
         generated_bridges.append(
             GeneratedSourceBridge(
-                left_segment_index=int(left.index),
-                right_segment_index=int(right.index),
-                window=window,
-                frames=bridge_frames,
+                left_segment_index=int(left.index), right_segment_index=int(right.index),
+                window=window, frames=bridge_frames,
             )
         )
         right_diag = boundary_diagnostics.get(int(right.timeline_index))
@@ -1869,21 +1488,16 @@ def execute_director_plan_core(
             right_diag["visual_source"] = "Source Bridge"
             right_diag["bridge_details"] = (
                 f"source frames = {window.source_start}..{window.source_end - 1}\n"
-                f"emitted bridge frames = {window.emitted_source_start}.."
-                f"{window.emitted_source_end - 1}"
+                f"emitted bridge frames = {window.emitted_source_start}..{window.emitted_source_end - 1}"
             )
         reports.append(
-            f"Boundary Segment {int(left.timeline_index) + 1} → "
-            f"{int(right.timeline_index) + 1}:\n"
+            f"Boundary Segment {int(left.timeline_index) + 1} → {int(right.timeline_index) + 1}:\n"
             f"source frames = {window.source_start}..{window.source_end - 1}\n"
             "length = 5\n"
             f"seed = {seed}\n"
-            f"first anchor = Segment {int(left.timeline_index) + 1} source "
-            f"frame {window.first_anchor_source_time}\n"
-            f"last anchor = Segment {int(right.timeline_index) + 1} source "
-            f"frame {window.last_anchor_source_time}\n"
-            f"emitted bridge frames = {window.emitted_source_start}.."
-            f"{window.emitted_source_end - 1} (decoded[1:4])\n"
+            f"first anchor = Segment {int(left.timeline_index) + 1} source frame {window.first_anchor_source_time}\n"
+            f"last anchor = Segment {int(right.timeline_index) + 1} source frame {window.last_anchor_source_time}\n"
+            f"emitted bridge frames = {window.emitted_source_start}..{window.emitted_source_end - 1} (decoded[1:4])\n"
             "visual Motion Context = skipped\n"
             "audio = unchanged nominal segment audio"
         )
@@ -1891,11 +1505,7 @@ def execute_director_plan_core(
             cleanup_segment_vram(enabled=True)
 
     if generated_bridges:
-        resolved = assemble_source_bridges(
-            all_segments,
-            nominal_generated_frames,
-            generated_bridges,
-        )
+        resolved = assemble_source_bridges(all_segments, nominal_generated_frames, generated_bridges)
         for index, frames in resolved.items():
             completed_outputs[index] = frames
             if index in selected_results:
@@ -1903,12 +1513,9 @@ def execute_director_plan_core(
             if index in all_export_results:
                 all_export_results[index] = (frames, all_export_results[index][1])
 
-    # Bridge-mode previews always show the final contribution.  Internal
-    # source conditioning and the two anchor endpoints are never exposed.
     for seg in all_segments:
         if (
-            int(seg.index) in run_indices
-            and int(seg.index) in source_bridge_segment_indices
+            int(seg.index) in run_indices and int(seg.index) in source_bridge_segment_indices
             and int(seg.index) in selected_results
         ):
             _report_resolved_preview(seg, selected_results[int(seg.index)][0])
@@ -1916,22 +1523,17 @@ def execute_director_plan_core(
     missing_selected = [index for index in run_list if index not in selected_results]
     if missing_selected:
         raise RuntimeError(
-            "Motion Director internal error: selected segment result(s) missing after "
-            f"Source Bridge resolution: {[i + 1 for i in missing_selected]}"
+            "Motion Director internal error: selected segment result(s) missing after Source Bridge resolution: "
+            f"{[i + 1 for i in missing_selected]}"
         )
     segment_outputs = [selected_results[index][0] for index in run_list]
     segment_audios = [selected_results[index][1] for index in run_list]
-
     if not segment_outputs:
         raise ValueError("Director plan produced no segments.")
 
     report_director_progress(
-        node_id,
-        segment_index=max(0, seg_total - 1),
-        segment_total=max(1, seg_total),
-        phase="assemble",
-        phase_value=0,
-        phase_max=1,
+        node_id, segment_index=max(0, seg_total - 1), segment_total=max(1, seg_total),
+        phase="assemble", phase_value=0, phase_max=1,
     )
     _assembly_started = time.perf_counter()
     if plan.export_mode == "all":
@@ -1949,32 +1551,20 @@ def execute_director_plan_core(
         export_audios = segment_audios
         export_segments = [all_segments[i] for i in run_list]
     if context_pipeline_active or bridge_feature_active:
-        # Legacy continuity also applies post-decode seam grading in concat.
-        # Motion Context and Source Bridge each own their handoff, so
-        # bypass every legacy post-decode seam rewrite.
         from ..lib.image_prep import cat_frames_variable_size
-
         combined = cat_frames_variable_size(export_chunks)
     else:
         combined = concat_continuous_chunks(export_chunks, export_segments, plan)
     assembly_seconds = time.perf_counter() - _assembly_started
     report_director_progress(
-        node_id,
-        segment_index=max(0, seg_total - 1),
-        segment_total=max(1, seg_total),
-        phase="assemble",
-        phase_value=1,
-        phase_max=1,
+        node_id, segment_index=max(0, seg_total - 1), segment_total=max(1, seg_total),
+        phase="assemble", phase_value=1, phase_max=1,
     )
 
     def _report_face_phase(phase: str, value: float) -> None:
         report_director_progress(
-            node_id,
-            segment_index=max(0, seg_total - 1),
-            segment_total=max(1, seg_total),
-            phase=phase,
-            phase_value=value,
-            phase_max=1,
+            node_id, segment_index=max(0, seg_total - 1), segment_total=max(1, seg_total),
+            phase=phase, phase_value=value, phase_max=1,
         )
 
     face_outcome = apply_face_refine(
@@ -1996,12 +1586,8 @@ def execute_director_plan_core(
         on_phase=_report_face_phase,
         on_step_preview=(
             (lambda step, total, x0, latent_shapes: preview_manager.submit(
-                segment_index=max(0, len(export_chunks) - 1),
-                stage="Face Refine",
-                step=step + 1,
-                total_steps=total,
-                x0=x0,
-                latent_shapes=latent_shapes,
+                segment_index=max(0, len(export_chunks) - 1), stage="Face Refine",
+                step=step + 1, total_steps=total, x0=x0, latent_shapes=latent_shapes,
             )) if live_tae_preview else None
         ),
         preview_every=int(preview_config["preview_every"]),
@@ -2026,15 +1612,10 @@ def execute_director_plan_core(
                             for index in range(int(refined_chunk.shape[0]))
                         ]
                         report_director_segment_preview(
-                            node_id,
-                            segment_index=int(export_segment.timeline_index),
-                            image_b64=frames_b64[0],
-                            width=int(refined_chunk.shape[2]),
-                            height=int(refined_chunk.shape[1]),
-                            frames=frames_b64,
-                            fps=float(plan.frame_rate or 24),
-                            stage="Face Refine Final",
-                            result_kind="segment",
+                            node_id, segment_index=int(export_segment.timeline_index),
+                            image_b64=frames_b64[0], width=int(refined_chunk.shape[2]),
+                            height=int(refined_chunk.shape[1]), frames=frames_b64,
+                            fps=float(plan.frame_rate or 24), stage="Face Refine Final", result_kind="segment",
                         )
                     except Exception as exc:
                         log.debug("Face-refined segment preview skipped: %s", exc)
@@ -2054,9 +1635,8 @@ def execute_director_plan_core(
         f"Skipped by run selection: {segment_list(skipped_indices)}",
         f"Run selection: {len(run_indices)}/{len(all_segments)}",
         f"Seed mode: {normalize_seed_mode((plan.raw or {}).get('seedMode', (plan.raw or {}).get('seed_mode')))}",
-        "Seeds: " + ", ".join(
-            f"S{index + 1}={int(seed)}" for index in sorted(generated_indices)
-        ) if generated_indices else "Seeds: none",
+        "Seeds: " + ", ".join(f"S{index + 1}={int(seed)}" for index in sorted(generated_indices))
+        if generated_indices else "Seeds: none",
         f"Sampling: {sampling_mode}",
     )
     execution_report.add(
@@ -2066,20 +1646,14 @@ def execute_director_plan_core(
         f"Output frames: {int(combined.shape[0])}",
     )
     for seam_line in build_seam_report_lines(
-        export_chunks,
-        export_audios,
-        fps=float(plan.frame_rate or 24),
+        export_chunks, export_audios, fps=float(plan.frame_rate or 24),
         segment_slots=[int(seg.timeline_index) for seg in export_segments],
     ):
         execution_report.add("Seam Diagnostics", seam_line)
     if sampling_mode == "internal":
         execution_report.add(
-            "Run",
-            f"Steps: {int(steps)}",
-            f"Sampler: {sampler}",
-            f"Scheduler: {scheduler}",
-            f"Video shift: {float(shift_video):g}",
-            f"Audio shift: {float(shift_audio):g}",
+            "Run", f"Steps: {int(steps)}", f"Sampler: {sampler}", f"Scheduler: {scheduler}",
+            f"Video shift: {float(shift_video):g}", f"Audio shift: {float(shift_audio):g}",
         )
     else:
         sigma_identity = tensor_fingerprint(external_sigmas)
@@ -2101,8 +1675,7 @@ def execute_director_plan_core(
             seg = all_segments[slot]
             source_bridge_active = slot in source_bridge_consumer_slots
             resolved = resolve_context_link(
-                seg,
-                motion_context_enabled=motion_enabled,
+                seg, motion_context_enabled=motion_enabled,
                 audio_context_enabled=audio_context_requested,
                 audio_generate=audio_mode == AUDIO_MODE_GENERATE,
                 source_bridge_active=source_bridge_active,
@@ -2119,13 +1692,8 @@ def execute_director_plan_core(
                 "requested_frames": requested_context,
                 "actual_frames": "cached" if slot in cache_hit_indices else 0,
             }
-        execution_report.add(
-            "Previous Context", format_previous_context(slot - 1, slot, diag)
-        )
-        execution_report.add(
-            "Audio Context",
-            format_audio_context(slot - 1, slot, diag),
-        )
+        execution_report.add("Previous Context", format_previous_context(slot - 1, slot, diag))
+        execution_report.add("Audio Context", format_audio_context(slot - 1, slot, diag))
 
     if not pin_renorm_enabled:
         execution_report.add("Latent Scale Lock", "OFF")
@@ -2139,8 +1707,7 @@ def execute_director_plan_core(
             if diag is not None and not diag["visual"]:
                 execution_report.add(
                     "Latent Scale Lock",
-                    f"S{slot} -X-> S{slot + 1}\nchain reset\n"
-                    f"Pin Renorm: SKIPPED\nReason: {diag['visual_reason']}",
+                    f"S{slot} -X-> S{slot + 1}\nchain reset\nPin Renorm: SKIPPED\nReason: {diag['visual_reason']}",
                 )
             elif slot in cache_hit_indices:
                 execution_report.add(
@@ -2149,13 +1716,10 @@ def execute_director_plan_core(
                     "Reason: segment reused full cache; no new latent was conditioned",
                 )
         if not any("baseline:" in value for value in pin_diagnostics.values()):
-            warning_messages.append(
-                "pin_renorm ON but no raw video latent handoff occurred"
-            )
+            warning_messages.append("pin_renorm ON but no raw video latent handoff occurred")
 
     for slot in sorted(color_diagnostics):
         execution_report.add("Color", color_diagnostics[slot])
-
     for index in range(len(all_segments)):
         if index in generated_indices:
             state = "generated"
@@ -2168,26 +1732,20 @@ def execute_director_plan_core(
             state = "not part of this export"
         execution_report.add("Cache", f"S{index + 1}: {state}")
     for index in sorted(context_cache_hits):
-        execution_report.add(
-            "Cache", f"Previous context: S{index + 1} cache valid"
-        )
+        execution_report.add("Cache", f"Previous context: S{index + 1} cache valid")
     for index, status in sorted(cache_statuses.items()):
         if status == "stale":
             execution_report.add("Cache", f"S{index + 1}: stale / invalidated")
-            warning_messages.append(
-                f"S{index + 1}: segment cache stale because timeline or dependency changed"
-            )
+            warning_messages.append(f"S{index + 1}: segment cache stale because timeline or dependency changed")
         elif status in {"missing", "error"} and index not in cache_hit_indices:
             execution_report.add("Cache", f"S{index + 1}: cache {status}")
-
     for slot, line in sorted(reference_diagnostics.items()):
         execution_report.add("References", line)
     for seg in all_segments:
         slot = int(seg.timeline_index)
         if slot not in reference_diagnostics and int(seg.index) in cache_hit_indices:
             execution_report.add(
-                "References",
-                f"S{slot + 1}: cache reuse; no H3 reference conditioning executed this run",
+                "References", f"S{slot + 1}: cache reuse; no H3 reference conditioning executed this run",
             )
 
     execution_report.add(
@@ -2197,6 +1755,7 @@ def execute_director_plan_core(
         f"Denoise: {float(global_refine_config['denoise']):g}",
         f"Steps: {int(global_refine_config['steps']) or 'Auto'}",
         f"Seed Mode: {str(global_refine_config['seed_mode']).title()}",
+        f"Result Previews: {'ON' if global_refine_config.get('result_previews_enabled') else 'OFF'}",
         f"Upscale Method: {global_refine_config['upscale_method']}",
         (f"H3 Latent Model: {str(global_refine_config.get('latent_upscale_model') or '')}"
          if global_refine_config.get('mode') == 'upscale' and global_refine_config.get('upscale_method') == 'h3_learned_latent' else ""),
@@ -2284,6 +1843,7 @@ def execute_director_plan_core(
     execution_report.add(
         "Preview",
         f"Director Preview: {'ON' if preview_config['enabled'] else 'OFF'}",
+        f"Refine Result Previews: {'ON' if global_refine_config.get('result_previews_enabled') else 'OFF'}",
         "ComfyUI Default Preview: SUPPRESSED",
         f"preview_frames: {preview_config['preview_frames']}",
         f"preview_fps: {preview_config['preview_fps']}",
@@ -2291,41 +1851,26 @@ def execute_director_plan_core(
         f"jpeg_quality: {preview_config['jpeg_quality']}",
         f"preview_every: {preview_config['preview_every']}",
     )
-
     for message in dict.fromkeys(warning_messages):
         execution_report.add("Warnings", f"- {message}")
     execution_report.add(
-        "Final",
-        "Status: SUCCESS_WITH_WARNING" if warning_messages else "Status: SUCCESS",
+        "Final", "Status: SUCCESS_WITH_WARNING" if warning_messages else "Status: SUCCESS",
     )
     report_director_progress(
-        node_id,
-        segment_index=max(0, seg_total - 1),
-        segment_total=max(1, seg_total),
-        phase="finalize",
-        phase_value=1,
-        phase_max=1,
+        node_id, segment_index=max(0, seg_total - 1), segment_total=max(1, seg_total),
+        phase="finalize", phase_value=1, phase_max=1,
     )
     report_director_finish(node_id, seg_total)
     rendered_report = execution_report.render()
     report_director_report(node_id, rendered_report)
     if node_id:
         try:
-            final_frames_b64 = [
-                tensor_frame_to_jpeg_b64(combined[index])
-                for index in range(int(combined.shape[0]))
-            ]
+            final_frames_b64 = [tensor_frame_to_jpeg_b64(combined[index]) for index in range(int(combined.shape[0]))]
             if final_frames_b64:
                 report_director_segment_preview(
-                    node_id,
-                    segment_index=max(0, len(export_chunks) - 1),
-                    image_b64=final_frames_b64[0],
-                    width=int(combined.shape[2]),
-                    height=int(combined.shape[1]),
-                    frames=final_frames_b64,
-                    fps=float(plan.frame_rate or 24),
-                    stage="Final",
-                    result_kind="final",
+                    node_id, segment_index=max(0, len(export_chunks) - 1), image_b64=final_frames_b64[0],
+                    width=int(combined.shape[2]), height=int(combined.shape[1]), frames=final_frames_b64,
+                    fps=float(plan.frame_rate or 24), stage="Final", result_kind="final",
                 )
         except Exception as exc:
             log.debug("Final result preview skipped: %s", exc)
