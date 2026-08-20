@@ -9,3 +9,10 @@
 
 Based on ComfyUI MiniMax H3 support (PR #15224) and workflow templates (PR #15228).
 """
+
+# Install before executor_core imports apply_exported_motion_context so every
+# normal ComfyUI path and direct director.* import gets the same Audio Previous
+# Context stabilization behavior.
+from .audio_context_refresh import install_audio_context_refresh
+
+install_audio_context_refresh()
