@@ -521,6 +521,7 @@ def apply_global_refine(
         return GlobalRefineOutcome(samples=samples, status="SKIPPED")
 
     second_sampling_enabled = bool(config.get("second_sampling_enabled", True))
+    result_previews_enabled = bool(config.get("result_previews_enabled", False))
     deblur_enabled = bool(config.get("rtx_deblur_enabled", False))
     upscale_enabled = config.get("mode") == "upscale"
     method = str(config.get("upscale_method") or "lanczos").strip().lower()
@@ -566,7 +567,7 @@ def apply_global_refine(
                 timings=timings,
             )
 
-        if second_sampling_enabled:
+        if second_sampling_enabled and result_previews_enabled:
             _emit_refine_result_preview(
                 samples,
                 vae=vae,
@@ -744,15 +745,16 @@ def apply_global_refine(
             pass_steps.append(int(pass_step_count))
             pass_seeds.append(int(pass_seed))
             timings[f"refine_pass_{pass_index + 1}"] = elapsed
-            _emit_refine_result_preview(
-                refined,
-                vae=vae,
-                conditioning=refine_positive,
-                variant=f"pass:{pass_index + 1}",
-                pass_index=pass_index + 1,
-                pass_count=pass_count,
-                has_context=bool(preserve_noise_mask),
-            )
+            if result_previews_enabled:
+                _emit_refine_result_preview(
+                    refined,
+                    vae=vae,
+                    conditioning=refine_positive,
+                    variant=f"pass:{pass_index + 1}",
+                    pass_index=pass_index + 1,
+                    pass_count=pass_count,
+                    has_context=bool(preserve_noise_mask),
+                )
             if on_pass_result is not None:
                 on_pass_result(pass_index + 1, pass_count, refined)
 
@@ -763,6 +765,7 @@ def apply_global_refine(
         status_lines = [
             "SUCCESS",
             "Second Sampling: ON",
+            f"Result Previews: {'ON' if result_previews_enabled else 'OFF'}",
             f"Refine Model: {selected_model_name}",
             f"Passes: {pass_count}",
             f"Upscale: {'ON' if upscale_enabled else 'OFF'}",
