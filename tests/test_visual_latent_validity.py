@@ -95,4 +95,5 @@ def test_executor_facade_marks_and_consumes_visual_invalidity():
     assert 'updated_handoff["visual_latent_valid"] = valid' in source
     assert 'tail_latent["visual_latent_valid"] = valid' in source
     assert 'context_latent.get("visual_latent_valid") is False' in source
-    assert 'visual_source="pixels (fallback)"' in source
+    assert 'call["context_audio_latent"] = context_latent' in source
+    assert 'call["context_latent"] = None' in source
