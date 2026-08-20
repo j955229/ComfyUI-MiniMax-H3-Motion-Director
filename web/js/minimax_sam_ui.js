@@ -25,9 +25,10 @@ function render(select) {
     const note = select?.parentElement?.querySelector?.('[data-capability="sam_model"]');
     if (!note) return;
     const ready = hasCompatibleModel(select);
-    note.hidden = ready;
+    if (note.hidden !== ready) note.hidden = ready;
     note.classList.toggle("bad", !ready);
-    note.textContent = ready ? "" : TEXT[language()];
+    const text = ready ? "" : TEXT[language()];
+    if (note.textContent !== text) note.textContent = text;
 }
 
 function bind(select) {
