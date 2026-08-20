@@ -11,6 +11,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from .face_refine_validation import resolve_sam_model_path
+
 
 def _gaussian_blur(mask: torch.Tensor, radius: int) -> torch.Tensor:
     radius = max(0, int(radius))
@@ -67,17 +69,11 @@ def build_rect_masks(transform: dict[str, Any], config: dict[str, Any], device, 
 def build_sam_masks(crops: torch.Tensor, transform: dict[str, Any], config: dict[str, Any]) -> torch.Tensor:
     """Build source-derived SAM masks only when explicitly selected."""
     model_name=str(config.get("sam_model") or "")
-    if not model_name: raise ValueError("SAM mask mode was selected but no internal SAM model was selected.")
-    import folder_paths
+    path=resolve_sam_model_path(model_name)
     try:
         from ultralytics import SAM
     except ImportError as exc:
         raise ImportError("SAM mask mode requires the optional ultralytics SAM dependency.") from exc
-    path=None
-    for category in ("sams","sam","ultralytics_segm"):
-        path=getattr(folder_paths,"get_full_path",lambda *_:None)(category,model_name)
-        if path: break
-    if not path: raise FileNotFoundError(f"SAM model not found: {model_name}")
     model=SAM(path); masks=[]
     threshold=float(config.get("sam_threshold") or 0.93)
     for index,frame in enumerate(crops):
