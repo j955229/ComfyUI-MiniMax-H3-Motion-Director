@@ -1,7 +1,7 @@
 const DEFAULT_CONFIG = Object.freeze({
     version: 9,
     global_refine: {
-        enabled: false, mode: "refine", second_sampling_enabled: true, denoise: 0.25, steps: 0,
+        enabled: false, mode: "refine", second_sampling_enabled: true, result_previews_enabled: false, denoise: 0.25, steps: 0,
         seed_mode: "inherit", seed_offset: 1, skip_fl2v: false,
         upscale_method: "lanczos", upscale_model: "",
         latent_upscale_model: "", latent_upscale_precision: "fp16", latent_upscale_device: "cuda",
@@ -67,6 +67,7 @@ const POST_LABELS = {
     "global_refine.steps": ["Steps (0=Auto)", "步数（0=自动）"],
     "global_refine.seed_mode": ["Refine Randomness", "精修随机性"],
     "global_refine.seed_offset": ["Seed Offset", "Seed 偏移"],
+    "global_refine.result_previews_enabled": ["Pass Result Previews (extra VAE decode)", "阶段结果预览（额外 VAE 解码）"],
     "global_refine.skip_fl2v": ["Skip FL2V", "跳过 FL2V"],
     "global_refine.upscale_method": ["Method", "放大方法"],
     "global_refine.upscale_model": ["Model", "模型"],
@@ -155,6 +156,7 @@ export function normalizePostprocessConfig(raw) {
     global.enabled = !!global.enabled;
     global.mode = inChoice(global.mode, ["refine", "upscale"], "refine");
     global.second_sampling_enabled = global.second_sampling_enabled !== false;
+    global.result_previews_enabled = global.result_previews_enabled === true;
     global.seed_mode = inChoice(global.seed_mode, ["inherit", "offset"], "inherit");
     const seedOffset = Number(global.seed_offset);
     global.seed_offset = Number.isFinite(seedOffset)
@@ -248,6 +250,7 @@ export function globalRefineSummary(config, width = 864, height = 480, locale = 
             ? `${zh ? "Seed 偏移" : "Seed Offset"} ${Number(global.seed_offset) >= 0 ? "+" : ""}${Number(global.seed_offset)}`
             : (zh ? "保持原 Seed" : "Keep original Seed");
         parts.push(zh ? "二次采样 ON" : "Second Sampling ON", `D${Number(global.denoise).toFixed(2)}`, steps, seed);
+        if (global.result_previews_enabled) parts.push(zh ? "阶段预览 ON" : "Pass Previews ON");
     } else {
         parts.push(zh ? "二次采样 OFF" : "Second Sampling OFF");
     }
@@ -368,6 +371,7 @@ export function mountPostprocessUI(container, store, { fetchApi, directorSize = 
             ${field("Steps (0=Auto)", "global_refine.steps", "number", 'min="0" max="200" step="1"')}
             ${field("Refine Randomness", "global_refine.seed_mode", "select", options([["inherit","Keep original Seed (recommended)"],["offset","Use Seed offset"]]))}
             ${conditional("seed_offset", field("Seed Offset", "global_refine.seed_offset", "number", 'min="-2147483648" max="2147483647" step="1"'))}
+            ${field("Pass Result Previews (extra VAE decode)", "global_refine.result_previews_enabled", "checkbox")}
             ${field("Skip FL2V", "global_refine.skip_fl2v", "checkbox")}
           </div></div>
         </div>
