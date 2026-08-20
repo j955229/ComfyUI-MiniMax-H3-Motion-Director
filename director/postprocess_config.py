@@ -22,6 +22,7 @@ DEFAULT_POSTPROCESS_CONFIG: dict[str, Any] = {
         "enabled": False,
         "mode": "refine",
         "second_sampling_enabled": True,
+        "result_previews_enabled": False,
         "refine_model": "",
         "passes": 1,
         "denoise": 0.25,
@@ -232,6 +233,7 @@ def normalize_postprocess_config(raw: Any) -> dict[str, Any]:
     g["enabled"] = _bool(g_raw.get("enabled"), False)
     g["mode"] = _choice(g_raw.get("mode"), {"refine", "upscale"}, "refine")
     g["second_sampling_enabled"] = _bool(g_raw.get("second_sampling_enabled"), True)
+    g["result_previews_enabled"] = _bool(g_raw.get("result_previews_enabled"), False)
     g["refine_model"] = str(g_raw.get("refine_model") or "").strip()
     g["passes"] = _int(g_raw.get("passes"), 1, 1, 9999)
 
@@ -477,6 +479,8 @@ def resolve_upscale_target(config: dict[str, Any], director_width: int, director
 def postprocess_cache_fingerprint(config: dict[str, Any]) -> dict[str, Any]:
     """Return the effective per-segment Global Refine cache identity."""
     g = dict(normalize_postprocess_config(config)["global_refine"])
+    # Result previews only affect UI decoding cost; they do not change generated pixels/latents.
+    g.pop("result_previews_enabled", None)
     return {"global_refine": g if g["enabled"] else False}
 
 
