@@ -21,9 +21,11 @@ def test_visual_invalidity_keeps_audio_candidate_independent():
     source = _source()
     context_hook = source[source.index("def context_hook"):source.index("def assembled_face_noop")]
     assert 'context_latent.get("visual_latent_valid") is False' in context_hook
+    assert 'call["context_audio_latent"] = context_latent' in context_hook
+    assert 'call["context_latent"] = None' in context_hook
+    assert 'call["color_reanchor_enabled"] = True' not in context_hook
     assert "audio_vae" in context_hook
     assert "video_vae" in context_hook
-    assert "visual_source=\"pixels (fallback)\"" in context_hook
 
 
 def test_source_bridge_delegates_to_preserved_assembled_face_refine_path():
