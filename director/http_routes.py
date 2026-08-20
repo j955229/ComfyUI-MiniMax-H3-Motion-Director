@@ -19,6 +19,7 @@ import folder_paths
 from aiohttp import web
 from server import PromptServer
 
+from .face_refine_validation import compatible_sam_models
 from .material_library_routes import register_material_library_routes
 from .video_export import (
     FINAL_VIDEO_REGISTRY,
@@ -254,7 +255,8 @@ async def minimax_postprocess_capabilities(_request):
         "upscale_models": filenames("upscale_models"),
         "latent_upscale_models": filenames("latent_upscale_models"),
         "face_detectors": filenames("ultralytics_bbox", "ultralytics"),
-        "sam_models": filenames("sams", "sam", "ultralytics_segm"),
+        "sam_models": compatible_sam_models(),
+        "sam_model_folder": os.path.join(folder_paths.models_dir, "sams"),
         "dependencies": {
             "nvidia_rtx_vsr": importlib.util.find_spec("nvvfx") is not None,
             "ultralytics": importlib.util.find_spec("ultralytics") is not None,
