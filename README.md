@@ -1,4 +1,4 @@
-# MiniMax H3 Motion Director [English](README.md) | [简体中文](README_zh.md)
+# MiniMax H3 Motion Director.  [English](README.md) | [简体中文](README_zh.md)
 
 ![Version](https://img.shields.io/badge/version-v1.2.0-2ea44f)
 ![License](https://img.shields.io/badge/license-GPL--3.0-blue)
