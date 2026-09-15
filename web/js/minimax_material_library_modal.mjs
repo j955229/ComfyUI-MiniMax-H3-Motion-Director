@@ -33,7 +33,7 @@ import {
     updateMaterial,
     uploadMediaMaterial,
 } from "./minimax_material_library_api.mjs";
-import { materialCategories, mlT, onMaterialLocaleChange } from "./minimax_material_library_i18n.mjs";
+import { materialCategories, materialCategoryLabel, mlT, onMaterialLocaleChange } from "./minimax_material_library_i18n.mjs?boot=material_library_i18n_v2";
 
 const STYLE_ID = "mmx-material-library-styles";
 const TYPE_ORDER = ["image", "audio", "video", "prompt"];
@@ -587,7 +587,7 @@ export function mountMaterialLibrary(editor, node = null) {
             subtabsEl.appendChild(wrap);
         };
         appendSubtab("", mlT("allCategories"));
-        for (const category of categoriesForType(state.activeType)) appendSubtab(category, category);
+        for (const category of categoriesForType(state.activeType)) appendSubtab(category, materialCategoryLabel(category));
         const addButton = document.createElement("button");
         addButton.type = "button";
         addButton.className = "mmx-ml-subadd";
@@ -669,7 +669,7 @@ export function mountMaterialLibrary(editor, node = null) {
         }
         const meta = document.createElement("div"); meta.className = "mmx-ml-card-meta";
         const title = document.createElement("div"); title.className = "mmx-ml-card-title"; title.textContent = item.title || relativeName(item);
-        const sub = document.createElement("div"); sub.className = "mmx-ml-card-sub"; sub.textContent = `${item.category || "其他"} · ${mlT(item.type)}`;
+        const sub = document.createElement("div"); sub.className = "mmx-ml-card-sub"; sub.textContent = `${materialCategoryLabel(item.category || "其他")} · ${mlT(item.type)}`;
         meta.append(title, sub); card.appendChild(meta);
         card.title = mlT("leftRightHint");
         card.addEventListener("click", () => {
@@ -779,7 +779,7 @@ export function mountMaterialLibrary(editor, node = null) {
         const titleInput = document.createElement("input"); titleInput.value = item?.title || "";
         const catLabel = document.createElement("label"); catLabel.textContent = mlT("category");
         const cat = document.createElement("select");
-        for (const value of categoriesForType(type)) { const o = document.createElement("option"); o.value = value; o.textContent = value; cat.appendChild(o); }
+        for (const value of categoriesForType(type)) { const o = document.createElement("option"); o.value = value; o.textContent = materialCategoryLabel(value); cat.appendChild(o); }
         cat.value = item?.category || state.activeCategory || "其他";
         editorCard.append(title, titleLabel, titleInput, catLabel, cat);
         let content = null;

@@ -52,18 +52,18 @@ _PHASE_STARTED: dict[str, tuple[str, float]] = {}
 _PROGRESS_CONTEXT = threading.local()
 
 PHASE_LABELS = {
-    "prepare": "准备片段",
-    "context_encode": "H3 条件编码",
-    "sample": "采样",
-    "global_upscale": "全局精修 · 放大",
-    "global_refine": "全局精修 · 二次采样",
-    "decode": "AV 解码",
-    "assemble": "多段组合",
-    "face_refine": "人脸精修",
-    "finalize": "生成结果整理",
+    "prepare": "Preparing segment",
+    "context_encode": "H3 conditioning",
+    "sample": "Sampling",
+    "global_upscale": "Global refine · Upscale",
+    "global_refine": "Global refine · Second sampling",
+    "decode": "AV decoding",
+    "assemble": "Assembling segments",
+    "face_refine": "Face refinement",
+    "finalize": "Preparing result",
     "rtx_deblur": "NVIDIA RTX Deblur",
-    "plan": "解析时间轴 / 加载视频",
-    "finish": "全部完成",
+    "plan": "Parsing timeline / loading video",
+    "finish": "Complete",
 }
 
 

@@ -7,7 +7,7 @@
 
 /** Shared helpers for MiniMax H3 Motion Director generation tasks. */
 
-import { t } from "./minimax_i18n.js";
+import { t } from "./minimax_i18n.js?boot=director_i18n_v2";
 
 /** MiniMax H3 canvas snap (official nodes use 32). */
 export const MINIMAX_CANVAS_MULTIPLE = 32;

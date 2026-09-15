@@ -69,7 +69,10 @@ function ensureStyles() {
 .mmx-director-page-arrow{width:34px;font-size:17px}
 .mmx-director-page-tab{min-width:104px;padding:0 14px;font-size:12px;font-weight:650}
 .mmx-director-page-tab.active{border-color:#4fff8f;background:#163723;color:#4fff8f}
-.mmx-director-page-actions{display:flex;justify-content:flex-end}
+.mmx-director-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px}
+.mmx-director-page-run{height:30px;padding:0 14px;border:1px solid #3a8f58;border-radius:6px;background:#163723;color:#6eff9e;font-size:12px;font-weight:650;cursor:pointer}
+.mmx-director-page-run:hover{border-color:#4fff8f;background:#1d4a2f;color:#fff}
+.mmx-director-page-run:disabled{cursor:wait;opacity:.65}
 .mmx-director-page-close{flex:0 0 32px;width:32px;height:32px;padding:0;border:1px solid transparent;border-radius:6px;background:transparent;color:#aaa;font-size:22px;line-height:28px;cursor:pointer}
 .mmx-director-page-close:hover{border-color:#4a4a4a;background:#2a2a2a;color:#fff}
 .mmx-director-page-stack{flex:1 1 auto;min-width:0;min-height:0;position:relative;overflow:hidden}
@@ -91,6 +94,7 @@ export function createDirectorModal({
     translate,
     toggleLanguage,
     hasInternalDialog,
+    onRun,
     onOpen,
     onClose,
     onResize,
@@ -161,6 +165,11 @@ export function createDirectorModal({
     closeButton.dataset.a = "close-director";
     closeButton.textContent = "×";
 
+    const runButton = document.createElement("button");
+    runButton.type = "button";
+    runButton.className = "mmx-director-page-run";
+    runButton.dataset.a = "run-director";
+
     const pageStack = document.createElement("div");
     pageStack.className = "mmx-director-page-stack";
     const pages = Object.fromEntries(DIRECTOR_PAGES.map((page, index) => {
@@ -178,7 +187,7 @@ export function createDirectorModal({
 
     const actions = document.createElement("div");
     actions.className = "mmx-director-page-actions";
-    actions.appendChild(closeButton);
+    actions.append(runButton, closeButton);
     header.append(title, navigation, actions);
     shell.append(header, pageStack, overlayLayer);
     overlay.appendChild(shell);
@@ -195,6 +204,9 @@ export function createDirectorModal({
         languageButton.textContent = translate("toolbar.langToggle");
         languageButton.title = translate("toolbar.langToggleTitle");
         title.textContent = translate("modal.directorTitle");
+        runButton.textContent = translate("modal.run");
+        runButton.title = translate("modal.runTitle");
+        runButton.setAttribute("aria-label", translate("modal.run"));
         closeButton.title = translate("modal.close");
         closeButton.setAttribute("aria-label", translate("modal.close"));
         shell.setAttribute("aria-label", translate("modal.directorTitle"));
@@ -233,6 +245,7 @@ export function createDirectorModal({
         previousButton,
         nextButton,
         overlayLayer,
+        runButton,
         closeButton,
         keyHandler: null,
         get isOpen() { return isOpen; },
@@ -310,6 +323,7 @@ export function createDirectorModal({
             window.removeEventListener("resize", scheduleResize);
             openButton.removeEventListener("click", handleOpenClick);
             languageButton.removeEventListener("click", handleLanguageClick);
+            runButton.removeEventListener("click", handleRunClick);
             closeButton.removeEventListener("click", handleCloseClick);
             previousButton.removeEventListener("click", handlePreviousPage);
             nextButton.removeEventListener("click", handleNextPage);
@@ -338,6 +352,17 @@ export function createDirectorModal({
     const handleLanguageClick = (event) => {
         stopLauncherEvent(event);
         toggleLanguage?.();
+    };
+    const handleRunClick = async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (runButton.disabled || typeof onRun !== "function") return;
+        runButton.disabled = true;
+        try {
+            await onRun();
+        } finally {
+            runButton.disabled = false;
+        }
     };
     const handleCloseClick = (event) => {
         event.preventDefault();
@@ -376,6 +401,7 @@ export function createDirectorModal({
 
     openButton.addEventListener("click", handleOpenClick);
     languageButton.addEventListener("click", handleLanguageClick);
+    runButton.addEventListener("click", handleRunClick);
     closeButton.addEventListener("click", handleCloseClick);
     previousButton.addEventListener("click", handlePreviousPage);
     nextButton.addEventListener("click", handleNextPage);

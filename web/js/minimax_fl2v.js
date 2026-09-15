@@ -24,7 +24,7 @@ import {
     resolveTaskKey,
     roundDurationSec,
 } from "./minimax_gen_timeline.js";
-import { t } from "./minimax_i18n.js";
+import { t } from "./minimax_i18n.js?boot=director_i18n_v2";
 import { resolveFl2vEndpointState } from "./minimax_fl2v_state.mjs";
 
 export const FL2V_STYLES = `

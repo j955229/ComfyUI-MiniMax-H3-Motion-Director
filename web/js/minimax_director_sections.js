@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { getLocale } from "./minimax_i18n.js";
+import { getLocale } from "./minimax_i18n.js?boot=director_i18n_v2";
 import { getSamplingConnectionState } from "./minimax_sampling_ui.js";
 import {
     localizedWidgetLabel,

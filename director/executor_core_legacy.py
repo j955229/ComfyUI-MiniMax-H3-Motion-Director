@@ -506,7 +506,7 @@ def execute_director_plan_core(
             "validated and should be disabled."
         )
     if clear_vram_between_segments:
-        reports.append("VRAM: 段间清理显存已开启。")
+        reports.append("VRAM: cleanup between segments is enabled.")
     if audio_mode == AUDIO_MODE_MUTE:
         reports.append("Audio: muted — skip audio VAE decode, silent AUDIO output.")
     elif audio_mode == AUDIO_MODE_SOURCE:
@@ -1297,7 +1297,7 @@ def execute_director_plan_core(
         if fill is None:
             raise ValueError(
                 f"Segment {seg.index + 1} is not selected and has no valid cache or source frames to passthrough. "
-                "Include it in「选择运行」, or switch export to「分段导出」."
+                "Include it in Selective Run, or switch export to Segments."
             )
         completed_outputs[seg.index] = fill
         passthrough_indices.append(seg.index)
@@ -1311,7 +1311,7 @@ def execute_director_plan_core(
         reports.append(
             "Passthrough (not sampled) segment(s) "
             f"{[i + 1 for i in passthrough_indices]} — run selection is honored; "
-            "unselected gaps filled from cache/source for「全部导出」."
+            "unselected gaps filled from cache/source for All export."
         )
 
     def _report_resolved_preview(seg, frames: torch.Tensor) -> None:
