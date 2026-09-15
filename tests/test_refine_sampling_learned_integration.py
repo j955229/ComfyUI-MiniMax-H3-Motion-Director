@@ -165,6 +165,48 @@ def test_plain_second_sampling_keeps_existing_audio_drive_mask(monkeypatch):
     assert calls["sample"][0]["latent"]["noise_mask"] == "audio-drive-mask"
 
 
+def test_connected_refine_model_is_used_for_second_sampling(monkeypatch):
+    calls = _install_stubs()
+    mod = _load_module()
+    base_model = object()
+    turbo_model = object()
+    monkeypatch.setattr(
+        mod,
+        "_selected_refine_model",
+        lambda config, fallback, override: (override, "Connected Turbo LoRA Refine MODEL"),
+    )
+
+    out = mod.apply_global_refine(
+        {
+            "enabled": True,
+            "mode": "refine",
+            "second_sampling_enabled": True,
+            "passes": 1,
+            "steps": 4,
+            "denoise": 0.25,
+        },
+        task_key="t2v",
+        samples={"samples": "source"},
+        model=base_model,
+        vae=object(),
+        positive=[],
+        negative=[],
+        seed=7,
+        cfg=1.0,
+        first_steps=8,
+        sampler_name="euler",
+        scheduler="normal",
+        shift_video=0.0,
+        shift_audio=0.0,
+        director_width=64,
+        director_height=32,
+        refine_model_override=turbo_model,
+    )
+
+    assert out.succeeded
+    assert calls["sample"][0]["model"] is turbo_model
+
+
 def test_learned_latent_plus_deblur_fails_back_without_silent_pixel_fallback():
     calls = _install_stubs()
     mod = _load_module()

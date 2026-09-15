@@ -152,6 +152,7 @@ class MiniMaxH3MotionDirector(_BaseDirector):
         export_source_images=False,
         pin_renorm_enabled=False,
         postprocess_config="",
+        turbo_lora_model=None,
         director_inputs=None,
         prompt=None,
         extra_pnginfo=None,
@@ -224,6 +225,7 @@ class MiniMaxH3MotionDirector(_BaseDirector):
             pin_renorm_enabled=pin_renorm_enabled,
             clear_vram_between_segments=clear_vram_between_segments,
             postprocess_config=postprocess_config,
+            refine_model=turbo_lora_model,
         )
 
         postprocess = normalize_postprocess_config(postprocess_config)

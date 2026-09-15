@@ -311,8 +311,19 @@ def _deblur_report_lines(outcome: RTXDeblurOutcome | None) -> list[str]:
     return lines
 
 
-def _selected_refine_model(config: dict[str, Any], fallback_model):
-    """Load the dropdown-selected H3 diffusion model; empty means first-pass MODEL."""
+def _selected_refine_model(config: dict[str, Any], fallback_model, model_override=None):
+    """Select a connected H3 refine model before falling back to the dropdown."""
+    if model_override is not None:
+        import comfy.model_base
+
+        base_model = getattr(model_override, "model", None)
+        if not isinstance(base_model, comfy.model_base.MiniMaxH3):
+            raise ValueError(
+                "Connected Turbo LoRA Refine MODEL must wrap MiniMax H3; "
+                f"got {type(base_model).__name__}."
+            )
+        return model_override, "Connected Turbo LoRA Refine MODEL"
+
     model_name = str(config.get("refine_model") or "").strip()
     if not model_name:
         return fallback_model, "Follow First Pass"
@@ -513,6 +524,7 @@ def apply_global_refine(
     on_pass_result: RefinePassCallback | None = None,
     preview_every: int = 1,
     preserve_noise_mask: bool = False,
+    refine_model_override=None,
 ) -> GlobalRefineOutcome:
     """Run optional Deblur, upscale and one-or-more second-sampling passes."""
     if not config.get("enabled"):
@@ -705,7 +717,12 @@ def apply_global_refine(
                 timings=timings,
             )
 
-        refine_model, selected_model_name = _selected_refine_model(config, model)
+        if refine_model_override is None:
+            refine_model, selected_model_name = _selected_refine_model(config, model)
+        else:
+            refine_model, selected_model_name = _selected_refine_model(
+                config, model, refine_model_override
+            )
         refined = work
         if on_phase:
             on_phase("global_refine", 0)

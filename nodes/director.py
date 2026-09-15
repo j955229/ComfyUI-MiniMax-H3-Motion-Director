@@ -106,6 +106,16 @@ class MiniMaxH3MotionDirector:
                 **director_timeline_required_inputs(),
             },
             "optional": {
+                "turbo_lora_model": (
+                    "MODEL",
+                    {
+                        "tooltip": (
+                            "Optional MODEL for Global Refine and Face Refine only, such as "
+                            "the output of MiniMax H3 Turbo LoRA. The required model remains "
+                            "the first-pass model."
+                        ),
+                    },
+                ),
                 "i2v_groups": (
                     "MMX_MOTION_DIR_GROUP",
                     {
@@ -276,6 +286,7 @@ class MiniMaxH3MotionDirector:
                 "video_vae": "VAE",
                 "audio_vae": "VAE",
                 "clip": "CLIP",
+                "turbo_lora_model": "MODEL",
                 "sampler": "SAMPLER",
                 "sigmas": "SIGMAS",
             }
@@ -335,6 +346,7 @@ class MiniMaxH3MotionDirector:
         export_source_images=False,
         pin_renorm_enabled=False,
         postprocess_config="",
+        turbo_lora_model=None,
         prompt=None,
         extra_pnginfo=None,
         **kwargs,
@@ -391,6 +403,7 @@ class MiniMaxH3MotionDirector:
             pin_renorm_enabled=pin_renorm_enabled,
             clear_vram_between_segments=clear_vram_between_segments,
             postprocess_config=postprocess_config,
+            refine_model=turbo_lora_model,
         )
 
         if bool(getattr(plan, "mixed_mode", False)):

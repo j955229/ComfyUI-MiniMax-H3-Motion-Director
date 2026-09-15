@@ -166,6 +166,7 @@ def execute_director_plan_core(
     pin_renorm_enabled: bool = False,
     clear_vram_between_segments: bool = True,
     postprocess_config: str | dict[str, Any] = "",
+    refine_model=None,
 ):
     postprocess = normalize_postprocess_config(postprocess_config)
     face_config = postprocess["face_refine"]
@@ -201,6 +202,7 @@ def execute_director_plan_core(
         "pin_renorm_enabled": pin_renorm_enabled,
         "clear_vram_between_segments": clear_vram_between_segments,
         "postprocess_config": postprocess_config,
+        "refine_model": refine_model,
     }
 
     # Source Bridge pixels do not exist until both nominal segments are ready.
@@ -282,7 +284,7 @@ def execute_director_plan_core(
         outcome = _apply_face_refine(
             face_config,
             images=images,
-            model=model,
+            model=refine_model if refine_model is not None else model,
             vae=vae,
             audio_vae=audio_vae,
             clip=clip,
