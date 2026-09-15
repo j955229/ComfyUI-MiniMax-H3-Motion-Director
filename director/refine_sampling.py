@@ -424,7 +424,11 @@ def _emit_refine_result_preview(
     if not node_id:
         return
     try:
-        from .progress import report_director_segment_preview
+        from .progress import (
+            MAX_RESULT_PREVIEW_FRAMES,
+            report_director_segment_preview,
+            result_preview_indices,
+        )
         from .segment_runtime import tensor_frame_to_jpeg_b64
 
         video_latent, _audio_latent = _split_av(latent)
@@ -437,9 +441,10 @@ def _emit_refine_result_preview(
         )
         if not isinstance(images, torch.Tensor) or int(images.shape[0]) <= 0:
             return
+        frame_count = int(images.shape[0])
         frames = [
             tensor_frame_to_jpeg_b64(images[index])
-            for index in range(int(images.shape[0]))
+            for index in result_preview_indices(frame_count, MAX_RESULT_PREVIEW_FRAMES)
         ]
         height = int(images.shape[1])
         width = int(images.shape[2])
@@ -457,6 +462,7 @@ def _emit_refine_result_preview(
             result_variant=variant,
             pass_index=pass_index,
             pass_count=pass_count,
+            frame_count=frame_count,
         )
     except Exception as exc:
         log.debug("Refine result preview %s skipped: %s", variant, exc)

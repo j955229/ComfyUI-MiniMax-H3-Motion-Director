@@ -39,6 +39,12 @@ from .refine_sampling import apply_global_refine
 from .seam_report import build_seam_report_lines
 from .preview_manager import DirectorPreviewManager
 from .face_refine_pipeline import apply_face_refine
+from .first_pass_cache import (
+    load_first_pass_cache,
+    load_global_refine_cache,
+    save_first_pass_cache,
+    save_global_refine_cache,
+)
 from .frame_align import (
     H3_REFERENCE_VIDEO_PIPELINE,
     H3_SOURCE_BRIDGE_PIPELINE,
@@ -116,6 +122,7 @@ from .progress import (
     report_director_progress,
     report_director_report,
     report_director_segment_preview,
+    result_preview_indices,
 )
 from .segment_cache import (
     load_segment_audio_cache,
@@ -546,6 +553,8 @@ def execute_director_plan_core(
     completed_refine_contexts: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
     execution_report = DirectorExecutionReport()
     generated_indices: set[int] = set()
+    first_pass_cache_hit_indices: set[int] = set()
+    global_refine_cache_hit_indices: set[int] = set()
     cache_hit_indices: set[int] = set()
     cache_statuses: dict[int, str] = {}
     context_cache_hits: set[int] = set()
@@ -877,24 +886,56 @@ def execute_director_plan_core(
                 x0=x0, latent_shapes=latent_shapes,
             )
 
-        _h3_sample_started = time.perf_counter()
-        try:
-            samples = sample_single_stage(
-                model=model, positive=positive, negative=negative, latent=latent, seed=seed,
-                cfg=cfg, steps=steps, sampler_name=sampler, scheduler=scheduler,
-                shift_video=shift_video, shift_audio=shift_audio,
-                external_sampler=external_sampler, external_sigmas=external_sigmas,
-                on_phase=_report_sample_phase,
-                on_step_preview=_report_step_preview if live_tae_preview else None,
-                preview_every=int(preview_config["preview_every"]),
+        samples = None
+        first_pass_reused = False
+        if face_refine_config.get("enabled") and not global_refine_config.get("enabled"):
+            samples = load_global_refine_cache(
+                node_id, seg, plan, settings=cache_settings,
             )
-            stage_times["h3_sampling"] = time.perf_counter() - _h3_sample_started
-        except torch.cuda.OutOfMemoryError as exc:
-            raise RuntimeError(
-                "Motion Director ran out of VRAM during H3 sampling. Motion Context adds conditioning rows; "
-                "reduce resolution, use fewer references, or keep clear_vram_between_segments enabled. "
-                "No context/reference was silently removed."
-            ) from exc
+            if samples is not None:
+                first_pass_reused = True
+                global_refine_cache_hit_indices.add(int(seg.index))
+                stage_times["h3_sampling"] = 0.0
+                reports.append(
+                    f"Segment {timeline_slot + 1}: reused cached Global Refine H3 AV latent; "
+                    "initial sampling skipped."
+                )
+
+        if samples is None:
+            samples = load_first_pass_cache(
+                node_id, seg, plan, settings=cache_settings,
+            )
+            if samples is not None:
+                first_pass_reused = True
+                first_pass_cache_hit_indices.add(int(seg.index))
+                stage_times["h3_sampling"] = 0.0
+                reports.append(
+                    f"Segment {timeline_slot + 1}: reused cached first-pass H3 AV latent; "
+                    "initial sampling skipped."
+                )
+
+        if samples is None:
+            _h3_sample_started = time.perf_counter()
+            try:
+                samples = sample_single_stage(
+                    model=model, positive=positive, negative=negative, latent=latent, seed=seed,
+                    cfg=cfg, steps=steps, sampler_name=sampler, scheduler=scheduler,
+                    shift_video=shift_video, shift_audio=shift_audio,
+                    external_sampler=external_sampler, external_sigmas=external_sigmas,
+                    on_phase=_report_sample_phase,
+                    on_step_preview=_report_step_preview if live_tae_preview else None,
+                    preview_every=int(preview_config["preview_every"]),
+                )
+                stage_times["h3_sampling"] = time.perf_counter() - _h3_sample_started
+            except torch.cuda.OutOfMemoryError as exc:
+                raise RuntimeError(
+                    "Motion Director ran out of VRAM during H3 sampling. Motion Context adds conditioning rows; "
+                    "reduce resolution, use fewer references, or keep clear_vram_between_segments enabled. "
+                    "No context/reference was silently removed."
+                ) from exc
+            save_first_pass_cache(
+                node_id, seg, plan, latent=samples, settings=cache_settings,
+            )
 
         def _repin_refined_context(refine_positive, refine_latent):
             if context_entry is None or not apply_visual_context:
@@ -965,6 +1006,15 @@ def execute_director_plan_core(
             preserve_noise_mask=context_span > 0,
         )
         global_refine_outcomes[timeline_slot] = global_outcome
+        if global_refine_config.get("enabled") and global_outcome.succeeded:
+            save_global_refine_cache(
+                node_id,
+                seg,
+                plan,
+                latent=global_outcome.samples,
+                settings=cache_settings,
+                refine_config=global_refine_config,
+            )
         samples = global_outcome.samples
         if global_outcome.status == "FAILED":
             cleanup_segment_vram(enabled=True, unload_models=False)
@@ -1110,11 +1160,15 @@ def execute_director_plan_core(
             and decoded.shape[0] >= 1
         ):
             try:
-                frames_b64 = [tensor_frame_to_jpeg_b64(decoded[i]) for i in range(int(decoded.shape[0]))]
+                frame_count = int(decoded.shape[0])
+                frames_b64 = [
+                    tensor_frame_to_jpeg_b64(decoded[index])
+                    for index in result_preview_indices(frame_count, preview_config["preview_frames"])
+                ]
                 h, w = int(decoded.shape[1]), int(decoded.shape[2])
                 report_director_segment_preview(
                     node_id, segment_index=ui_idx, image_b64=frames_b64[0], width=w, height=h,
-                    frames=frames_b64, fps=float(plan.frame_rate or 24),
+                    frames=frames_b64, fps=float(plan.frame_rate or 24), frame_count=frame_count,
                 )
             except Exception as exc:
                 log.debug("Segment video preview skipped: %s", exc)
@@ -1123,7 +1177,8 @@ def execute_director_plan_core(
         reports.append(
             f"Segment {ui_idx + 1}/{timeline_seg_total}: {task_hint} ({target_len} frames, seed={seed})"
         )
-        generated_indices.add(int(seg.index))
+        if not first_pass_reused:
+            generated_indices.add(int(seg.index))
         diag = boundary_diagnostics[timeline_slot]
         if source_bridge_active:
             diag["visual_source"] = "Source Bridge"
@@ -1318,11 +1373,16 @@ def execute_director_plan_core(
         if int(frames.shape[0]) <= 0:
             return
         try:
-            frames_b64 = [tensor_frame_to_jpeg_b64(frames[i]) for i in range(int(frames.shape[0]))]
+            frame_count = int(frames.shape[0])
+            frames_b64 = [
+                tensor_frame_to_jpeg_b64(frames[index])
+                for index in result_preview_indices(frame_count, preview_config["preview_frames"])
+            ]
             height, width = int(frames.shape[1]), int(frames.shape[2])
             report_director_segment_preview(
                 node_id, segment_index=int(seg.timeline_index), image_b64=frames_b64[0],
                 width=width, height=height, frames=frames_b64, fps=float(plan.frame_rate or 24),
+                frame_count=frame_count,
             )
         except Exception as exc:
             log.debug("Resolved Source Bridge preview skipped: %s", exc)
@@ -1607,15 +1667,17 @@ def execute_director_plan_core(
             if node_id:
                 for export_segment, refined_chunk in zip(export_segments, refined_chunks):
                     try:
+                        frame_count = int(refined_chunk.shape[0])
                         frames_b64 = [
                             tensor_frame_to_jpeg_b64(refined_chunk[index])
-                            for index in range(int(refined_chunk.shape[0]))
+                            for index in result_preview_indices(frame_count, preview_config["preview_frames"])
                         ]
                         report_director_segment_preview(
                             node_id, segment_index=int(export_segment.timeline_index),
                             image_b64=frames_b64[0], width=int(refined_chunk.shape[2]),
                             height=int(refined_chunk.shape[1]), frames=frames_b64,
                             fps=float(plan.frame_rate or 24), stage="Face Refine Final", result_kind="segment",
+                            frame_count=frame_count,
                         )
                     except Exception as exc:
                         log.debug("Face-refined segment preview skipped: %s", exc)
@@ -1631,12 +1693,22 @@ def execute_director_plan_core(
         "Run",
         f"Segments: {segment_list(range(len(all_segments)))}",
         f"Generated: {segment_list(generated_indices)}",
+        f"Reused first-pass latent: {segment_list(first_pass_cache_hit_indices)}",
+        f"Reused Global Refine latent: {segment_list(global_refine_cache_hit_indices)}",
         f"Reused from cache: {segment_list(cache_hit_indices)}",
         f"Skipped by run selection: {segment_list(skipped_indices)}",
         f"Run selection: {len(run_indices)}/{len(all_segments)}",
         f"Seed mode: {normalize_seed_mode((plan.raw or {}).get('seedMode', (plan.raw or {}).get('seed_mode')))}",
-        "Seeds: " + ", ".join(f"S{index + 1}={int(seed)}" for index in sorted(generated_indices))
-        if generated_indices else "Seeds: none",
+        "Seeds: " + ", ".join(
+            f"S{index + 1}={int(seed)}"
+            for index in sorted(
+                generated_indices
+                | first_pass_cache_hit_indices
+                | global_refine_cache_hit_indices
+            )
+        )
+        if generated_indices or first_pass_cache_hit_indices or global_refine_cache_hit_indices
+        else "Seeds: none",
         f"Sampling: {sampling_mode}",
     )
     execution_report.add(
@@ -1721,7 +1793,15 @@ def execute_director_plan_core(
     for slot in sorted(color_diagnostics):
         execution_report.add("Color", color_diagnostics[slot])
     for index in range(len(all_segments)):
-        if index in generated_indices:
+        if index in global_refine_cache_hit_indices:
+            state = "Global Refine latent cache hit; Face Refine applied"
+        elif index in first_pass_cache_hit_indices:
+            state = (
+                "first-pass latent cache hit; postprocessed"
+                if global_refine_config.get("enabled") or face_refine_config.get("enabled")
+                else "first-pass latent cache hit; finalized"
+            )
+        elif index in generated_indices:
             state = "generated"
         elif index in cache_hit_indices:
             state = "cache hit"
@@ -1865,12 +1945,17 @@ def execute_director_plan_core(
     report_director_report(node_id, rendered_report)
     if node_id:
         try:
-            final_frames_b64 = [tensor_frame_to_jpeg_b64(combined[index]) for index in range(int(combined.shape[0]))]
+            final_frame_count = int(combined.shape[0])
+            final_frames_b64 = [
+                tensor_frame_to_jpeg_b64(combined[index])
+                for index in result_preview_indices(final_frame_count, preview_config["preview_frames"])
+            ]
             if final_frames_b64:
                 report_director_segment_preview(
                     node_id, segment_index=max(0, len(export_chunks) - 1), image_b64=final_frames_b64[0],
                     width=int(combined.shape[2]), height=int(combined.shape[1]), frames=final_frames_b64,
                     fps=float(plan.frame_rate or 24), stage="Final", result_kind="final",
+                    frame_count=final_frame_count,
                 )
         except Exception as exc:
             log.debug("Final result preview skipped: %s", exc)

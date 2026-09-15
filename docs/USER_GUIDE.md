@@ -386,6 +386,10 @@ This is also why a low-resolution first pass is efficient: spend upscale/refine 
 Low-resolution first pass → Check content/motion/composition → Reroll failed segments → Lock the shots → Global Refine / Upscale → Face Refine → Final Result
 ```
 
+Director caches each completed first-pass H3 AV latent. Enabling or adjusting Global Refine then reuses that Draft latent and skips first-pass sampling, provided the generation settings and segment inputs have not changed. Running the Director with post-processing disabled also reuses a matching Draft latent for a no-op finalize; change the generation seed or inputs to request a new take. A successful Global Refine latent is also retained as the input to a later Face Refine-only run. Runs completed before Draft caching was added need one new first-pass generation to create the reusable latent.
+
+Global Refine `Steps = 0` means `max(8, round(first-pass steps × 0.4))`; an 8-step first pass therefore produces an 8-step second-sampling pass. Upscale itself has no diffusion steps when Second Sampling is disabled. Face Refine uses the first-pass step count for each tracked face crop/chunk.
+
 If Global Refine fails, the completed first-pass result is retained. If Face Refine cannot find a usable face or the stage fails, the assembled result remains available instead of invalidating the whole pipeline.
 
 ---

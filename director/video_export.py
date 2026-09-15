@@ -251,11 +251,14 @@ class FinalVideoRegistry:
             self._records.pop(node, None)
         return run_id
 
-    def release(self, node_id: Any) -> None:
+    def release(self, node_id: Any, run_id: Any = None) -> bool:
         node = str(node_id)
         with self._lock:
+            if run_id is not None and self._current_runs.get(node) != str(run_id):
+                return False
             self._records.pop(node, None)
             self._current_runs.pop(node, None)
+        return True
 
     def _require_current(self, node_id: Any, run_id: Any) -> str:
         node, requested = str(node_id), str(run_id)

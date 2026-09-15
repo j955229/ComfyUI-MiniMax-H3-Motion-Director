@@ -1094,6 +1094,8 @@ export function mountOutputUI(
             value: "",
         },
     };
+    let resultVersion = 0;
+    let restorePromise = null;
 
     const liveImage =
         liveRoot.querySelector("[data-live-image]");
@@ -1601,13 +1603,35 @@ export function mountOutputUI(
                             : []
                     ),
             );
+        const fps =
+            Number(
+                ordered[0]?.fps
+                || 24,
+            );
+        const frameCount =
+            ordered.reduce(
+                (total, item) =>
+                    total
+                    + Number(
+                        item.frame_count
+                        || item.frames?.length
+                        || 0,
+                    ),
+                0,
+            );
 
         return frames.length
             ? {
                 frames,
-                fps:
-                    ordered[0]?.fps
-                    || 24,
+                fps,
+                frame_count: frameCount,
+                preview_fps:
+                    frames.length > 1
+                    && frameCount > 1
+                        ? fps
+                            * (frames.length - 1)
+                            / (frameCount - 1)
+                        : fps,
                 width:
                     ordered[0]?.width,
                 height:
@@ -1706,20 +1730,25 @@ export function mountOutputUI(
                 result?.fps
                 || 24,
             );
+        const previewFps =
+            Number(
+                result?.preview_fps
+                || fps,
+            );
 
         resultsRoot
             .querySelector(
                 "[data-result-time]",
             )
             .textContent =
-                `${(state.index / fps).toFixed(2)}`
+                `${(state.index / previewFps).toFixed(2)}`
                 + " / "
                 + `${(
                     Math.max(
                         0,
                         frames.length - 1,
                     )
-                    / fps
+                    / previewFps
                 ).toFixed(2)}`;
 
         resultsRoot
@@ -1742,7 +1771,8 @@ export function mountOutputUI(
                     ? `${result.width || "—"}×${result.height || "—"}`
                         + ` · ${fps} fps`
                         + ` · ${
-                            frames.length
+                            result.frame_count
+                            || frames.length
                             || (
                                 isVideo
                                     ? "video"
@@ -1767,7 +1797,8 @@ export function mountOutputUI(
 
             getFps: () =>
                 Number(
-                    activeResult()?.fps
+                    activeResult()?.preview_fps
+                    || activeResult()?.fps
                     || 24,
                 ),
 
@@ -2174,7 +2205,7 @@ export function mountOutputUI(
 
             finalInfo.textContent =
                 `${item.width || "—"}×${item.height || "—"}`
-                + ` · ${item.frames.length} ${tx("frames")}`
+                + ` · ${item.frame_count || item.frames.length} ${tx("frames")}`
                 + ` · ${item.fps || 24} fps`;
 
             finalInfo.dataset.hasResult =
@@ -2271,6 +2302,7 @@ export function mountOutputUI(
     };
 
     const clear = () => {
+        resultVersion += 1;
         stop();
         stopLiveMedia({
             clear: true,
@@ -2397,6 +2429,71 @@ export function mountOutputUI(
             false;
     };
 
+    const restoreLatestResult = () => {
+        const id =
+            String(
+                nodeId()
+                || "",
+            );
+
+        if (
+            !id
+            || state.segments.size
+            || state.final
+            || state.finalRecord
+        ) {
+            return Promise.resolve(false);
+        }
+
+        if (restorePromise) {
+            return restorePromise;
+        }
+
+        const version = resultVersion;
+        restorePromise =
+            (async () => {
+                const response =
+                    await fetchApi(
+                        `/minimax/motion-director/latest_result?node_id=${encodeURIComponent(id)}`,
+                    );
+
+                if (!response?.ok) {
+                    return false;
+                }
+
+                const snapshot =
+                    await response.json();
+
+                if (version !== resultVersion) {
+                    return false;
+                }
+
+                for (const preview of snapshot.previews || []) {
+                    consumePreview(preview);
+                }
+
+                if (snapshot.report) {
+                    setReport(snapshot.report);
+                }
+
+                if (snapshot.final_ready) {
+                    setFinalRecord(snapshot.final_ready);
+                }
+
+                return true;
+            })()
+                .catch(
+                    () => false,
+                )
+                .finally(
+                    () => {
+                        restorePromise = null;
+                    },
+                );
+
+        return restorePromise;
+    };
+
     const setPipelineStatus = (detail = {}) => {
         const phase =
             String(
@@ -2455,6 +2552,8 @@ export function mountOutputUI(
 
         if (state.page !== "results") {
             stop();
+        } else {
+            void restoreLatestResult();
         }
     };
 
@@ -2700,6 +2799,7 @@ export function mountOutputUI(
         setReport,
         setAudio,
         setFinalRecord,
+        restoreLatestResult,
         setPipelineStatus,
         setTab,
         setLiveStage,
@@ -2756,7 +2856,13 @@ export function mountOutputUI(
                     || "",
                 );
 
-            if (id) {
+            const runId =
+                String(
+                    state.finalRecord?.run_id
+                    || "",
+                );
+
+            if (id && runId) {
                 fetchApi(
                     "/minimax/motion-director/release_video",
                     {
@@ -2768,6 +2874,7 @@ export function mountOutputUI(
                         body:
                             JSON.stringify({
                                 node_id: id,
+                                run_id: runId,
                             }),
                     },
                 ).catch?.(

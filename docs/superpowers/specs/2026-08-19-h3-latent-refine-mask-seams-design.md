@@ -26,7 +26,7 @@ The intended workflow stays simple:
 3. Enable Global Refine and rerun the selected segment.
 4. When the learned-latent backend is selected, the first-pass H3 AV latent is spatially upscaled directly, then sampled again at final resolution without a decode -> pixel-upscale -> encode round-trip.
 
-A rerun may repeat the first low-resolution sampling pass; this version does not persist a full Draft latent.
+Director persists the complete first-pass H3 AV latent under a generation-only fingerprint. Later Global Refine or upscale reruns reuse that Draft latent and skip the first low-resolution sampling pass unless generation inputs changed.
 
 ## Native H3 noise-mask contract
 

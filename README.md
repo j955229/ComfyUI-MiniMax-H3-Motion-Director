@@ -213,6 +213,7 @@ Recommended source: 螢幕擷取畫面 2026-08-19 034623(1).png
 ### Global Refine
 
 Global Refine can run a second sampling pass and optionally upscale the segment/result before refinement.
+Completed first-pass H3 AV latents are cached separately from final outputs, so later Global Refine or upscale runs can skip the initial sampling pass when generation inputs are unchanged. A matching first-pass cache is also reused when you run the Director with post-processing disabled, allowing a no-op finalize without another generation. Change the generation seed or inputs when you want a new take. Successful Global Refine latents can feed a later Face Refine-only run without regenerating the segment.
 
 Available paths include, depending on the installed runtime and models:
 
