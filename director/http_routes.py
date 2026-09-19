@@ -21,6 +21,7 @@ from server import PromptServer
 
 from .face_refine_validation import compatible_sam_models
 from .material_library_routes import register_material_library_routes
+from .progress import clear_director_result_snapshot, director_result_snapshot
 from .video_export import (
     FINAL_VIDEO_REGISTRY,
     FinalVideoUnavailable,
@@ -301,9 +302,20 @@ async def minimax_release_final_video(request):
     except Exception:
         body = {}
     node_id = str(body.get("node_id") or "").strip()
-    if node_id:
-        FINAL_VIDEO_REGISTRY.release(node_id)
+    run_id = str(body.get("run_id") or "").strip()
+    if node_id and run_id and FINAL_VIDEO_REGISTRY.release(node_id, run_id):
+        clear_director_result_snapshot(node_id)
     return web.json_response({"ok": True})
+
+
+async def minimax_latest_result(request):
+    node_id = str(request.rel_url.query.get("node_id") or "").strip()
+    if not node_id:
+        return web.json_response({"ok": False, "error": "Missing node_id"}, status=400)
+    snapshot = director_result_snapshot(node_id)
+    if snapshot is None:
+        return web.json_response({"ok": False, "error": "No result available"}, status=404)
+    return web.json_response({"ok": True, **snapshot})
 
 
 def register_routes() -> bool:
@@ -325,6 +337,7 @@ def register_routes() -> bool:
     _register_route(routes, "GET", "/minimax/motion-director/postprocess_capabilities", minimax_postprocess_capabilities)
     _register_route(routes, "POST", "/minimax/motion-director/save_video", minimax_save_final_video)
     _register_route(routes, "POST", "/minimax/motion-director/release_video", minimax_release_final_video)
+    _register_route(routes, "GET", "/minimax/motion-director/latest_result", minimax_latest_result)
     register_material_library_routes(routes)
     _ROUTES_REGISTERED = True
     log.info("MiniMax H3 Motion Director HTTP routes registered")

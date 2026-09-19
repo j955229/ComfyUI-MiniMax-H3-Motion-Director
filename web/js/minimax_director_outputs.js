@@ -5,7 +5,7 @@ import {
     refinePassOptions,
     reportResizeMaxHeight,
     staleDirectorOutputIndices,
-} from "./minimax_director_outputs_core.mjs?boot=director_outputs_v3";
+} from "./minimax_director_outputs_core.mjs?boot=director_outputs_v4";
 
 const DIRECTOR_CLASS = "MiniMaxH3MotionDirector";
 const REPORT_STYLE_ID = "mmx-director-report-tools";
@@ -14,7 +14,6 @@ const resultEnhancements = new Map();
 const refineResults = new Map();
 let reportMutationObserver = null;
 let eventListenersStarted = false;
-let capabilitiesPromise = null;
 
 function stripStaleDirectorOutputs(node) {
     const stale = staleDirectorOutputIndices(node?.outputs || []);
@@ -223,21 +222,6 @@ function enhanceReport(report) {
     sync();
 }
 
-function fetchCapabilities() {
-    if (!capabilitiesPromise) {
-        const requester = typeof api?.fetchApi === "function"
-            ? (path) => api.fetchApi(path)
-            : (path) => fetch(path);
-        capabilitiesPromise = requester("/minimax/motion-director/postprocess_capabilities")
-            .then((response) => response.json())
-            .catch((error) => {
-                console.warn("[MiniMax H3 Motion Director] refine model list unavailable:", error);
-                return { diffusion_models: [] };
-            });
-    }
-    return capabilitiesPromise;
-}
-
 function requestPostprocessRender(root) {
     const existing = root.querySelector('[data-path="global_refine.denoise"]')
         || root.querySelector("[data-path]");
@@ -246,12 +230,8 @@ function requestPostprocessRender(root) {
 
 function syncMultiPassLabels(root) {
     const english = postprocessIsEnglish(root);
-    const modelLabel = root.querySelector("[data-mmx-refine-model-label]");
     const passesLabel = root.querySelector("[data-mmx-refine-passes-label]");
-    const follow = root.querySelector('[data-path="global_refine.refine_model"] option[value=""]');
-    setText(modelLabel, english ? "Refine Model" : "二采模型");
     setText(passesLabel, english ? "Passes" : "采样轮数");
-    setText(follow, english ? "Follow First Pass" : "跟随一采");
 }
 
 function injectMultiPassControls(root) {
@@ -259,18 +239,8 @@ function injectMultiPassControls(root) {
     const grid = body?.querySelector?.(".mmx-post-grid");
     if (!grid) return false;
 
-    let modelSelect = root.querySelector('[data-path="global_refine.refine_model"]');
     let passesInput = root.querySelector('[data-path="global_refine.passes"]');
-    if (!modelSelect) {
-        const modelField = document.createElement("label");
-        modelField.className = "mmx-post-field";
-        modelField.dataset.mmxRefineModelField = "";
-        modelField.innerHTML = `
-          <span data-mmx-refine-model-label>二采模型</span>
-          <select data-path="global_refine.refine_model">
-            <option value="">跟随一采</option>
-          </select>`;
-
+    if (!passesInput) {
         const passesField = document.createElement("label");
         passesField.className = "mmx-post-field";
         passesField.dataset.mmxRefinePassesField = "";
@@ -278,40 +248,20 @@ function injectMultiPassControls(root) {
           <span data-mmx-refine-passes-label>采样轮数</span>
           <input type="number" min="1" max="9999" step="1" value="1" data-path="global_refine.passes">`;
 
-        grid.prepend(modelField, passesField);
-        modelSelect = modelField.querySelector("select");
+        grid.prepend(passesField);
         passesInput = passesField.querySelector("input");
         passesInput?.addEventListener("change", () => {
             const parsed = Math.trunc(Number(passesInput.value) || 1);
             const clamped = Math.max(1, Math.min(9999, parsed));
             if (String(clamped) !== passesInput.value) passesInput.value = String(clamped);
         });
-
-        fetchCapabilities().then((caps) => {
-            if (!modelSelect?.isConnected) return;
-            const rows = Array.isArray(caps?.diffusion_models) ? caps.diffusion_models : [];
-            const markup = '<option value="">跟随一采</option>'
-                + rows.map((name) => {
-                    const value = String(name);
-                    const escaped = value
-                        .replaceAll("&", "&amp;")
-                        .replaceAll('"', "&quot;")
-                        .replaceAll("<", "&lt;")
-                        .replaceAll(">", "&gt;");
-                    return `<option value="${escaped}">${escaped}</option>`;
-                }).join("");
-            if (modelSelect.innerHTML !== markup) modelSelect.innerHTML = markup;
-            syncMultiPassLabels(root);
-            requestPostprocessRender(root);
-            queueMicrotask(() => {
-                if (passesInput?.isConnected && !passesInput.value) {
-                    passesInput.value = "1";
-                    passesInput.dispatchEvent(new Event("change", { bubbles: true }));
-                }
-            });
-        });
+        requestPostprocessRender(root);
     }
 
+    if (passesInput?.isConnected && !passesInput.value) {
+        passesInput.value = "1";
+        passesInput.dispatchEvent(new Event("change", { bubbles: true }));
+    }
     syncMultiPassLabels(root);
     return true;
 }

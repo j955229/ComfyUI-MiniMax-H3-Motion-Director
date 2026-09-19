@@ -137,7 +137,7 @@ def load_motion_context_cache(
     settings: dict[str, Any],
     strict: bool = False,
 ) -> CachedMotionContext | None:
-    """Load a previous segment's exported endpoint and reject every stale field."""
+    """Load an exported endpoint, allowing settings mismatch only for an approved retake."""
     try:
         root = _cache_root(node_id)
         slot = int(getattr(seg, "timeline_index", seg.index))
@@ -153,7 +153,8 @@ def load_motion_context_cache(
         if not isinstance(metadata, dict):
             raise _cache_error(slot, "metadata is missing")
         expected = context_fingerprint(seg, plan, settings)
-        if metadata.get("fingerprint") != expected:
+        stale = metadata.get("fingerprint") != expected
+        if stale and seg.index not in plan.reuse_cache_indices:
             raise _cache_error(slot, "timeline or generation settings changed")
         frames = payload.get("frames")
         if not isinstance(frames, torch.Tensor) or frames.ndim != 4 or int(frames.shape[0]) <= 0:
@@ -184,6 +185,8 @@ def load_motion_context_cache(
             if int(metadata.get("stored_audio_samples", -1)) != int(wave.shape[-1]):
                 raise _cache_error(slot, "stored audio length does not match cached data")
             audio = {"waveform": wave, "sample_rate": sr}
+        if stale:
+            plan.stale_cache_reused.add(seg.index)
         return CachedMotionContext(frames=frames.float(), audio=audio, metadata=metadata)
     except MotionContextCacheError:
         if strict:

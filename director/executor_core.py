@@ -166,6 +166,7 @@ def execute_director_plan_core(
     pin_renorm_enabled: bool = False,
     clear_vram_between_segments: bool = True,
     postprocess_config: str | dict[str, Any] = "",
+    refine_model=None,
 ):
     postprocess = normalize_postprocess_config(postprocess_config)
     face_config = postprocess["face_refine"]
@@ -201,6 +202,7 @@ def execute_director_plan_core(
         "pin_renorm_enabled": pin_renorm_enabled,
         "clear_vram_between_segments": clear_vram_between_segments,
         "postprocess_config": postprocess_config,
+        "refine_model": refine_model,
     }
 
     # Source Bridge pixels do not exist until both nominal segments are ready.
@@ -213,8 +215,12 @@ def execute_director_plan_core(
         if plan.run_indices is not None
         else frozenset(range(len(all_segments)))
     )
-    generated_segments = [seg for seg in all_segments if int(seg.index) in run_indices]
-    generated_position = {int(seg.index): pos for pos, seg in enumerate(generated_segments)}
+    # The legacy executor is cache-first on normal runs, so the run-selection
+    # set is only the set of candidates. Track the segments that actually
+    # enter generation from the executor's progress callback; this keeps the
+    # Face Refine lifecycle aligned when selected clips are cache hits.
+    generated_segments: list[Any] = []
+    generated_position: dict[int, int] = {}
     face_outcomes: dict[int, FaceRefineOutcome] = {}
     face_changed: dict[int, bool] = {}
     final_by_slot: dict[int, torch.Tensor] = {}
@@ -232,6 +238,31 @@ def execute_director_plan_core(
     original_seam = _legacy.apply_seam_color_match
     original_prepare = _legacy.prepare_latent_context_tail
     original_context = _legacy.apply_exported_motion_context
+    original_progress = _legacy.report_director_progress
+
+    def progress_hook(*args, **kwargs):
+        try:
+            phase_at_start = float(kwargs.get("phase_value", -1)) == 0.0
+        except (TypeError, ValueError):
+            phase_at_start = False
+        if kwargs.get("phase") == "context_encode" and phase_at_start:
+            timeline_index = kwargs.get("timeline_segment_index")
+            try:
+                timeline_index = int(timeline_index)
+            except (TypeError, ValueError):
+                timeline_index = -1
+            candidate = next(
+                (
+                    seg for seg in all_segments
+                    if int(seg.timeline_index) == timeline_index
+                    and int(seg.index) in run_indices
+                ),
+                None,
+            )
+            if candidate is not None and int(candidate.index) not in generated_position:
+                generated_position[int(candidate.index)] = len(generated_segments)
+                generated_segments.append(candidate)
+        return original_progress(*args, **kwargs)
 
     def previous_history(seg) -> torch.Tensor | None:
         slot = int(seg.timeline_index)
@@ -282,7 +313,7 @@ def execute_director_plan_core(
         outcome = _apply_face_refine(
             face_config,
             images=images,
-            model=model,
+            model=refine_model if refine_model is not None else model,
             vae=vae,
             audio_vae=audio_vae,
             clip=clip,
@@ -418,6 +449,7 @@ def execute_director_plan_core(
         prepare_latent_context_tail=prepare_hook,
         apply_exported_motion_context=context_hook,
         apply_face_refine=assembled_face_noop,
+        report_director_progress=progress_hook,
         report_director_report=lambda *_args, **_kwargs: None,
     )
     runner = types.FunctionType(

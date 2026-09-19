@@ -39,6 +39,12 @@ from .refine_sampling import apply_global_refine
 from .seam_report import build_seam_report_lines
 from .preview_manager import DirectorPreviewManager
 from .face_refine_pipeline import apply_face_refine
+from .first_pass_cache import (
+    load_first_pass_cache,
+    load_global_refine_cache,
+    save_first_pass_cache,
+    save_global_refine_cache,
+)
 from .frame_align import (
     H3_REFERENCE_VIDEO_PIPELINE,
     H3_SOURCE_BRIDGE_PIPELINE,
@@ -116,6 +122,7 @@ from .progress import (
     report_director_progress,
     report_director_report,
     report_director_segment_preview,
+    result_preview_indices,
 )
 from .segment_cache import (
     load_segment_audio_cache,
@@ -319,11 +326,95 @@ def _color_anchor_label(anchor: dict[str, Any] | None) -> str:
     return str((anchor or {}).get("source") or "none")
 
 
+def _prepare_retake(plan: DirectorPlan) -> frozenset[int]:
+    plan.reuse_cache_indices = frozenset()
+    plan.stale_cache_reused.clear()
+    if not plan.raw.get("retake"):
+        return frozenset()
+    if not plan.run_select_enabled:
+        raise ValueError("Retake requires Select to run with at least one clip selected.")
+    requested = (
+        plan.mixed_requested_run_indices
+        if bool(getattr(plan, "mixed_mode", False))
+        else plan.run_indices
+    )
+    selected = frozenset(requested if requested is not None else range(len(plan.segments)))
+    if not selected:
+        raise ValueError("Select at least one clip to retake.")
+    # Keep the user's selection: Mixed must not auto-add stale prerequisites.
+    plan.run_indices = selected
+    plan.reuse_cache_indices = frozenset(
+        seg.index for seg in plan.segments if seg.index < max(selected) and seg.index not in selected
+    )
+    return selected
+
+
+def _validate_retake_caches(plan, node_id, selected, source_bridge_pairs, context_pipeline_active):
+    """Check the reused inputs before spending any time sampling selected clips."""
+    settings = plan.cache_settings
+    by_slot = {seg.timeline_index: seg for seg in plan.segments}
+    by_id = {getattr(seg, "stable_id", ""): seg for seg in plan.segments}
+    full_results = {seg.index for seg in plan.segments if plan.export_mode == "all" and seg.index not in selected}
+    full_audio = set(full_results) if settings["audio_mode"] == AUDIO_MODE_GENERATE else set()
+    bridge_consumers = {right.index for _, right in source_bridge_pairs}
+    for left, right in source_bridge_pairs:
+        if {left.index, right.index} & selected:
+            full_results.update({left.index, right.index} - selected)
+
+    for seg in plan.segments:
+        if seg.index not in selected:
+            continue
+        for ref in getattr(seg, "mixed_result_refs", []):
+            producer = by_id[ref["segmentId"]]
+            if producer.index not in selected:
+                full_results.add(producer.index)
+        link = resolve_context_link(
+            seg, motion_context_enabled=settings["motion_context_enabled"],
+            audio_context_enabled=settings["audio_context_enabled"],
+            audio_generate=settings["audio_mode"] == AUDIO_MODE_GENERATE,
+            source_bridge_active=seg.index in bridge_consumers,
+        )
+        legacy_context = not context_pipeline_active and is_continuity_active(plan, seg)
+        if not link.has_dependency and not legacy_context:
+            continue
+        previous = by_slot.get(seg.timeline_index - 1)
+        if previous is None:
+            raise ValueError(f"Retake S{seg.timeline_index + 1}: previous clip is missing from the timeline.")
+        if previous.index in selected:
+            continue
+        if legacy_context:
+            full_results.add(previous.index)
+            continue
+        pixel = load_motion_context_cache(node_id, previous, plan, settings=settings)
+        latent = load_latent_context_cache(node_id, previous, plan, settings=settings)
+        refined = load_latent_context_cache(node_id, previous, plan, settings=settings, variant="refine")
+        if (
+            (link.visual and pixel is None and latent is None and refined is None)
+            or (link.audio and not audio_has_samples(pixel.audio if pixel else None) and latent is None and refined is None)
+        ):
+            raise ValueError(
+                f"Retake S{seg.timeline_index + 1}: S{previous.timeline_index + 1} has no usable continuity cache. "
+                "Restore its cache or explicitly select that clip for generation. No clips were sampled."
+            )
+    for index in sorted(full_results):
+        seg = plan.segments[index]
+        frames = load_segment_cache(node_id, seg, plan)
+        if frames is None:
+            raise ValueError(
+                f"Retake: S{seg.timeline_index + 1} has no usable full video cache. "
+                "Restore its cache, select it for generation, or export selected segments only. No clips were sampled."
+            )
+        del frames
+        if index in full_audio and not audio_has_samples(load_segment_audio_cache(node_id, seg, plan)):
+            raise ValueError(f"Retake: S{seg.timeline_index + 1} has no usable full audio cache. No clips were sampled.")
+
+
 def execute_director_plan_core(
     plan: DirectorPlan,
     *,
     node_id: str | None = None,
     model,
+    refine_model=None,
     vae,
     audio_vae,
     clip,
@@ -346,6 +437,7 @@ def execute_director_plan_core(
     postprocess_config: str | dict[str, Any] = "",
 ) -> tuple[torch.Tensor, list[torch.Tensor], list[dict[str, Any]], str]:
     core_started = time.perf_counter()
+    retake_indices = _prepare_retake(plan)
     legacy_preview = (plan.raw or {}).get(
         "liveTaePreview", (plan.raw or {}).get("live_tae_preview", True)
     )
@@ -454,6 +546,9 @@ def execute_director_plan_core(
     persist_segment_cache = should_persist_segment_cache(plan, source_bridge_active=bool(source_bridge_pairs))
     run_indices = plan.run_indices if plan.run_indices is not None else frozenset(range(len(all_segments)))
     run_list = sorted(run_indices)
+    if retake_indices:
+        _validate_retake_caches(plan, node_id, retake_indices, source_bridge_pairs, context_pipeline_active)
+        plan.stale_cache_reused.clear()
     seg_total = len(run_list)
     progress_pos = {idx: pos for pos, idx in enumerate(run_list)}
     passthrough_indices: list[int] = []
@@ -468,6 +563,8 @@ def execute_director_plan_core(
     all_export_results: dict[int, tuple[torch.Tensor, dict[str, Any]]] = {}
     nominal_generated_frames: dict[int, torch.Tensor] = {}
     reports: list[str] = [plan_summary(plan), "", "Execution path: ComfyUI official MiniMax H3"]
+    if retake_indices:
+        reports.append("Retake: fresh sampling of selected clips; earlier cached takes accepted by request.")
     reports.append(f"Legacy global Motion Context default: {'ON' if motion_enabled else 'OFF'}")
     reports.append(
         "Previous Context links: per-boundary Visual/Audio policy "
@@ -506,7 +603,7 @@ def execute_director_plan_core(
             "validated and should be disabled."
         )
     if clear_vram_between_segments:
-        reports.append("VRAM: 段间清理显存已开启。")
+        reports.append("VRAM: cleanup between segments is enabled.")
     if audio_mode == AUDIO_MODE_MUTE:
         reports.append("Audio: muted — skip audio VAE decode, silent AUDIO output.")
     elif audio_mode == AUDIO_MODE_SOURCE:
@@ -546,6 +643,8 @@ def execute_director_plan_core(
     completed_refine_contexts: dict[int, tuple[dict[str, Any], dict[str, Any]]] = {}
     execution_report = DirectorExecutionReport()
     generated_indices: set[int] = set()
+    first_pass_cache_hit_indices: set[int] = set()
+    global_refine_cache_hit_indices: set[int] = set()
     cache_hit_indices: set[int] = set()
     cache_statuses: dict[int, str] = {}
     context_cache_hits: set[int] = set()
@@ -556,6 +655,137 @@ def execute_director_plan_core(
     warning_messages: list[str] = []
     global_refine_outcomes: dict[int, Any] = {}
     segment_stage_timings: dict[int, dict[str, float]] = {}
+
+    # Normal Run is cache-first for every run-selection shape.  The checkbox
+    # selection identifies clips that may need work; it must not force a valid
+    # decoded cache through conditioning/encoding/decoding again.  Retake is
+    # the explicit opt-in path for fresh sampling of selected clips.
+    normal_cache_reuse_enabled = not retake_indices
+
+    def _reuse_full_segment_cache(seg, *, progress_index: int) -> bool:
+        """Hydrate a cached segment without sampling or VAE-decoding it."""
+        if not normal_cache_reuse_enabled:
+            return False
+
+        cached = load_segment_cache(node_id, seg, plan)
+        if cached is None:
+            return False
+
+        cached_audio: dict[str, Any] | None = None
+        if audio_mode == AUDIO_MODE_GENERATE:
+            cached_audio = load_segment_audio_cache(node_id, seg, plan)
+            if not audio_has_samples(cached_audio):
+                # A video-only cache is not sufficient for generated-audio
+                # output. Fall through and rebuild this segment completely.
+                return False
+
+        cached = cached.float()
+        timeline_slot = int(seg.timeline_index)
+        cached_context = None
+        cached_latent_context = None
+        cached_refine_latent_context = None
+
+        if context_pipeline_active:
+            cached_latent_context = load_latent_context_cache(
+                node_id, seg, plan, settings=cache_settings,
+            )
+            cached_refine_latent_context = load_latent_context_cache(
+                node_id, seg, plan, settings=cache_settings, variant="refine",
+            )
+            if cached_refine_latent_context is not None:
+                completed_refine_contexts[timeline_slot] = (
+                    cached_refine_latent_context.latent,
+                    cached_refine_latent_context.handoff,
+                )
+
+            cached_context = load_motion_context_cache(
+                node_id, seg, plan, settings=cache_settings, strict=False,
+            )
+
+            latent_for_context = cached_latent_context or cached_refine_latent_context
+            context_handoff = (
+                cached_latent_context.handoff
+                if cached_latent_context is not None
+                else cached_refine_latent_context.handoff
+                if cached_refine_latent_context is not None
+                else None
+            )
+            if color_reanchor_requested and (
+                latent_for_context is None
+                or validate_color_anchor_statistics(
+                    (context_handoff or {}).get("color_anchor_stats")
+                ) is None
+            ):
+                # A plain RGB cache cannot reconstruct the color-chain
+                # baseline. Let the existing path regenerate this segment.
+                return False
+
+            cached_context = CachedMotionContext(
+                frames=(
+                    cached_context.frames
+                    if cached_context is not None
+                    and isinstance(cached_context.frames, torch.Tensor)
+                    else cached
+                ),
+                audio=(
+                    cached_context.audio
+                    if cached_context is not None
+                    and audio_has_samples(cached_context.audio)
+                    else cached_audio
+                    if audio_has_samples(cached_audio)
+                    else None
+                ),
+                metadata=(
+                    cached_context.metadata
+                    if cached_context is not None
+                    else latent_for_context.metadata
+                    if latent_for_context is not None
+                    else {
+                        "fps": float(plan.frame_rate or 24.0),
+                        "frame_count": int(cached.shape[0]),
+                        "width": int(cached.shape[2]),
+                        "height": int(cached.shape[1]),
+                        "segment_index": int(seg.index),
+                    }
+                ),
+                latent=(
+                    cached_latent_context.latent
+                    if cached_latent_context is not None
+                    else None
+                ),
+                handoff=context_handoff,
+            )
+            completed_contexts[timeline_slot] = cached_context
+
+        result = (cached, cached_audio if cached_audio is not None else {})
+        cache_statuses[int(seg.index)] = "hit"
+        cache_hit_indices.add(int(seg.index))
+        completed_outputs[int(seg.index)] = cached
+        selected_results[int(seg.index)] = result
+        if plan.export_mode == "all":
+            all_export_results[int(seg.index)] = result
+        if int(seg.index) in source_bridge_segment_indices:
+            nominal_generated_frames[int(seg.index)] = cached
+
+        meta = {
+            "frames_label": frames_label(seg),
+            "task_key": seg.task_key,
+            "timeline_segment_index": timeline_slot,
+            "timeline_segment_total": timeline_seg_total,
+        }
+        report_director_progress(
+            node_id, segment_index=progress_index, segment_total=seg_total,
+            phase="prepare", phase_value=1, phase_max=1, **meta,
+        )
+        report_director_progress(
+            node_id, segment_index=progress_index, segment_total=seg_total,
+            phase="decode", phase_value=1, phase_max=1, **meta,
+        )
+        reports.append(
+            f"Segment {seg.index + 1}/{len(all_segments)}: loaded from full segment cache "
+            f"({cached.shape[0]} frames; VAE decode skipped)"
+        )
+        return True
 
     def _run_one_segment(seg, *, progress_index: int) -> tuple[torch.Tensor, dict[str, Any] | None]:
         if seg.task_key not in SUPPORTED_TASK_KEYS:
@@ -877,24 +1107,56 @@ def execute_director_plan_core(
                 x0=x0, latent_shapes=latent_shapes,
             )
 
-        _h3_sample_started = time.perf_counter()
-        try:
-            samples = sample_single_stage(
-                model=model, positive=positive, negative=negative, latent=latent, seed=seed,
-                cfg=cfg, steps=steps, sampler_name=sampler, scheduler=scheduler,
-                shift_video=shift_video, shift_audio=shift_audio,
-                external_sampler=external_sampler, external_sigmas=external_sigmas,
-                on_phase=_report_sample_phase,
-                on_step_preview=_report_step_preview if live_tae_preview else None,
-                preview_every=int(preview_config["preview_every"]),
+        samples = None
+        first_pass_reused = False
+        if not retake_indices and face_refine_config.get("enabled") and not global_refine_config.get("enabled"):
+            samples = load_global_refine_cache(
+                node_id, seg, plan, settings=cache_settings,
             )
-            stage_times["h3_sampling"] = time.perf_counter() - _h3_sample_started
-        except torch.cuda.OutOfMemoryError as exc:
-            raise RuntimeError(
-                "Motion Director ran out of VRAM during H3 sampling. Motion Context adds conditioning rows; "
-                "reduce resolution, use fewer references, or keep clear_vram_between_segments enabled. "
-                "No context/reference was silently removed."
-            ) from exc
+            if samples is not None:
+                first_pass_reused = True
+                global_refine_cache_hit_indices.add(int(seg.index))
+                stage_times["h3_sampling"] = 0.0
+                reports.append(
+                    f"Segment {timeline_slot + 1}: reused cached Global Refine H3 AV latent; "
+                    "initial sampling skipped."
+                )
+
+        if samples is None and not retake_indices:
+            samples = load_first_pass_cache(
+                node_id, seg, plan, settings=cache_settings,
+            )
+            if samples is not None:
+                first_pass_reused = True
+                first_pass_cache_hit_indices.add(int(seg.index))
+                stage_times["h3_sampling"] = 0.0
+                reports.append(
+                    f"Segment {timeline_slot + 1}: reused cached first-pass H3 AV latent; "
+                    "initial sampling skipped."
+                )
+
+        if samples is None:
+            _h3_sample_started = time.perf_counter()
+            try:
+                samples = sample_single_stage(
+                    model=model, positive=positive, negative=negative, latent=latent, seed=seed,
+                    cfg=cfg, steps=steps, sampler_name=sampler, scheduler=scheduler,
+                    shift_video=shift_video, shift_audio=shift_audio,
+                    external_sampler=external_sampler, external_sigmas=external_sigmas,
+                    on_phase=_report_sample_phase,
+                    on_step_preview=_report_step_preview if live_tae_preview else None,
+                    preview_every=int(preview_config["preview_every"]),
+                )
+                stage_times["h3_sampling"] = time.perf_counter() - _h3_sample_started
+            except torch.cuda.OutOfMemoryError as exc:
+                raise RuntimeError(
+                    "Motion Director ran out of VRAM during H3 sampling. Motion Context adds conditioning rows; "
+                    "reduce resolution, use fewer references, or keep clear_vram_between_segments enabled. "
+                    "No context/reference was silently removed."
+                ) from exc
+            save_first_pass_cache(
+                node_id, seg, plan, latent=samples, settings=cache_settings,
+            )
 
         def _repin_refined_context(refine_positive, refine_latent):
             if context_entry is None or not apply_visual_context:
@@ -942,6 +1204,7 @@ def execute_director_plan_core(
             task_key=seg.task_key,
             samples=samples,
             model=model,
+            refine_model_override=refine_model,
             vae=vae,
             positive=positive,
             negative=negative,
@@ -965,6 +1228,15 @@ def execute_director_plan_core(
             preserve_noise_mask=context_span > 0,
         )
         global_refine_outcomes[timeline_slot] = global_outcome
+        if global_refine_config.get("enabled") and global_outcome.succeeded:
+            save_global_refine_cache(
+                node_id,
+                seg,
+                plan,
+                latent=global_outcome.samples,
+                settings=cache_settings,
+                refine_config=global_refine_config,
+            )
         samples = global_outcome.samples
         if global_outcome.status == "FAILED":
             cleanup_segment_vram(enabled=True, unload_models=False)
@@ -1110,11 +1382,15 @@ def execute_director_plan_core(
             and decoded.shape[0] >= 1
         ):
             try:
-                frames_b64 = [tensor_frame_to_jpeg_b64(decoded[i]) for i in range(int(decoded.shape[0]))]
+                frame_count = int(decoded.shape[0])
+                frames_b64 = [
+                    tensor_frame_to_jpeg_b64(decoded[index])
+                    for index in result_preview_indices(frame_count, preview_config["preview_frames"])
+                ]
                 h, w = int(decoded.shape[1]), int(decoded.shape[2])
                 report_director_segment_preview(
                     node_id, segment_index=ui_idx, image_b64=frames_b64[0], width=w, height=h,
-                    frames=frames_b64, fps=float(plan.frame_rate or 24),
+                    frames=frames_b64, fps=float(plan.frame_rate or 24), frame_count=frame_count,
                 )
             except Exception as exc:
                 log.debug("Segment video preview skipped: %s", exc)
@@ -1123,7 +1399,8 @@ def execute_director_plan_core(
         reports.append(
             f"Segment {ui_idx + 1}/{timeline_seg_total}: {task_hint} ({target_len} frames, seed={seed})"
         )
-        generated_indices.add(int(seg.index))
+        if not first_pass_reused:
+            generated_indices.add(int(seg.index))
         diag = boundary_diagnostics[timeline_slot]
         if source_bridge_active:
             diag["visual_source"] = "Source Bridge"
@@ -1223,6 +1500,8 @@ def execute_director_plan_core(
 
     for seg in all_segments:
         if seg.index in run_indices:
+            if _reuse_full_segment_cache(seg, progress_index=progress_pos[seg.index]):
+                continue
             if clear_vram_between_segments and selected_results:
                 cleanup_segment_vram(enabled=True)
             _segment_started = time.perf_counter()
@@ -1297,7 +1576,7 @@ def execute_director_plan_core(
         if fill is None:
             raise ValueError(
                 f"Segment {seg.index + 1} is not selected and has no valid cache or source frames to passthrough. "
-                "Include it in「选择运行」, or switch export to「分段导出」."
+                "Include it in Selective Run, or switch export to Segments."
             )
         completed_outputs[seg.index] = fill
         passthrough_indices.append(seg.index)
@@ -1311,18 +1590,23 @@ def execute_director_plan_core(
         reports.append(
             "Passthrough (not sampled) segment(s) "
             f"{[i + 1 for i in passthrough_indices]} — run selection is honored; "
-            "unselected gaps filled from cache/source for「全部导出」."
+            "unselected gaps filled from cache/source for All export."
         )
 
     def _report_resolved_preview(seg, frames: torch.Tensor) -> None:
         if int(frames.shape[0]) <= 0:
             return
         try:
-            frames_b64 = [tensor_frame_to_jpeg_b64(frames[i]) for i in range(int(frames.shape[0]))]
+            frame_count = int(frames.shape[0])
+            frames_b64 = [
+                tensor_frame_to_jpeg_b64(frames[index])
+                for index in result_preview_indices(frame_count, preview_config["preview_frames"])
+            ]
             height, width = int(frames.shape[1]), int(frames.shape[2])
             report_director_segment_preview(
                 node_id, segment_index=int(seg.timeline_index), image_b64=frames_b64[0],
                 width=width, height=height, frames=frames_b64, fps=float(plan.frame_rate or 24),
+                frame_count=frame_count,
             )
         except Exception as exc:
             log.debug("Resolved Source Bridge preview skipped: %s", exc)
@@ -1342,6 +1626,8 @@ def execute_director_plan_core(
     generated_bridges: list[GeneratedSourceBridge] = []
     for left, right in source_bridge_pairs:
         pair_indices = {int(left.index), int(right.index)}
+        if retake_indices and not pair_indices.intersection(retake_indices):
+            continue
         if plan.export_mode != "all" and not pair_indices.intersection(run_indices):
             continue
         window, skip_reason = resolve_source_bridge_window(plan, left, right)
@@ -1436,6 +1722,7 @@ def execute_director_plan_core(
             task_key=right.task_key,
             samples=bridge_samples,
             model=model,
+            refine_model_override=refine_model,
             vae=vae,
             positive=positive,
             negative=negative,
@@ -1570,7 +1857,7 @@ def execute_director_plan_core(
     face_outcome = apply_face_refine(
         face_refine_config,
         images=combined,
-        model=model,
+        model=refine_model if refine_model is not None else model,
         vae=vae,
         audio_vae=audio_vae,
         clip=clip,
@@ -1607,15 +1894,17 @@ def execute_director_plan_core(
             if node_id:
                 for export_segment, refined_chunk in zip(export_segments, refined_chunks):
                     try:
+                        frame_count = int(refined_chunk.shape[0])
                         frames_b64 = [
                             tensor_frame_to_jpeg_b64(refined_chunk[index])
-                            for index in range(int(refined_chunk.shape[0]))
+                            for index in result_preview_indices(frame_count, preview_config["preview_frames"])
                         ]
                         report_director_segment_preview(
                             node_id, segment_index=int(export_segment.timeline_index),
                             image_b64=frames_b64[0], width=int(refined_chunk.shape[2]),
                             height=int(refined_chunk.shape[1]), frames=frames_b64,
                             fps=float(plan.frame_rate or 24), stage="Face Refine Final", result_kind="segment",
+                            frame_count=frame_count,
                         )
                     except Exception as exc:
                         log.debug("Face-refined segment preview skipped: %s", exc)
@@ -1631,12 +1920,22 @@ def execute_director_plan_core(
         "Run",
         f"Segments: {segment_list(range(len(all_segments)))}",
         f"Generated: {segment_list(generated_indices)}",
+        f"Reused first-pass latent: {segment_list(first_pass_cache_hit_indices)}",
+        f"Reused Global Refine latent: {segment_list(global_refine_cache_hit_indices)}",
         f"Reused from cache: {segment_list(cache_hit_indices)}",
         f"Skipped by run selection: {segment_list(skipped_indices)}",
         f"Run selection: {len(run_indices)}/{len(all_segments)}",
         f"Seed mode: {normalize_seed_mode((plan.raw or {}).get('seedMode', (plan.raw or {}).get('seed_mode')))}",
-        "Seeds: " + ", ".join(f"S{index + 1}={int(seed)}" for index in sorted(generated_indices))
-        if generated_indices else "Seeds: none",
+        "Seeds: " + ", ".join(
+            f"S{index + 1}={int(seed)}"
+            for index in sorted(
+                generated_indices
+                | first_pass_cache_hit_indices
+                | global_refine_cache_hit_indices
+            )
+        )
+        if generated_indices or first_pass_cache_hit_indices or global_refine_cache_hit_indices
+        else "Seeds: none",
         f"Sampling: {sampling_mode}",
     )
     execution_report.add(
@@ -1721,7 +2020,15 @@ def execute_director_plan_core(
     for slot in sorted(color_diagnostics):
         execution_report.add("Color", color_diagnostics[slot])
     for index in range(len(all_segments)):
-        if index in generated_indices:
+        if index in global_refine_cache_hit_indices:
+            state = "Global Refine latent cache hit; Face Refine applied"
+        elif index in first_pass_cache_hit_indices:
+            state = (
+                "first-pass latent cache hit; postprocessed"
+                if global_refine_config.get("enabled") or face_refine_config.get("enabled")
+                else "first-pass latent cache hit; finalized"
+            )
+        elif index in generated_indices:
             state = "generated"
         elif index in cache_hit_indices:
             state = "cache hit"
@@ -1732,9 +2039,12 @@ def execute_director_plan_core(
             state = "not part of this export"
         execution_report.add("Cache", f"S{index + 1}: {state}")
     for index in sorted(context_cache_hits):
-        execution_report.add("Cache", f"Previous context: S{index + 1} cache valid")
+        state = "stale cache reused by request" if index in plan.stale_cache_reused else "cache valid"
+        execution_report.add("Cache", f"Previous context: S{index + 1} {state}")
+    for index in sorted(plan.stale_cache_reused):
+        execution_report.add("Cache", f"S{index + 1}: stale cache reused by request")
     for index, status in sorted(cache_statuses.items()):
-        if status == "stale":
+        if status == "stale" and index not in plan.stale_cache_reused:
             execution_report.add("Cache", f"S{index + 1}: stale / invalidated")
             warning_messages.append(f"S{index + 1}: segment cache stale because timeline or dependency changed")
         elif status in {"missing", "error"} and index not in cache_hit_indices:
@@ -1865,12 +2175,17 @@ def execute_director_plan_core(
     report_director_report(node_id, rendered_report)
     if node_id:
         try:
-            final_frames_b64 = [tensor_frame_to_jpeg_b64(combined[index]) for index in range(int(combined.shape[0]))]
+            final_frame_count = int(combined.shape[0])
+            final_frames_b64 = [
+                tensor_frame_to_jpeg_b64(combined[index])
+                for index in result_preview_indices(final_frame_count, preview_config["preview_frames"])
+            ]
             if final_frames_b64:
                 report_director_segment_preview(
                     node_id, segment_index=max(0, len(export_chunks) - 1), image_b64=final_frames_b64[0],
                     width=int(combined.shape[2]), height=int(combined.shape[1]), frames=final_frames_b64,
                     fps=float(plan.frame_rate or 24), stage="Final", result_kind="final",
+                    frame_count=final_frame_count,
                 )
         except Exception as exc:
             log.debug("Final result preview skipped: %s", exc)

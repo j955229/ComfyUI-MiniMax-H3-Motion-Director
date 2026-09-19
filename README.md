@@ -32,7 +32,7 @@ The screenshot above shows the native **Mixed** timeline: five segments using di
 |---|---|
 | **Standalone generation** | `T2V / I2V / FL2V / R2V / V2V / RV2V` |
 | **Mixed Mode** | Choose `T2V / I2V / FL2V / R2V / Source Video` independently for each segment |
-| **Selective Run** | Regenerate selected segments instead of rerunning the whole sequence |
+| **Selective Run** | Select generation candidates; valid segment caches are reused automatically |
 | **Cross-segment continuity** | Motion Context, Context Frames, Latent Scale Lock, generated-audio continuation, Color Re-anchor |
 | **Segment Result reuse** | Reuse a decoded frame from an earlier Mixed segment as a later I2V / FL2V input |
 | **Source-video workflow** | Dedicated V2V / RV2V handling and Source Bridge for standalone source-video boundaries |
@@ -126,9 +126,9 @@ A Segment Result is a static frame reference; it is separate from Motion Context
 
 ### Selective Run
 
-Long projects rarely need every shot regenerated. Enable **Selective Run**, mark only the segments that need another pass, and keep the rest of the sequence intact when cached/source results are available.
+Long projects rarely need every shot regenerated. Enable **Selective Run**, mark the segments that may need work, and keep the rest of the sequence intact when cached/source results are available. A normal **Run Director** is cache-first: valid video/audio caches are reused even when their boxes are checked; missing or stale caches are generated. Use **Retake selected** when a fresh take is intended.
 
-This is one of the main reasons the Director exists: fixing Shot 3 should not automatically mean paying for Shots 1, 2, 4, and 5 again.
+For a complete joined video, set **Export mode** to **Export all**. Select only the clip that needs generation; the other clips are included from their validated caches. Checking earlier clips is not required for concatenation.
 
 ---
 
@@ -213,6 +213,9 @@ Recommended source: 螢幕擷取畫面 2026-08-19 034623(1).png
 ### Global Refine
 
 Global Refine can run a second sampling pass and optionally upscale the segment/result before refinement.
+Completed first-pass H3 AV latents are cached separately from final outputs, so later Global Refine or upscale runs can skip the initial sampling pass when generation inputs are unchanged. A matching first-pass cache is also reused when you run the Director with post-processing disabled, allowing a no-op finalize without another generation. Change the generation seed or inputs when you want a new take. Successful Global Refine latents can feed a later Face Refine-only run without regenerating the segment.
+
+To retake a clip using earlier cached clips after changing the model/settings, enable **Select to run**, check the clip, and click **Retake selected…** in the editor header. After confirmation, selected clips are sampled afresh with the current seed and settings; earlier unselected clips may reuse stale caches. Missing or unusable required caches stop the run before sampling. This applies only to the submitted job and preserves earlier cache files. Use **Run Director** for normal generation or postprocess-only cache reuse.
 
 Available paths include, depending on the installed runtime and models:
 

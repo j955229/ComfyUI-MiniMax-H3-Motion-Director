@@ -50,21 +50,87 @@ PHASE_WEIGHTS = {
 _RUN_STARTED: dict[str, float] = {}
 _PHASE_STARTED: dict[str, tuple[str, float]] = {}
 _PROGRESS_CONTEXT = threading.local()
+MAX_RESULT_PREVIEW_FRAMES = 32
+MAX_RESULT_SNAPSHOT_PREVIEWS = 32
+_RESULT_SNAPSHOTS: dict[str, dict] = {}
+_RESULT_SNAPSHOT_LOCK = threading.RLock()
 
 PHASE_LABELS = {
-    "prepare": "准备片段",
-    "context_encode": "H3 条件编码",
-    "sample": "采样",
-    "global_upscale": "全局精修 · 放大",
-    "global_refine": "全局精修 · 二次采样",
-    "decode": "AV 解码",
-    "assemble": "多段组合",
-    "face_refine": "人脸精修",
-    "finalize": "生成结果整理",
+    "prepare": "Preparing segment",
+    "context_encode": "H3 conditioning",
+    "sample": "Sampling",
+    "global_upscale": "Global refine · Upscale",
+    "global_refine": "Global refine · Second sampling",
+    "decode": "AV decoding",
+    "assemble": "Assembling segments",
+    "face_refine": "Face refinement",
+    "finalize": "Preparing result",
     "rtx_deblur": "NVIDIA RTX Deblur",
-    "plan": "解析时间轴 / 加载视频",
-    "finish": "全部完成",
+    "plan": "Parsing timeline / loading video",
+    "finish": "Complete",
 }
+
+
+def result_preview_indices(frame_count: int, max_frames: int = MAX_RESULT_PREVIEW_FRAMES) -> list[int]:
+    frame_count = max(0, int(frame_count))
+    max_frames = min(MAX_RESULT_PREVIEW_FRAMES, max(1, int(max_frames)))
+    if frame_count <= max_frames:
+        return list(range(frame_count))
+    if max_frames == 1:
+        return [0]
+    return [index * (frame_count - 1) // (max_frames - 1) for index in range(max_frames)]
+
+
+def clear_director_result_snapshot(node_id: str | None) -> None:
+    if not node_id:
+        return
+    with _RESULT_SNAPSHOT_LOCK:
+        _RESULT_SNAPSHOTS.pop(str(node_id), None)
+
+
+def director_result_snapshot(node_id: str | None) -> dict | None:
+    if not node_id:
+        return None
+    key = str(node_id)
+    with _RESULT_SNAPSHOT_LOCK:
+        snapshot = _RESULT_SNAPSHOTS.get(key)
+        if snapshot is None:
+            return None
+        previews = [
+            {**payload, "frames": list(payload.get("frames") or [])}
+            for _preview_key, payload in sorted(snapshot["previews"].items())
+        ]
+        final_ready = snapshot.get("final_ready")
+        return {
+            "node_id": key,
+            "previews": previews,
+            "report": snapshot.get("report", ""),
+            "final_ready": dict(final_ready) if final_ready else None,
+        }
+
+
+def _result_snapshot_entry(node_id: str) -> dict:
+    return _RESULT_SNAPSHOTS.setdefault(
+        node_id,
+        {"previews": {}, "report": "", "final_ready": None},
+    )
+
+
+def _store_result_preview(payload: dict) -> None:
+    node_id = str(payload["node_id"])
+    preview_key = (
+        int(payload.get("segment_index", 0)),
+        str(payload.get("result_kind", "segment")),
+        str(payload.get("result_variant", "")),
+    )
+    with _RESULT_SNAPSHOT_LOCK:
+        snapshot = _result_snapshot_entry(node_id)
+        snapshot["previews"][preview_key] = {
+            **payload,
+            "frames": list(payload.get("frames") or []),
+        }
+        while len(snapshot["previews"]) > MAX_RESULT_SNAPSHOT_PREVIEWS:
+            snapshot["previews"].pop(next(iter(snapshot["previews"])))
 
 
 def _phase_index(phase: str) -> int:
@@ -182,6 +248,7 @@ def report_director_segment_preview(
     result_variant: str = "",
     pass_index: int | None = None,
     pass_count: int | None = None,
+    frame_count: int | None = None,
 ) -> None:
     if not node_id or not image_b64:
         return
@@ -203,12 +270,22 @@ def report_director_segment_preview(
     if pass_count is not None:
         payload["pass_count"] = int(pass_count)
     if frames:
-        payload["frames"] = frames
+        preview_indices = result_preview_indices(len(frames)) if not live else list(range(len(frames)))
+        payload["frames"] = [frames[index] for index in preview_indices]
         payload["fps"] = fps
+        payload["frame_count"] = int(frame_count if frame_count is not None else len(frames))
+        if not live and len(payload["frames"]) > 1 and payload["frame_count"] > 1:
+            payload["preview_fps"] = (
+                float(fps) * (len(payload["frames"]) - 1) / (payload["frame_count"] - 1)
+            )
+        if len(preview_indices) < len(frames):
+            payload["preview_frame_indices"] = preview_indices
     if step is not None:
         payload["step"] = int(step)
     if total_steps is not None:
         payload["total_steps"] = int(total_steps)
+    if not live:
+        _store_result_preview(payload)
     try:
         from server import PromptServer
 
@@ -222,6 +299,10 @@ def report_director_segment_preview(
 def report_director_report(node_id: str | None, report: str) -> None:
     if not node_id:
         return
+    key = str(node_id)
+    report = str(report or "")
+    with _RESULT_SNAPSHOT_LOCK:
+        _result_snapshot_entry(key)["report"] = report
     try:
         from server import PromptServer
 
@@ -229,7 +310,7 @@ def report_director_report(node_id: str | None, report: str) -> None:
         if srv:
             srv.send_sync(
                 "minimax_motion_director_report",
-                {"node_id": str(node_id), "report": str(report or "")},
+                {"node_id": key, "report": report},
                 srv.client_id,
             )
     except Exception as exc:
@@ -239,6 +320,9 @@ def report_director_report(node_id: str | None, report: str) -> None:
 def report_director_final_ready(node_id: str | None, payload: dict) -> None:
     if not node_id:
         return
+    final_payload = {"node_id": str(node_id), **dict(payload or {})}
+    with _RESULT_SNAPSHOT_LOCK:
+        _result_snapshot_entry(str(node_id))["final_ready"] = dict(final_payload)
     try:
         from server import PromptServer
 
@@ -246,7 +330,7 @@ def report_director_final_ready(node_id: str | None, payload: dict) -> None:
         if srv:
             srv.send_sync(
                 "minimax_motion_director_final_ready",
-                {"node_id": str(node_id), **dict(payload or {})},
+                final_payload,
                 srv.client_id,
             )
     except Exception as exc:
@@ -315,6 +399,7 @@ def report_director_planning(
     *,
     timeline_segment_total: int | None = None,
 ) -> None:
+    clear_director_result_snapshot(node_id)
     report_director_progress(
         node_id,
         segment_index=0,

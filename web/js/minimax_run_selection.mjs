@@ -97,3 +97,41 @@ export function ensureRunSelectionSerialized(editor) {
         throw new Error(RUN_SELECTION_MISMATCH_ERROR);
     }
 }
+
+export async function queueDirectorRetake(editor, { app, api, translate }) {
+    try {
+        ensureRunSelectionSerialized(editor);
+        const state = serializedRunSelectionState(editor);
+        if (!state?.enabled || !state.selection.length) {
+            await editor.showBdMessage(translate("modal.retake"), translate("modal.retakeSelect"));
+            return false;
+        }
+        const confirmed = await editor.showBdDialog({
+            title: translate("modal.retake"),
+            message: translate("modal.retakeConfirm"),
+            confirmText: translate("modal.retake"),
+        });
+        if (!confirmed) return false;
+
+        ensureRunSelectionSerialized(editor);
+        const queued = await app.graphToPrompt();
+        const nodeId = String(editor.node.id);
+        const inputs = queued.output[nodeId]?.inputs;
+        if (!inputs || typeof inputs.timeline_data !== "string") {
+            throw new Error(RUN_SELECTION_MISMATCH_ERROR);
+        }
+        const timeline = JSON.parse(inputs.timeline_data);
+        const selected = normalizedSelection(timeline.runSelection);
+        if (!timeline.runSelectEnabled || selected.length !== state.selection.length
+            || selected.some((index, i) => index !== state.selection[i])) {
+            throw new Error(RUN_SELECTION_MISMATCH_ERROR);
+        }
+        // Change only the submitted API inputs; saved workflows retain normal Run behavior.
+        inputs.timeline_data = JSON.stringify({ ...timeline, retake: `${Date.now()}_${Math.random()}` });
+        await api.queuePrompt(0, queued, { partialExecutionTargets: [nodeId] });
+        return true;
+    } catch (error) {
+        await editor.showBdMessage(translate("modal.retake"), error?.response?.error?.message || error.message);
+        return false;
+    }
+}

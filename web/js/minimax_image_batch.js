@@ -56,7 +56,7 @@ import {
     createR2vCommonPopover,
     renderR2vCommonSections,
 } from "./minimax_r2v_common_popover.mjs";
-import { t } from "./minimax_i18n.js";
+import { t } from "./minimax_i18n.js?boot=director_i18n_v2";
 
 const _players = new WeakMap();
 /** r2v picture grid: 9 slots in 3×3; reveal 3 → 6 → 9. */

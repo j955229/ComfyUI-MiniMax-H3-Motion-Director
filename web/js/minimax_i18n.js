@@ -29,6 +29,12 @@ const ZH = {
     "toolbar.langToggleTitle": "Switch UI to English",
     "toolbar.noVideo": "未上传视频",
     "modal.directorTitle": "MiniMax H3 Motion Director",
+    "modal.run": "运行 Director",
+    "modal.runTitle": "运行此 Director 及其上游依赖",
+    "modal.retake": "重拍选中片段…",
+    "modal.retakeTitle": "重新生成选中片段，并允许复用之前片段的过期缓存",
+    "modal.retakeSelect": "请开启「选择运行」并勾选要重拍的片段。",
+    "modal.retakeConfirm": "重新生成选中片段，并使用之前片段的已有缓存，即使生成设置已改变？选中片段将重新采样，之前片段的缓存保持不变。缺失或不可用的必要缓存将中止运行。",
     "modal.close": "关闭",
     "modal.page.generation": "生成",
     "modal.page.postprocess": "后期处理",
@@ -44,8 +50,8 @@ const ZH = {
     "tooltip.appendVideo": "上传并追加到时间轴末尾，作为独立片段",
     "tooltip.equalSplitN": "均分段数",
     "tooltip.smartSplit": "使用 PySceneDetect 按分镜自动分割（需 pip install scenedetect）",
-    "tooltip.runSelect": "开启后只采样勾选的片段；未勾选段不进采样（全部导出时用缓存或源画面填充）。关闭时运行全部",
-    "tooltip.runSelectAll": "勾选=全选，取消=全部不选；仍可在各片段上单独勾选",
+    "tooltip.runSelect": "开启后，勾选段是生成候选；有效缓存直接复用，缺失/过期才生成；全部导出时未勾选段从缓存/源画面填充。要强制重生成请使用“重做所选”。",
+    "tooltip.runSelectAll": "勾选 = 全部候选；有效缓存仍会复用；取消 = 全不选；也可逐段调整",
     "contextLink.connectTooltip": "连接上一段：默认同时继承画面动作与连续声音",
     "contextLink.disconnectTooltip": "断开上一段：当前边界不读取上一段的画面或声音 Context",
     "contextLink.advancedTooltip": "分别设置 Visual / Audio Previous Context",
@@ -219,17 +225,32 @@ const ZH = {
     "batch.r2v.externalPoster": "外部预览",
     "batch.r2v.externalLinked": "已接线",
     "run.titleSegment": "段 {i}/{n} · {phase}",
+    "run.elapsed": "已用 {time}",
+    "run.phaseElapsed": "当前阶段 {time}",
     "run.detailOverall": "整体 {pct}%",
     "run.detailRemainingGroups": "还剩 {n} 组",
     "run.detailRemainingSegments": "还剩 {n} 段",
     "run.detailTimelineTotal": "时间轴共 {n} 段",
+    "run.frames": "帧 {range}",
+    "run.phase.prepare": "准备片段",
+    "run.phase.context_encode": "H3 条件编码",
+    "run.phase.sample": "采样",
+    "run.phase.global_upscale": "全局精修 · 放大",
+    "run.phase.global_refine": "全局精修 · 二次采样",
+    "run.phase.decode": "AV 解码",
+    "run.phase.assemble": "多段组合",
+    "run.phase.face_refine": "人脸精修",
+    "run.phase.finalize": "生成结果整理",
+    "run.phase.rtx_deblur": "NVIDIA RTX Deblur",
+    "run.phase.plan": "解析时间轴 / 加载视频",
+    "run.phase.finish": "全部完成",
     "run.phase.default": "运行中",
     "runSelect.noneChecked": "未勾选任何{unit}（无法运行）",
-    "runSelect.all": "将运行全部 {n} {unit}",
+    "runSelect.all": "全部 {n} {unit} 为候选；有效缓存直接复用",
     "runSelect.exportOnlyChecked": "· 仅导出勾选段",
     "runSelect.fillUnchecked": "· 未勾选段用缓存/源画面填充，不采样",
-    "runSelect.sampleOne": "将采样 1 {unit}（#{nums}）{hint}",
-    "runSelect.sampleMany": "将采样 {count} {unit}（#{nums}）{hint}",
+    "runSelect.sampleOne": "检查 1 {unit}（#{nums}）；有效缓存复用，缺失/过期才生成 {hint}",
+    "runSelect.sampleMany": "检查 {count} {unit}（#{nums}）；有效缓存复用，缺失/过期才生成 {hint}",
     "unit.segment": "段",
     "unit.group": "组",
 
@@ -469,6 +490,12 @@ const EN = {
     "toolbar.langToggleTitle": "切换为中文界面",
     "toolbar.noVideo": "No video uploaded",
     "modal.directorTitle": "MiniMax H3 Motion Director",
+    "modal.run": "Run Director",
+    "modal.runTitle": "Run this Director and its upstream dependencies",
+    "modal.retake": "Retake selected…",
+    "modal.retakeTitle": "Generate selected clips again, allowing stale caches from earlier clips",
+    "modal.retakeSelect": "Enable Select to run and check the clips you want to retake.",
+    "modal.retakeConfirm": "Generate new takes of the selected clips using earlier cached clips, even if their generation settings differ? Selected clips will be sampled again; earlier caches will be preserved. Missing or unusable required caches will stop the run.",
     "modal.close": "Close",
     "modal.page.generation": "Generation",
     "modal.page.postprocess": "Postprocess",
@@ -484,8 +511,8 @@ const EN = {
     "tooltip.appendVideo": "Upload and append as a separate clip at timeline end",
     "tooltip.equalSplitN": "Number of equal segments",
     "tooltip.smartSplit": "Auto-split scenes with PySceneDetect (requires: pip install scenedetect)",
-    "tooltip.runSelect": "When on, only checked segments are sampled; unchecked use cache/source on full export. When off, run all.",
-    "tooltip.runSelectAll": "Checked = all; unchecked = none; per-segment override still available",
+    "tooltip.runSelect": "When on, checked segments are generation candidates; valid caches are reused and only missing/stale clips are generated. On full export, unchecked segments are filled from cache/source. Use Retake selected to force fresh generation.",
+    "tooltip.runSelectAll": "Checked = all candidates; valid caches are still reused; unchecked = none; per-segment override remains available",
     "contextLink.connectTooltip": "Connect previous segment with both visual and audio context",
     "contextLink.disconnectTooltip": "Disconnect this boundary from previous visual and audio context",
     "contextLink.advancedTooltip": "Set Visual / Audio Previous Context separately",
@@ -659,17 +686,32 @@ const EN = {
     "batch.r2v.externalPoster": "External preview",
     "batch.r2v.externalLinked": "Wired",
     "run.titleSegment": "Segment {i}/{n} · {phase}",
+    "run.elapsed": "Elapsed {time}",
+    "run.phaseElapsed": "Current phase {time}",
     "run.detailOverall": "Overall {pct}%",
     "run.detailRemainingGroups": "{n} groups remaining",
     "run.detailRemainingSegments": "{n} segments remaining",
     "run.detailTimelineTotal": "Timeline has {n} segments",
+    "run.frames": "Frames {range}",
+    "run.phase.prepare": "Preparing segment",
+    "run.phase.context_encode": "H3 conditioning",
+    "run.phase.sample": "Sampling",
+    "run.phase.global_upscale": "Global refine · Upscale",
+    "run.phase.global_refine": "Global refine · Second sampling",
+    "run.phase.decode": "AV decoding",
+    "run.phase.assemble": "Assembling segments",
+    "run.phase.face_refine": "Face refinement",
+    "run.phase.finalize": "Preparing result",
+    "run.phase.rtx_deblur": "NVIDIA RTX Deblur",
+    "run.phase.plan": "Parsing timeline / loading video",
+    "run.phase.finish": "Complete",
     "run.phase.default": "Running",
     "runSelect.noneChecked": "No {unit} checked (cannot run)",
-    "runSelect.all": "Will run all {n} {unit}",
+    "runSelect.all": "All {n} {unit} eligible; valid caches reused",
     "runSelect.exportOnlyChecked": "· Export checked segments only",
     "runSelect.fillUnchecked": "· Unchecked segments filled from cache/source, not sampled",
-    "runSelect.sampleOne": "Will sample 1 {unit} (#{nums}) {hint}",
-    "runSelect.sampleMany": "Will sample {count} {unit} (#{nums}) {hint}",
+    "runSelect.sampleOne": "Check 1 {unit} (#{nums}); valid cache reused, missing/stale cache generated {hint}",
+    "runSelect.sampleMany": "Check {count} {unit} (#{nums}); valid caches reused, missing/stale caches generated {hint}",
     "unit.segment": "segment(s)",
     "unit.group": "group(s)",
 
@@ -963,6 +1005,22 @@ export function t(key, vars) {
     const dict = DICTS[locale] || ZH;
     const raw = dict[key] ?? ZH[key] ?? key;
     return formatTemplate(raw, vars);
+}
+
+export function runPhaseDisplayLabel(phase, fallback = "") {
+    const value = String(phase || "").trim();
+    if (value) {
+        const key = `run.phase.${value}`;
+        const localized = t(key);
+        if (localized !== key) return localized;
+    }
+    return String(fallback || value || t("run.phase.default"));
+}
+
+export function runFramesDisplayLabel(label) {
+    const value = String(label || "").trim();
+    const match = value.match(/^(?:帧|frames?)\s+(.+)$/i);
+    return match ? t("run.frames", { range: match[1] }) : value;
 }
 
 /** Apply data-i18n / data-i18n-title / data-i18n-placeholder / data-i18n-html on a subtree. */

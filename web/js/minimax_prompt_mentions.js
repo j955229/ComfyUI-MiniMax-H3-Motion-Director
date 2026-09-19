@@ -20,7 +20,7 @@ import {
     SEMANTIC_REFERENCE_RE,
     semanticReferenceToken,
 } from "./minimax_reference_assets.mjs";
-import { t } from "./minimax_i18n.js";
+import { t } from "./minimax_i18n.js?boot=director_i18n_v2";
 import {
     activateMentionItem,
     computeMentionMenuPosition,

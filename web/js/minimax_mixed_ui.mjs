@@ -4,7 +4,7 @@ import {
     parseOrCreateMixedTimeline as parseOrCreateMixedTimelineV2,
     syncMixedGlobalsFromWidgets,
 } from "./minimax_mixed_ui_v2.mjs?boot=mixed_native_v7";
-import { getLocale } from "./minimax_i18n.js";
+import { getLocale } from "./minimax_i18n.js?boot=director_i18n_v2";
 import {
     autoScrollDelta,
     moveSegmentById,

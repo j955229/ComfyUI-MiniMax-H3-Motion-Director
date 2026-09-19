@@ -213,13 +213,24 @@ def load_segment_cache(
     try:
         stored = json.loads(meta_path.read_text(encoding="utf-8"))
         expected = segment_cache_fingerprint(seg, plan)
-        if stored != expected:
+        stale = stored != expected
+        if stale and idx not in plan.reuse_cache_indices:
             log.info(
                 "Segment %d cache stale (timeline changed); re-run this segment to refresh.",
                 idx + 1,
             )
             return None
-        return torch.load(tensor_path, map_location="cpu", weights_only=True)
+        frames = torch.load(tensor_path, map_location="cpu", weights_only=True)
+        if idx in plan.reuse_cache_indices:
+            if not isinstance(stored, dict) or stored.get("index") != idx:
+                return None
+            if not isinstance(frames, torch.Tensor) or frames.ndim != 4 or frames.numel() == 0:
+                return None
+            if int(frames.shape[0]) != seg.frame_count or int(frames.shape[-1]) != 3:
+                return None
+        if stale:
+            plan.stale_cache_reused.add(idx)
+        return frames
     except Exception as exc:
         log.warning("Failed to load segment %d cache: %s", idx + 1, exc)
         return None
@@ -308,7 +319,8 @@ def load_segment_audio_cache(
             return None
 
         expected = segment_cache_fingerprint(seg, plan)
-        if payload.get("fingerprint") != expected:
+        stale = payload.get("fingerprint") != expected
+        if stale and idx not in plan.reuse_cache_indices:
             log.info(
                 "Segment %d full audio cache stale; ignoring.",
                 idx + 1,
@@ -326,6 +338,12 @@ def load_segment_audio_cache(
         ):
             return None
 
+        if idx in plan.reuse_cache_indices:
+            video_fingerprint = json.loads((root / f"seg_{idx:04d}.meta.json").read_text(encoding="utf-8"))
+            if payload.get("fingerprint") != video_fingerprint:
+                return None
+        if stale:
+            plan.stale_cache_reused.add(idx)
         return {
             "waveform": waveform.float().contiguous(),
             "sample_rate": sample_rate,

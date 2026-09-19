@@ -1,4 +1,4 @@
-import { getLocale, onLocaleChange } from "./minimax_i18n.js";
+import { getLocale, onLocaleChange } from "./minimax_i18n.js?boot=director_i18n_v2";
 
 const ZH = Object.freeze({
     "mixed.addSegment": "添加片段",

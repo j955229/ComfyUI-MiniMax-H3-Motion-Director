@@ -150,6 +150,9 @@ class DirectorPlan:
     global_ref_audios: list[SegmentRefAudio] = field(default_factory=list)
     # Populated by the executor before any persistent cache access.
     cache_settings: dict | None = None
+    # Permission and reporting for one retake; never persisted in cache metadata.
+    reuse_cache_indices: frozenset[int] = frozenset()
+    stale_cache_reused: set[int] = field(default_factory=set)
 
     @property
     def segment_count(self) -> int:

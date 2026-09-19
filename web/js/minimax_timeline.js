@@ -113,7 +113,8 @@ import {
 import {
     commitRunSelectionMutation as commitRunSelectionMutationNow,
     ensureRunSelectionSerialized,
-} from "./minimax_run_selection.mjs";
+    queueDirectorRetake,
+} from "./minimax_run_selection.mjs?boot=retake_http_v1";
 import {
     DIRECTOR_STATE_COLORS,
     VIDEO_CONTINUITY_STRATEGIES,
@@ -134,10 +135,12 @@ import {
     aspectDisplayLabel,
     getLocale,
     onLocaleChange,
+    runFramesDisplayLabel,
+    runPhaseDisplayLabel,
     t,
     taskDisplayLabel,
     toggleLocale,
-} from "./minimax_i18n.js";
+} from "./minimax_i18n.js?boot=director_i18n_v2";
 import {
     applySamplingWidgetVisibility,
     migrateLegacySamplingControlNode,
@@ -150,7 +153,7 @@ import {
     destroyDirectorModalForHost,
     DIRECTOR_LAUNCHER_HEIGHT,
     getDirectorModalForHost,
-} from "./minimax_director_modal.js?boot=live_results_v1";
+} from "./minimax_director_modal.js?boot=live_results_v2";
 import {
     contextLinkMode,
     ensureTimelineContextLinks,
@@ -2329,6 +2332,11 @@ class MiniMaxH3MotionDirectorEditor {
                 || [...(this._promptMentionControllers || []), ...(this._batchPromptMentionControllers || [])]
                     .some((controller) => controller?.isMenuOpen)
             ),
+            onRun: () => {
+                this.flushTimelineSync();
+                return app.queuePrompt(0, 1, { queueNodeIds: [String(this.node.id)] });
+            },
+            onRetake: () => queueDirectorRetake(this, { app, api, translate: t }),
             onOpen: () => {
                 this._directorModalOpen = true;
                 this._resetLayoutStyles();
@@ -10022,7 +10030,7 @@ class MiniMaxH3MotionDirectorEditor {
         const timelineSeg = detail.timeline_segment ?? runSeg;
         const partialRun = !!detail.partial_run
             || (this.isRunSelectEnabled?.() && runTotal < timelineTotal);
-        const phaseLabel = detail.phase_label || detail.phase || t("run.phase.default");
+        const phaseLabel = runPhaseDisplayLabel(detail.phase, detail.phase_label);
         const overallPct = detail.overall_max > 0
             ? Math.round((100 * detail.overall_value) / detail.overall_max)
             : 0;
@@ -10077,7 +10085,8 @@ class MiniMaxH3MotionDirectorEditor {
         }
         this.runTitleEl.textContent = title;
         const parts = [];
-        if (detail.frames_label) parts.push(detail.frames_label);
+        const framesLabel = runFramesDisplayLabel(detail.frames_label);
+        if (framesLabel) parts.push(framesLabel);
         if (detail.task_key) parts.push(detail.task_key);
         const elapsedSeconds = Math.max(0, Number(detail.elapsed_seconds) || 0);
         const phaseElapsedSeconds = Math.max(0, Number(detail.phase_elapsed_seconds) || 0);
@@ -10087,8 +10096,8 @@ class MiniMaxH3MotionDirectorEditor {
             const remainSeconds = Math.floor(seconds % 60);
             return `${String(minutes).padStart(2, "0")}:${String(remainSeconds).padStart(2, "0")}`;
         };
-        if (elapsedSeconds > 0) parts.push(`已用 ${fmtElapsed(elapsedSeconds)}`);
-        if (phaseElapsedSeconds > 0) parts.push(`当前阶段 ${fmtElapsed(phaseElapsedSeconds)}`);
+        if (elapsedSeconds > 0) parts.push(t("run.elapsed", { time: fmtElapsed(elapsedSeconds) }));
+        if (phaseElapsedSeconds > 0) parts.push(t("run.phaseElapsed", { time: fmtElapsed(phaseElapsedSeconds) }));
         parts.push(t("run.detailOverall", { pct: overallPct }));
         if (runTotal > 1) {
             parts.push(this.isImageBatch()

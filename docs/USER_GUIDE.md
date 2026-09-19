@@ -56,7 +56,7 @@ If different shots in one project need different methods, use **Mixed Mode** ins
 | 5 | Export mode | Controls the output range/method for this run |
 | 6 | Material Library | Opens persistent reusable assets |
 | 7 | Add Prompt Group | Adds another standalone T2V segment |
-| 8 | Selective Run | When enabled, only selected Prompt Groups are executed |
+| 8 | Selective Run | Marks generation candidates; valid caches are reused automatically |
 | 9 | Duration | Target duration of the current Prompt Group |
 | 10 | Delete | Deletes the current group |
 | 11 | Prompt | MiniMax H3 prompt for this segment |
@@ -70,7 +70,7 @@ If different shots in one project need different methods, use **Mixed Mode** ins
 4. Write a prompt for each segment. For a continuous scene, explicitly carry forward character, environment and action state in later prompts.
 5. Set output aspect, megapixels and FPS.
 6. Run the workflow.
-7. If one segment is poor, enable **Selective Run** and rerun only that segment.
+7. If one segment is poor, enable **Selective Run**, select that segment, and run with **Export all**. The complete output is assembled from the regenerated segment plus the other validated caches. Use **Retake selected** when a fresh take is required even if a cache exists.
 
 ---
 
@@ -301,7 +301,7 @@ S5  T2V
 | 6 | Export mode | Sets output behavior |
 | 7 | Material Library | Assigns legal assets to the currently selected Segment |
 | 8 | Add Segment | Adds another Segment |
-| 9 | Selective Run | Runs only selected Segments |
+| 9 | Selective Run | Marks generation candidates; valid caches are reused automatically |
 | 10 | Segment timeline | Select, inspect, copy, delete and organize Segments |
 | 11 | Boundary controls | Requests visual/generated-audio continuity between adjacent Segments |
 | 12 | Selected Segment | Green outline shows which Segment is being edited |
@@ -355,8 +355,9 @@ Recommended workflow:
 2. Identify the segments that are not good enough.
 3. Enable **Selective Run**.
 4. Select only those Segment/Groups.
-5. Keep the other cached/source results.
-6. Once the edit is locked, run final Global Refine / Face Refine.
+5. Run normally: valid caches are reused, and only missing/stale candidates are generated.
+6. Keep the other cached/source results in the final output with **Export all**.
+7. Once the edit is locked, run final Global Refine / Face Refine.
 
 This is also why a low-resolution first pass is efficient: spend upscale/refine time only on clips you have decided to keep.
 
@@ -385,6 +386,10 @@ This is also why a low-resolution first pass is efficient: spend upscale/refine 
 ```text
 Low-resolution first pass → Check content/motion/composition → Reroll failed segments → Lock the shots → Global Refine / Upscale → Face Refine → Final Result
 ```
+
+Director caches each completed first-pass H3 AV latent. Enabling or adjusting Global Refine then reuses that Draft latent and skips first-pass sampling, provided the generation settings and segment inputs have not changed. Running the Director with post-processing disabled also reuses a matching Draft latent for a no-op finalize; change the generation seed or inputs to request a new take. A successful Global Refine latent is also retained as the input to a later Face Refine-only run. Runs completed before Draft caching was added need one new first-pass generation to create the reusable latent.
+
+Global Refine `Steps = 0` means `max(8, round(first-pass steps × 0.4))`; an 8-step first pass therefore produces an 8-step second-sampling pass. Upscale itself has no diffusion steps when Second Sampling is disabled. Face Refine uses the first-pass step count for each tracked face crop/chunk.
 
 If Global Refine fails, the completed first-pass result is retained. If Face Refine cannot find a usable face or the stage fails, the assembled result remains available instead of invalidating the whole pipeline.
 
@@ -543,7 +548,7 @@ R2V / RV2V
 | Reference Video | Reference information; not the same role as Source Video |
 | Segment Result | Static decoded frame from an earlier segment for later I2V/FL2V |
 | Motion Context | Cross-segment motion/context continuity; separate from Segment Result |
-| Selective Run | Reruns only selected segments while keeping other available results |
+| Selective Run | Selects generation candidates while keeping valid cached results |
 | Global Refine | Global second-pass sampling/upscale after first-pass generation |
 | Face Refine | Local H3 refinement on detected face regions followed by pasteback |
 

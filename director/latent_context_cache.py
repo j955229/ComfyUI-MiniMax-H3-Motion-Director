@@ -270,7 +270,8 @@ def load_latent_context_cache(
         stored_variant = str(metadata.get("variant") or "base").strip().lower()
         if stored_variant != selected_variant:
             return None
-        if metadata.get("fingerprint") != context_fingerprint(seg, plan, _settings(settings)):
+        stale = metadata.get("fingerprint") != context_fingerprint(seg, plan, _settings(settings))
+        if stale and seg.index not in plan.reuse_cache_indices:
             return None
         if int(metadata.get("segment_index", -1)) != slot:
             return None
@@ -335,6 +336,8 @@ def load_latent_context_cache(
             span=stored,
             context_end_frame=clean_handoff["context_end_frame"],
         )
+        if stale:
+            plan.stale_cache_reused.add(seg.index)
         return CachedLatentContext(
             latent=latent,
             handoff=clean_handoff,

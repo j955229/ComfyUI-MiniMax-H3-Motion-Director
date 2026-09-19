@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { getLocale, onLocaleChange } from "./minimax_i18n.js";
+import { getLocale, onLocaleChange } from "./minimax_i18n.js?boot=director_i18n_v2";
 
 const ROOT_SELECTOR = ".mmx-postprocess";
 const SECTION_SELECTOR = "[data-rtx-deblur-section]";
