@@ -104,6 +104,12 @@ def apply_patch():
         ):
             raise RuntimeError("MiniMaxH3.extra_conds no longer accepts **kwargs")
         source = inspect.getsource(cls.extra_conds)
+        # ComfyUI 0.44 moved the cond_video_latents assignment out of
+        # extra_conds into the MiniMaxH3._cond_latents helper (same order:
+        # keyframe latents, then reference latents), so check it too.
+        helper = getattr(cls, "_cond_latents", None)
+        if helper is not None:
+            source += inspect.getsource(helper)
         required = (
             "minimax_keyframes",
             "minimax_refs",
