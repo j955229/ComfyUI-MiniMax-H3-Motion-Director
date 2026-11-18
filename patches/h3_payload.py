@@ -104,6 +104,19 @@ def apply_patch():
         ):
             raise RuntimeError("MiniMaxH3.extra_conds no longer accepts **kwargs")
         source = inspect.getsource(cls.extra_conds)
+
+        # Current ComfyUI already merges keyframe and reference
+        # latents natively through _cond_latents().
+        # Do not install the legacy payload wrapper in this case.
+        if "payload.update(self._cond_latents(keyframes, refs))" in source:
+            _applied = True
+            _failure_reason = None
+            _LOG.info(
+                "h3_motion_context: native H3 payload compatibility detected; "
+                "legacy payload patch skipped"
+            )
+            return True
+
         required = (
             "minimax_keyframes",
             "minimax_refs",
